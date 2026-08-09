@@ -1,0 +1,17 @@
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.exe
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.deps.json
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.runtimeconfig.json
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.dll
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.GeneratedMSBuildEditorConfig.editorconfig
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.AssemblyInfoInputs.cache
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.AssemblyInfo.cs
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.csproj.CoreCompileInputs.cache
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.dll
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\refint\BLRP.ClothingLocator.dll
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.genruntimeconfig.cache
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\ref\BLRP.ClothingLocator.dll
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\CodeWalker.Core.dll
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\SharpDX.dll
+D:\BLRP-Clothing-Locator\bin\Release\net8.0-windows\win-x64\SharpDX.Mathematics.dll
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.ClothingLocator.csproj.AssemblyReference.cache
+D:\BLRP-Clothing-Locator\obj\Release\net8.0-windows\win-x64\BLRP.Clo.72B32C79.Up2Date
