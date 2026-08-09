@@ -54,12 +54,16 @@ internal sealed record ClothingEntry(
     Gender Gender,
     ComponentDefinition Component,
     int Pack,
-    int RelativeIndex);
+    int RelativeIndex,
+    int TextureCount = 0);
 
 internal sealed class ClothingCatalog
 {
     private static readonly Regex FilePattern = new(
         @"^mp_(?<gender>[mf])_freemode_01_(?:p_)?mp_[mf]_c_addons_(?<collection>iv|iii|ii|i|v)\^(?<component>p_(?:head|eyes|ears|lwrist|rwrist)|berd|hair|uppr|lowr|hand|feet|teef|accs|task|decl|jbib)_(?<index>\d+)(?:_[ru])?\.ydd$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex TextureFilePattern = new(
+        @"^(?<model>.+)_diff_(?<index>\d+)_[^.]+\.ytd$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private readonly List<ClothingEntry> _entries;
@@ -97,6 +101,22 @@ internal sealed class ClothingCatalog
                 {
                     entries.Add(entry);
                 }
+            }
+
+            var textureCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (string filePath in Directory.EnumerateFiles(fullRoot, "*.ytd", SearchOption.AllDirectories))
+            {
+                string? key = GetTextureKey(filePath);
+                if (key != null)
+                {
+                    textureCounts[key] = textureCounts.GetValueOrDefault(key) + 1;
+                }
+            }
+
+            for (int index = 0; index < entries.Count; index++)
+            {
+                ClothingEntry entry = entries[index];
+                entries[index] = entry with { TextureCount = textureCounts.GetValueOrDefault(GetModelTextureKey(entry)) };
             }
 
             return new ClothingCatalog(fullRoot, entries);
@@ -223,6 +243,28 @@ internal sealed class ClothingCatalog
             relativeIndex);
     }
 
+    private static string GetModelTextureKey(ClothingEntry entry)
+    {
+        string modelName = Path.GetFileNameWithoutExtension(entry.FilePath);
+        if (modelName.EndsWith("_r", StringComparison.OrdinalIgnoreCase) ||
+            modelName.EndsWith("_u", StringComparison.OrdinalIgnoreCase))
+        {
+            modelName = modelName[..^2];
+        }
+
+        return Path.Combine(Path.GetDirectoryName(entry.FilePath) ?? string.Empty, modelName);
+    }
+
+    private static string? GetTextureKey(string filePath)
+    {
+        Match match = TextureFilePattern.Match(Path.GetFileName(filePath));
+        return match.Success
+            ? Path.Combine(
+                Path.GetDirectoryName(filePath) ?? string.Empty,
+                $"{match.Groups["model"].Value}_{match.Groups["index"].Value}")
+            : null;
+    }
+
     internal static bool SelfTest(string? rootPath = null)
     {
         const string maleFile = @"C:\pack\mp_m_freemode_01_mp_m_c_addons_i^teef_113_u.ydd";
@@ -240,6 +282,12 @@ internal sealed class ClothingCatalog
             return false;
         }
 
+        const string maleTexture = @"C:\pack\mp_m_freemode_01_mp_m_c_addons_i^teef_diff_113_a_uni.ytd";
+        if (!string.Equals(GetModelTextureKey(male), GetTextureKey(maleTexture), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         var catalog = new ClothingCatalog("test", new List<ClothingEntry> { male });
         bool basicResult = catalog.GetGlobalIndex(male, 178) == 291 &&
                            ReferenceEquals(catalog.FindByGlobalIndex(Gender.Male, male.Component, 291, 178), male);
@@ -249,6 +297,11 @@ internal sealed class ClothingCatalog
         }
 
         ClothingCatalog realCatalog = LoadAsync(rootPath).GetAwaiter().GetResult();
+        if (!realCatalog._entries.Any(entry => entry.TextureCount > 0))
+        {
+            return false;
+        }
+
         ComponentDefinition teef = ClothingComponents.ByCode["teef"];
         ClothingEntry? item113 = realCatalog.FindByGlobalIndex(Gender.Male, teef, 291, 178);
         ClothingEntry? item114 = realCatalog.FindByGlobalIndex(Gender.Male, teef, 292, 178);

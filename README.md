@@ -15,6 +15,7 @@ installed .NET 8 Windows Desktop runtime and defaults to `D:\BadlandsRP_EUP`.
 Enter the item being searched under `CLOTHING #`. `AUTO START` shows the first
 add-on drawable number and is deliberately read-only. The GTA location and
 active FiveM game build are read automatically from `CitizenFX.ini`.
+Search results show the number of indexed YTD textures available for each model.
 
 Rockstar extraction only reads GTA V. Copies are written to the folder selected
 in the app (default: `D:\BLRP-Clothing-Exports`).

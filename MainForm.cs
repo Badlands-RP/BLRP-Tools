@@ -373,6 +373,7 @@ internal sealed class MainForm : Form
         _results.Columns.Add("Global", "CLOTHING #");
         _results.Columns.Add("Pack", "PACK");
         _results.Columns.Add("Relative", "RELATIVE");
+        _results.Columns.Add("Textures", "TEXTURES");
         _results.Columns.Add("File", "FILE");
         _results.Columns[0].Width = 76;
         _results.Columns[1].Width = 76;
@@ -380,7 +381,8 @@ internal sealed class MainForm : Form
         _results.Columns[3].Width = 98;
         _results.Columns[4].Width = 56;
         _results.Columns[5].Width = 76;
-        _results.Columns[6].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        _results.Columns[6].Width = 76;
+        _results.Columns[7].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
     }
 
     private void WireEvents()
@@ -814,8 +816,9 @@ internal sealed class MainForm : Form
                 globalIndex,
                 entry.Pack,
                 entry.RelativeIndex,
+                entry.TextureCount,
                 relativePath);
-            _results.Rows[rowIndex].Cells[6].ToolTipText = entry.FilePath;
+            _results.Rows[rowIndex].Cells[7].ToolTipText = entry.FilePath;
             _results.Rows[rowIndex].Tag = entry;
         }
 
@@ -840,8 +843,9 @@ internal sealed class MainForm : Form
             entry.GlobalIndex,
             "R*",
             entry.RelativeIndex,
+            entry.TextureArchivePaths.Count,
             fileSummary);
-        _results.Rows[rowIndex].Cells[6].ToolTipText = string.Join(
+        _results.Rows[rowIndex].Cells[7].ToolTipText = string.Join(
             Environment.NewLine,
             new[] { entry.ModelArchivePath }.Concat(entry.TextureArchivePaths));
         _resultCount.Text = "1 RESULT";
