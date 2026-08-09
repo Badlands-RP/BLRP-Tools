@@ -1,4 +1,7 @@
 using System.Drawing.Drawing2D;
+using System.Diagnostics;
+using System.IO.Pipes;
+using System.Text;
 
 namespace BLRP.ClothingLocator;
 
@@ -26,6 +29,13 @@ internal sealed class MainForm : Form
     private readonly BlrpProgress _progress = new();
     private readonly Dictionary<(Gender Gender, string Component), int> _offsets = new();
     private readonly Button _extractBaseFiles;
+    private readonly Button _openPreview;
+    private readonly Button _duplicateIntoCategory;
+    private readonly Button _previewOutfit;
+    private readonly Button _removeOutfitItem;
+    private readonly Button _clearOutfit;
+    private readonly ListBox _outfitItems = new();
+    private readonly List<ClothingEntry> _outfit = new();
 
     private ClothingCatalog? _catalog;
     private BaseGameCatalog? _baseGameCatalog;
@@ -33,7 +43,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "BLRP Clothing Locator";
+        Text = $"BLRP Clothing Utility v{Application.ProductVersion.Split('+')[0]}";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(980, 700);
@@ -45,6 +55,16 @@ internal sealed class MainForm : Form
 
         _extractBaseFiles = CreateButton("EXTRACT MODEL + TEXTURES", ExtractBaseFiles, true);
         _extractBaseFiles.Enabled = false;
+        _openPreview = CreateButton("ADD TO OUTFIT", AddSelectedToOutfit, true);
+        _openPreview.Enabled = false;
+        _duplicateIntoCategory = CreateButton("DUPLICATE INTO CATEGORY", async (_, _) => await DuplicateIntoCategoryAsync(), true);
+        _duplicateIntoCategory.Enabled = false;
+        _previewOutfit = CreateButton("PREVIEW OUTFIT", PreviewOutfit, true);
+        _previewOutfit.Enabled = false;
+        _removeOutfitItem = CreateButton("REMOVE", RemoveOutfitItem);
+        _removeOutfitItem.Enabled = false;
+        _clearOutfit = CreateButton("CLEAR", ClearOutfit);
+        _clearOutfit.Enabled = false;
 
         foreach (ComponentDefinition component in ClothingComponents.All)
         {
@@ -122,28 +142,32 @@ internal sealed class MainForm : Form
         mark.TextAlign = ContentAlignment.MiddleCenter;
         layout.Controls.Add(mark, 0, 0);
         layout.SetRowSpan(mark, 2);
-        layout.Controls.Add(CreateLabel("CLOTHING LOCATOR", 18, TextPrimary, FontStyle.Bold), 1, 0);
-        layout.Controls.Add(CreateLabel("BADLANDSRP  /  COLLECTION INDEX & DUPLICATE FINDER", 8, TextMuted, FontStyle.Bold), 1, 1);
+        layout.Controls.Add(CreateLabel("CLOTHING UTILITY", 18, TextPrimary, FontStyle.Bold), 1, 0);
+        layout.Controls.Add(CreateLabel("BADLANDSRP  /  LOCATE  •  IMPORT  •  DUPLICATE  •  PREVIEW", 8, TextMuted, FontStyle.Bold), 1, 1);
         return layout;
     }
 
     private Control BuildRootCard()
     {
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(16, 12, 16, 12) };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3, RowCount = 2 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 5, RowCount = 2 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 154));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 164));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var label = CreateLabel("EUP SOURCE DIRECTORY", 8, AccentLight, FontStyle.Bold);
         layout.Controls.Add(label, 0, 0);
-        layout.SetColumnSpan(label, 3);
+        layout.SetColumnSpan(label, 5);
         _rootPath.Dock = DockStyle.Fill;
         layout.Controls.Add(_rootPath, 0, 1);
         layout.Controls.Add(CreateButton("BROWSE", BrowseRoot), 1, 1);
         layout.Controls.Add(CreateButton("SCAN", async (_, _) => await ScanAsync(), true), 2, 1);
+        layout.Controls.Add(CreateButton("IMPORT MODEL...", async (_, _) => await ImportModelAsync(), true), 3, 1);
+        layout.Controls.Add(CreateButton("IMPORT TEXTURE...", async (_, _) => await ImportTextureAsync(), true), 4, 1);
         card.Controls.Add(layout);
         return card;
     }
@@ -229,24 +253,70 @@ internal sealed class MainForm : Form
     private Control BuildResultsCard()
     {
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8), Padding = new Padding(12) };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3, RowCount = 2 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 5, RowCount = 3 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
         layout.Controls.Add(CreateLabel("RESULTS", 10, TextPrimary, FontStyle.Bold), 0, 0);
+        _duplicateIntoCategory.Margin = new Padding(4, 1, 4, 5);
+        layout.Controls.Add(_duplicateIntoCategory, 1, 0);
+        _openPreview.Margin = new Padding(4, 1, 4, 5);
+        layout.Controls.Add(_openPreview, 2, 0);
         _extractBaseFiles.Margin = new Padding(4, 1, 4, 5);
-        layout.Controls.Add(_extractBaseFiles, 1, 0);
+        layout.Controls.Add(_extractBaseFiles, 3, 0);
         _resultCount.Dock = DockStyle.Fill;
         _resultCount.TextAlign = ContentAlignment.MiddleRight;
-        layout.Controls.Add(_resultCount, 2, 0);
+        layout.Controls.Add(_resultCount, 4, 0);
 
         ConfigureGrid();
         layout.Controls.Add(_results, 0, 1);
-        layout.SetColumnSpan(_results, 3);
+        layout.SetColumnSpan(_results, 5);
+        Control outfitBar = BuildOutfitBar();
+        layout.Controls.Add(outfitBar, 0, 2);
+        layout.SetColumnSpan(outfitBar, 5);
         card.Controls.Add(layout);
         return card;
+    }
+
+    private Control BuildOutfitBar()
+    {
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.Transparent,
+            ColumnCount = 4,
+            RowCount = 2,
+            Padding = new Padding(0, 6, 0, 0)
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var heading = CreateLabel("OUTFIT  /  ADD ONE ITEM PER CLOTHING SLOT", 8, AccentLight, FontStyle.Bold);
+        layout.Controls.Add(heading, 0, 0);
+        layout.SetColumnSpan(heading, 4);
+
+        _outfitItems.Dock = DockStyle.Fill;
+        _outfitItems.BackColor = Color.FromArgb(20, 20, 40);
+        _outfitItems.ForeColor = TextPrimary;
+        _outfitItems.BorderStyle = BorderStyle.FixedSingle;
+        _outfitItems.Font = PickMonoFont(8F);
+        _outfitItems.IntegralHeight = false;
+        _outfitItems.HorizontalScrollbar = true;
+        _outfitItems.SelectedIndexChanged += (_, _) => _removeOutfitItem.Enabled = _outfitItems.SelectedIndex >= 0;
+        layout.Controls.Add(_outfitItems, 0, 1);
+        layout.Controls.Add(_previewOutfit, 1, 1);
+        layout.Controls.Add(_removeOutfitItem, 2, 1);
+        layout.Controls.Add(_clearOutfit, 3, 1);
+        return layout;
     }
 
     private Control BuildStatusBar()
@@ -317,6 +387,7 @@ internal sealed class MainForm : Form
     {
         _gender.SelectedIndexChanged += (_, _) => SelectionChanged();
         _component.SelectedIndexChanged += (_, _) => SelectionChanged();
+        _results.SelectionChanged += (_, _) => UpdateResultActions();
     }
 
     private async Task ScanAsync()
@@ -343,6 +414,295 @@ internal sealed class MainForm : Form
         {
             SetBusy(false);
         }
+    }
+
+    private async Task ImportModelAsync()
+    {
+        string root = _rootPath.Text.Trim();
+        if (!Directory.Exists(root))
+        {
+            ShowError("Select a valid BadlandsRP_EUP directory first.");
+            return;
+        }
+        if (SelectedComponent is not { } component)
+        {
+            ShowError("Select a clothing component first.");
+            return;
+        }
+        if (component.IsProp)
+        {
+            ShowError("Prop import is not supported yet. Select a component model.");
+            return;
+        }
+
+        using var modelDialog = new OpenFileDialog
+        {
+            Title = $"Select the new {SelectedGender.ToString().ToLowerInvariant()} {component.Code.ToUpperInvariant()} model",
+            Filter = "Compiled model (*.ydd;*.ydr)|*.ydd;*.ydr",
+            CheckFileExists = true,
+            InitialDirectory = Directory.Exists(root) ? root : @"D:\"
+        };
+        if (modelDialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        using var textureDialog = new OpenFileDialog
+        {
+            Title = "Select every YTD texture for this model (race/variant names are detected automatically)",
+            Filter = "Texture dictionaries (*.ytd)|*.ytd",
+            CheckFileExists = true,
+            Multiselect = true,
+            InitialDirectory = Path.GetDirectoryName(modelDialog.FileName)
+        };
+        if (textureDialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        string sourceModelName = Path.GetFileNameWithoutExtension(modelDialog.FileName);
+        bool hasSkin;
+        if (sourceModelName.EndsWith("_r", StringComparison.OrdinalIgnoreCase))
+        {
+            hasSkin = true;
+        }
+        else if (sourceModelName.EndsWith("_u", StringComparison.OrdinalIgnoreCase))
+        {
+            hasSkin = false;
+        }
+        else
+        {
+            DialogResult skinChoice = MessageBox.Show(
+                this,
+                "Does this model expose player skin?\n\nYES = _r model (skin/race textures)\nNO = _u model (universal texture)",
+                "Model texture type",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question);
+            if (skinChoice == DialogResult.Cancel)
+            {
+                return;
+            }
+            hasSkin = skinChoice == DialogResult.Yes;
+        }
+
+        try
+        {
+            IReadOnlyList<ClothingImportPlan> plans = ClothingImporter.CreatePlans(
+                root,
+                SelectedGender,
+                component,
+                modelDialog.FileName,
+                textureDialog.FileNames,
+                hasSkin);
+            using var targetDialog = new ImportTargetDialog(plans);
+            if (targetDialog.ShowDialog(this) != DialogResult.OK || targetDialog.SelectedPlan is not { } plan)
+            {
+                return;
+            }
+
+            SetBusy(true, "IMPORTING MODEL, TEXTURES AND YMT ENTRY...");
+            await Task.Run(() => ClothingImporter.Import(plan));
+            _catalog = await ClothingCatalog.LoadAsync(root);
+            _clothingNumber.Value = Math.Min(_clothingNumber.Maximum, plan.GlobalIndex);
+            ClothingEntry? imported = _catalog.FindByGlobalIndex(
+                plan.Gender,
+                plan.Component,
+                plan.GlobalIndex,
+                plan.Component.DefaultOffset(plan.Gender));
+            ShowResults(imported == null ? [] : [imported]);
+            SetStatus(
+                $"IMPORTED CLOTHING #{plan.GlobalIndex} / ADDON {plan.Pack} / {plan.RemainingSlots} YMT SLOTS REMAIN",
+                plan.CountAfterImport >= 120);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async Task ImportTextureAsync()
+    {
+        string root = _rootPath.Text.Trim();
+        if (!Directory.Exists(root))
+        {
+            ShowError("Select a valid BadlandsRP_EUP directory first.");
+            return;
+        }
+
+        ClothingEntry? target = _results.SelectedRows.Count == 1
+            ? _results.SelectedRows[0].Tag as ClothingEntry
+            : null;
+        if (target == null)
+        {
+            if (SelectedComponent is not { IsProp: false } component)
+            {
+                ShowError("Select a component clothing model first.");
+                return;
+            }
+            if (_catalog == null || !Path.GetFullPath(root).Equals(_catalog.RootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                _catalog = await ClothingCatalog.LoadAsync(root);
+            }
+            target = _catalog.FindByGlobalIndex(
+                SelectedGender,
+                component,
+                decimal.ToInt32(_clothingNumber.Value),
+                component.DefaultOffset(SelectedGender));
+        }
+        if (target == null)
+        {
+            ShowError("The entered clothing number is not a custom EUP model. Locate or select a custom YDD first.");
+            return;
+        }
+
+        using var textureDialog = new OpenFileDialog
+        {
+            Title = $"Select the new texture for {Path.GetFileName(target.FilePath)}",
+            Filter = "Texture dictionaries (*.ytd)|*.ytd",
+            CheckFileExists = true,
+            InitialDirectory = Path.GetDirectoryName(target.FilePath)
+        };
+        if (textureDialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        try
+        {
+            int globalIndex = _catalog?.GetGlobalIndex(
+                target,
+                target.Component.DefaultOffset(target.Gender)) ?? target.RelativeIndex;
+            SetBusy(true, "IMPORTING TEXTURE AND UPDATING YMT...");
+            ClothingTextureImportResult result = await Task.Run(() =>
+                ClothingImporter.ImportTexture(root, target, textureDialog.FileName));
+            _catalog = await ClothingCatalog.LoadAsync(root);
+            ClothingEntry? refreshed = _catalog.FindByGlobalIndex(
+                target.Gender,
+                target.Component,
+                globalIndex,
+                target.Component.DefaultOffset(target.Gender));
+            ShowResults(refreshed == null ? [] : [refreshed]);
+            SetStatus(
+                $"IMPORTED {Path.GetFileName(result.TexturePath)} / {result.TextureCount} TEXTURES NOW AVAILABLE",
+                false);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async Task DuplicateIntoCategoryAsync()
+    {
+        if (_catalog == null || _results.SelectedRows.Count != 1 ||
+            _results.SelectedRows[0].Tag is not ClothingEntry source)
+        {
+            ShowError("Select a custom clothing result first.");
+            return;
+        }
+
+        ComponentDefinition? targetComponent = ChooseDuplicateCategory(source);
+        if (targetComponent == null)
+        {
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<ClothingImportPlan> plans = ClothingImporter.CreateDuplicatePlans(
+                _catalog.RootPath,
+                source,
+                targetComponent);
+            using var targetDialog = new ImportTargetDialog(plans);
+            if (targetDialog.ShowDialog(this) != DialogResult.OK || targetDialog.SelectedPlan is not { } plan)
+            {
+                return;
+            }
+
+            SetBusy(true, $"DUPLICATING {source.Component.Code.ToUpperInvariant()} INTO {targetComponent.Code.ToUpperInvariant()}...");
+            await Task.Run(() => ClothingImporter.Import(plan));
+            _catalog = await ClothingCatalog.LoadAsync(plan.RootPath);
+            _gender.SelectedItem = plan.Gender;
+            _component.SelectedItem = targetComponent;
+            _clothingNumber.Value = Math.Min(_clothingNumber.Maximum, plan.GlobalIndex);
+            ClothingEntry? imported = _catalog.FindByGlobalIndex(
+                plan.Gender,
+                targetComponent,
+                plan.GlobalIndex,
+                targetComponent.DefaultOffset(plan.Gender));
+            ShowResults(imported == null ? [] : [imported]);
+            SetStatus(
+                $"DUPLICATED INTO {targetComponent.Code.ToUpperInvariant()} #{plan.GlobalIndex} / ADDON {plan.Pack} / {plan.RemainingSlots} YMT SLOTS REMAIN",
+                plan.CountAfterImport >= 120);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private ComponentDefinition? ChooseDuplicateCategory(ClothingEntry source)
+    {
+        var choices = ClothingComponents.All
+            .Where(component => !component.IsProp &&
+                !component.Code.Equals(source.Component.Code, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        using var dialog = new Form
+        {
+            Text = "Duplicate into category",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            ClientSize = new Size(520, 170),
+            BackColor = BackgroundTop,
+            ForeColor = TextPrimary,
+            Font = Font,
+            Padding = new Padding(20)
+        };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.Controls.Add(CreateLabel(
+            $"COPY {source.Component.Code.ToUpperInvariant()} TO:",
+            11,
+            TextPrimary,
+            FontStyle.Bold), 0, 0);
+        ComboBox category = CreateComboBox();
+        category.Dock = DockStyle.Fill;
+        category.DataSource = choices;
+        category.DisplayMember = nameof(ComponentDefinition.Display);
+        layout.Controls.Add(category, 0, 1);
+        var buttons = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
+        Button duplicate = CreateButton("OK", (_, _) => dialog.DialogResult = DialogResult.OK, true);
+        Button cancel = CreateButton("CANCEL", (_, _) => dialog.DialogResult = DialogResult.Cancel);
+        buttons.Controls.Add(cancel, 1, 0);
+        buttons.Controls.Add(duplicate, 2, 0);
+        layout.Controls.Add(buttons, 0, 2);
+        dialog.Controls.Add(layout);
+        dialog.AcceptButton = duplicate;
+        dialog.CancelButton = cancel;
+
+        return dialog.ShowDialog(this) == DialogResult.OK
+            ? category.SelectedItem as ComponentDefinition
+            : null;
     }
 
     private async Task LocateNumberAsync()
@@ -438,6 +798,8 @@ internal sealed class MainForm : Form
     {
         _selectedBaseEntry = null;
         _extractBaseFiles.Enabled = false;
+        _openPreview.Enabled = false;
+        _duplicateIntoCategory.Enabled = false;
         _results.Rows.Clear();
         foreach (ClothingEntry entry in entries)
         {
@@ -454,15 +816,19 @@ internal sealed class MainForm : Form
                 entry.RelativeIndex,
                 relativePath);
             _results.Rows[rowIndex].Cells[6].ToolTipText = entry.FilePath;
+            _results.Rows[rowIndex].Tag = entry;
         }
 
         _resultCount.Text = $"{_results.Rows.Count} RESULT{(_results.Rows.Count == 1 ? string.Empty : "S")}";
+        UpdateResultActions();
     }
 
     private void ShowBaseResult(BaseGameClothingEntry entry)
     {
         _selectedBaseEntry = entry;
         _extractBaseFiles.Enabled = true;
+        _openPreview.Enabled = false;
+        _duplicateIntoCategory.Enabled = false;
         _results.Rows.Clear();
         string slot = entry.Component.IsProp ? $"PROP {entry.Component.Slot}" : entry.Component.Slot.ToString();
         string fileSummary = entry.ModelArchivePath +
@@ -479,6 +845,173 @@ internal sealed class MainForm : Form
             Environment.NewLine,
             new[] { entry.ModelArchivePath }.Concat(entry.TextureArchivePaths));
         _resultCount.Text = "1 RESULT";
+    }
+
+    private void UpdateResultActions()
+    {
+        ClothingEntry? entry = _results.SelectedRows.Count == 1
+            ? _results.SelectedRows[0].Tag as ClothingEntry
+            : null;
+        _openPreview.Enabled = entry != null && File.Exists(entry.FilePath);
+        _duplicateIntoCategory.Enabled = entry is { Component.IsProp: false };
+    }
+
+    private void AddSelectedToOutfit(object? sender, EventArgs e)
+    {
+        if (_results.SelectedRows.Count != 1 || _results.SelectedRows[0].Tag is not ClothingEntry entry || !File.Exists(entry.FilePath))
+        {
+            ShowError("Select a custom clothing model result first.");
+            return;
+        }
+
+        if (_outfit.Count > 0 && _outfit[0].Gender != entry.Gender)
+        {
+            ShowError($"The outfit already contains {_outfit[0].Gender.ToString().ToLowerInvariant()} items. Clear it before adding {entry.Gender.ToString().ToLowerInvariant()} clothing.");
+            return;
+        }
+
+        bool replaced = AddOrReplaceOutfitItem(_outfit, entry);
+        RefreshOutfit();
+        SetStatus(
+            replaced
+                ? $"REPLACED {entry.Component.Code.ToUpperInvariant()} IN OUTFIT"
+                : $"ADDED {entry.Component.Code.ToUpperInvariant()} TO OUTFIT",
+            false);
+    }
+
+    private static bool AddOrReplaceOutfitItem(List<ClothingEntry> outfit, ClothingEntry entry)
+    {
+        int existingIndex = outfit.FindIndex(item =>
+            item.Component.Slot == entry.Component.Slot &&
+            item.Component.IsProp == entry.Component.IsProp);
+        if (existingIndex < 0)
+        {
+            outfit.Add(entry);
+            return false;
+        }
+
+        outfit[existingIndex] = entry;
+        return true;
+    }
+
+    private void RemoveOutfitItem(object? sender, EventArgs e)
+    {
+        int index = _outfitItems.SelectedIndex;
+        if (index < 0 || index >= _outfit.Count)
+        {
+            return;
+        }
+
+        _outfit.RemoveAt(index);
+        RefreshOutfit();
+        SetStatus("REMOVED ITEM FROM OUTFIT", false);
+    }
+
+    private void ClearOutfit(object? sender, EventArgs e)
+    {
+        _outfit.Clear();
+        RefreshOutfit();
+        SetStatus("OUTFIT CLEARED", false);
+    }
+
+    private void RefreshOutfit()
+    {
+        _outfitItems.Items.Clear();
+        foreach (ClothingEntry entry in _outfit)
+        {
+            int globalIndex = _catalog?.GetGlobalIndex(entry, _offsets[(entry.Gender, entry.Component.Code)]) ?? entry.RelativeIndex;
+            string slot = entry.Component.IsProp ? $"PROP {entry.Component.Slot}" : $"COMP {entry.Component.Slot}";
+            _outfitItems.Items.Add($"{slot,-7}  {entry.Component.Code.ToUpperInvariant(),-8}  #{globalIndex,-4}  {Path.GetFileName(entry.FilePath)}");
+        }
+
+        _previewOutfit.Text = $"PREVIEW OUTFIT ({_outfit.Count})";
+        _previewOutfit.Enabled = _outfit.Count > 0;
+        _clearOutfit.Enabled = _outfit.Count > 0;
+        _removeOutfitItem.Enabled = false;
+    }
+
+    private void PreviewOutfit(object? sender, EventArgs e)
+    {
+        string[] modelPaths = _outfit.Select(entry => entry.FilePath).Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (modelPaths.Length == 0)
+        {
+            ShowError("Add at least one custom clothing model to the outfit first.");
+            return;
+        }
+
+        string gender = _outfit[0].Gender.ToString().ToLowerInvariant();
+
+        string previewExe = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "tools",
+            "grzyClothTool-outfit",
+            "grzyClothTool.exe"));
+        if (!File.Exists(previewExe))
+        {
+            ShowError("The grzyClothTool preview helper is missing from the tools folder.");
+            return;
+        }
+
+        if (TryReusePreview(previewExe, modelPaths, gender))
+        {
+            SetStatus($"PREVIEWING {_outfit.Count} OUTFIT ITEM{(_outfit.Count == 1 ? string.Empty : "S")} IN GRZYCLOTHTOOL", false);
+            return;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = previewExe,
+            WorkingDirectory = Path.GetDirectoryName(previewExe)!,
+            UseShellExecute = true
+        };
+        foreach (string modelPath in modelPaths)
+        {
+            startInfo.ArgumentList.Add("--preview");
+            startInfo.ArgumentList.Add(modelPath);
+        }
+        startInfo.ArgumentList.Add("--gender");
+        startInfo.ArgumentList.Add(gender);
+        Process.Start(startInfo);
+        SetStatus($"OUTFIT PREVIEW STARTED WITH {modelPaths.Length} ITEM{(modelPaths.Length == 1 ? string.Empty : "S")} / COMPLETE GRZYCLOTHTOOL SETUP IF PROMPTED", false);
+    }
+
+    private static bool TryReusePreview(string previewExe, IReadOnlyList<string> modelPaths, string gender)
+    {
+        foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(previewExe)))
+        {
+            using (process)
+            {
+                try
+                {
+                    if (!string.Equals(process.MainModule?.FileName, previewExe, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    using var pipe = new NamedPipeClientStream(
+                        ".",
+                        $"BLRP-grzyClothTool-outfit-{process.Id}",
+                        PipeDirection.Out);
+                    pipe.Connect(500);
+                    using var writer = new BinaryWriter(pipe, Encoding.UTF8, leaveOpen: true);
+                    writer.Write(gender);
+                    writer.Write(modelPaths.Count);
+                    foreach (string modelPath in modelPaths)
+                    {
+                        writer.Write(modelPath);
+                    }
+                    writer.Flush();
+                    return true;
+                }
+                catch
+                {
+                    // An older or still-starting helper has no outfit pipe; launch the updated helper below.
+                }
+            }
+        }
+
+        return false;
     }
 
     private void ExtractBaseFiles(object? sender, EventArgs e)
@@ -597,8 +1130,21 @@ internal sealed class MainForm : Form
         using var form = new MainForm();
         form.SetBusy(true);
         form.SetBusy(false);
+        var outfit = new List<ClothingEntry>();
+        ComponentDefinition top = ClothingComponents.ByCode["jbib"];
+        ComponentDefinition shoes = ClothingComponents.ByCode["feet"];
+        var firstTop = new ClothingEntry("first.ydd", 1, Gender.Male, top, 1, 0);
+        var replacementTop = new ClothingEntry("replacement.ydd", 1, Gender.Male, top, 1, 1);
+        AddOrReplaceOutfitItem(outfit, firstTop);
+        bool replaced = AddOrReplaceOutfitItem(outfit, replacementTop);
+        AddOrReplaceOutfitItem(outfit, new ClothingEntry("shoes.ydd", 1, Gender.Male, shoes, 1, 0));
         return form._customStart.ReadOnly &&
                form._customStart.Text == "178" &&
+               form._duplicateIntoCategory.Text == "DUPLICATE INTO CATEGORY" &&
+               form._openPreview.Text == "ADD TO OUTFIT" &&
+               replaced &&
+               outfit.Count == 2 &&
+               outfit[0] == replacementTop &&
                !HasWaitCursor(form);
     }
 
@@ -614,7 +1160,7 @@ internal sealed class MainForm : Form
     private void ShowError(string message)
     {
         SetStatus(message.ToUpperInvariant(), true);
-        MessageBox.Show(this, message, "BLRP Clothing Locator", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        MessageBox.Show(this, message, "BLRP Clothing Utility", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     private Gender SelectedGender => _gender.SelectedItem is Gender gender ? gender : Gender.Male;

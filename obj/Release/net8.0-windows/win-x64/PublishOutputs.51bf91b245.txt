@@ -1,7 +1,0 @@
-D:\BLRP-Clothing-Locator\app\BLRP.ClothingLocator.exe
-D:\BLRP-Clothing-Locator\app\BLRP.ClothingLocator.dll
-D:\BLRP-Clothing-Locator\app\BLRP.ClothingLocator.deps.json
-D:\BLRP-Clothing-Locator\app\BLRP.ClothingLocator.runtimeconfig.json
-D:\BLRP-Clothing-Locator\app\CodeWalker.Core.dll
-D:\BLRP-Clothing-Locator\app\SharpDX.dll
-D:\BLRP-Clothing-Locator\app\SharpDX.Mathematics.dll

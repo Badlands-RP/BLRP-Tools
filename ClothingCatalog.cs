@@ -59,7 +59,7 @@ internal sealed record ClothingEntry(
 internal sealed class ClothingCatalog
 {
     private static readonly Regex FilePattern = new(
-        @"^mp_(?<gender>[mf])_freemode_01_(?:p_)?mp_[mf]_c_addons_(?<collection>iv|iii|ii|i|v)\^(?<component>p_(?:head|eyes|ears|lwrist|rwrist)|berd|hair|uppr|lowr|hand|feet|teef|accs|task|decl|jbib)_(?<index>\d+)(?:_u)?\.ydd$",
+        @"^mp_(?<gender>[mf])_freemode_01_(?:p_)?mp_[mf]_c_addons_(?<collection>iv|iii|ii|i|v)\^(?<component>p_(?:head|eyes|ears|lwrist|rwrist)|berd|hair|uppr|lowr|hand|feet|teef|accs|task|decl|jbib)_(?<index>\d+)(?:_[ru])?\.ydd$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private readonly List<ClothingEntry> _entries;

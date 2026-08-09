@@ -1,0 +1,22 @@
+BLRP changes from upstream commit 9244b00dce5bb9956acb9999415e6537844fc42b:
+
+1. Target net9.0/net9.0-windows so it can be built with the installed SDK.
+2. Remove the stray standalone `W` in Views/SettingsWindow.xaml.cs.
+3. Accept repeatable preview arguments in App.OnStartup:
+   --preview <absolute-ydd-path> [--preview <absolute-ydd-path> ...]
+   --gender <male|female>
+4. In MainWindow_Loaded, import the requested YDDs into a dedicated outfit addon,
+   select them together, navigate to the Project page, and open the 3D preview.
+5. Bring the mandatory first-run setup window to the foreground so the splash
+   screen cannot disappear while setup waits invisibly behind another window.
+6. Listen on the PID-specific local named pipe
+   `BLRP-grzyClothTool-outfit-<pid>` for later outfit preview requests.
+7. Replace the dedicated outfit addon and preview later outfits in the existing
+   window, restoring and activating it when necessary.
+8. Resolve addon selection by collection position instead of parsing display
+   names, so the generated BLRP outfit addon cannot crash the project window.
+9. Avoid inserting the same drawable into SelectedDrawables twice while the
+   preview selection changes.
+
+The corresponding implementation is intentionally small and can be recreated
+against the named upstream commit from this description.

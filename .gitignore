@@ -1,0 +1,20 @@
+# .NET / Visual Studio build output
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Local publish and packaging output
+app/
+app-v*/
+release/
+buildcheck/
+tools/*
+!tools/grzyClothTool-outfit/
+tools/grzyClothTool-outfit/*
+!tools/grzyClothTool-outfit/BLRP-preview.patch
+*.zip
+
+# Backups created beside edited clothing packs
+.clothing-locator-backups/
