@@ -8,13 +8,17 @@
     <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>BLRP.Tools</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Company>BadlandsRP</Company>
     <Product>BLRP Tools</Product>
     <Description>Launcher and updater for BadlandsRP desktop tools.</Description>
     <PublishSingleFile>true</PublishSingleFile>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="..\..\branding\BLRP.ico" Link="BLRP.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

@@ -48,7 +48,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = $"BLRP Clothing Utility v{Application.ProductVersion.Split('+')[0]}";
+        Text = $"BLRP Clothing Utility v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(980, 740);
@@ -149,12 +149,15 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var mark = CreateLabel("◆", 23, AccentLight, FontStyle.Bold);
-        mark.Font = new Font("Segoe UI Symbol", 20F, FontStyle.Bold, GraphicsUnit.Point);
-        mark.AutoEllipsis = false;
-        mark.TextAlign = ContentAlignment.MiddleCenter;
-        layout.Controls.Add(mark, 0, 0);
-        layout.SetRowSpan(mark, 2);
+        var logo = new PictureBox
+        {
+            Dock = DockStyle.Fill,
+            Image = Image.FromFile(Path.Combine(AppContext.BaseDirectory, "BLRP_Logo.png")),
+            Margin = new Padding(0, 0, 8, 4),
+            SizeMode = PictureBoxSizeMode.Zoom
+        };
+        layout.Controls.Add(logo, 0, 0);
+        layout.SetRowSpan(logo, 2);
         layout.Controls.Add(CreateLabel("CLOTHING UTILITY", 18, TextPrimary, FontStyle.Bold), 1, 0);
         layout.Controls.Add(CreateLabel("BADLANDSRP  /  LOCATE  •  IMPORT  •  DUPLICATE  •  PREVIEW", 8, TextMuted, FontStyle.Bold), 1, 1);
         return layout;
@@ -1272,12 +1275,13 @@ internal sealed class MainForm : Form
 
         string gender = _outfit[0].Gender.ToString().ToLowerInvariant();
 
-        string previewExe = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "tools",
-            "grzyClothTool-outfit",
-            "grzyClothTool.exe"));
+        string[] previewCandidates =
+        [
+            Path.Combine(AppContext.BaseDirectory, "tools", "grzyClothTool-outfit", "grzyClothTool.exe"),
+            Path.Combine(AppContext.BaseDirectory, "..", "tools", "grzyClothTool-outfit", "grzyClothTool.exe"),
+        ];
+        string previewExe = previewCandidates.Select(Path.GetFullPath).FirstOrDefault(File.Exists)
+            ?? Path.GetFullPath(previewCandidates[0]);
         if (!File.Exists(previewExe))
         {
             ShowError("The grzyClothTool preview helper is missing from the tools folder.");

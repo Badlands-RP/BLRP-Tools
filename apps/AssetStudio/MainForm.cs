@@ -59,7 +59,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = $"BLRP Asset Studio v{Application.ProductVersion.Split('+')[0]}";
+        Text = $"BLRP Asset Studio v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(1240, 820);
@@ -126,11 +126,15 @@ internal sealed class MainForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var mark = CreateLabel("◆", 20, AccentLight, FontStyle.Bold);
-        mark.Font = new Font("Segoe UI Symbol", 20F, FontStyle.Bold);
-        mark.TextAlign = ContentAlignment.MiddleCenter;
-        layout.Controls.Add(mark, 0, 0);
-        layout.SetRowSpan(mark, 2);
+        var logo = new PictureBox
+        {
+            Dock = DockStyle.Fill,
+            Image = Image.FromFile(Path.Combine(AppContext.BaseDirectory, "BLRP_Logo.png")),
+            Margin = new Padding(0, 0, 8, 4),
+            SizeMode = PictureBoxSizeMode.Zoom
+        };
+        layout.Controls.Add(logo, 0, 0);
+        layout.SetRowSpan(logo, 2);
         layout.Controls.Add(CreateLabel("ASSET STUDIO", 18, TextPrimary, FontStyle.Bold), 1, 0);
         layout.Controls.Add(CreateLabel("BADLANDSRP  /  PREVIEW  /  BUILD  /  SNAP", 8, TextMuted, FontStyle.Bold), 1, 1);
         layout.Controls.Add(CreateLabel("APP MODE", 7, TextMuted, FontStyle.Bold), 2, 0);

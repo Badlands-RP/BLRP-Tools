@@ -1,0 +1,3 @@
+[submodule "external/grzyClothTool"]
+	path = external/grzyClothTool
+	url = https://github.com/Badlands-RP/grzyClothTool.git

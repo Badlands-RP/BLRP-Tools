@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.0')
+param([string]$Version = '1.0.1')
 
 $ErrorActionPreference = 'Stop'
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'release'))
@@ -26,9 +26,29 @@ $projects = @(
 foreach ($item in $projects) {
     $output = if ($item.Output) { Join-Path $packageRoot $item.Output } else { $packageRoot }
     $selfContained = $item.SelfContained.ToString().ToLowerInvariant()
-    dotnet publish (Join-Path $PSScriptRoot $item.Project) -c Release -r win-x64 --self-contained $selfContained "-p:UseAppHost=$selfContained" "-p:Version=$Version" -o $output
+    $publishArguments = @('publish', (Join-Path $PSScriptRoot $item.Project), '-c', 'Release', '-r', 'win-x64', '--self-contained', $selfContained, "-p:UseAppHost=$selfContained")
+    if (-not $item.Output) { $publishArguments += "-p:Version=$Version" }
+    $publishArguments += @('-o', $output)
+    dotnet @publishArguments
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $($item.Project)." }
 }
+
+$grzyRoot = Join-Path $PSScriptRoot 'external\grzyClothTool'
+$grzyProject = Join-Path $grzyRoot 'grzyClothTool\grzyClothTool.csproj'
+if (-not (Test-Path -LiteralPath $grzyProject)) {
+    throw 'grzyClothTool is missing. Run: git submodule update --init --recursive'
+}
+$grzyPackages = Join-Path $grzyRoot 'packages'
+New-Item -ItemType Directory -Path $grzyPackages -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'shared\grzy\CodeWalker.dll') -Destination $grzyPackages -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'shared\grzy\CodeWalker.Core.dll') -Destination $grzyPackages -Force
+$grzyOutput = Join-Path $packageRoot 'tools\grzyClothTool-outfit'
+dotnet publish $grzyProject -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=false -o $grzyOutput
+if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for grzyClothTool.' }
+Copy-Item -LiteralPath (Join-Path $grzyRoot 'LICENSE') -Destination (Join-Path $grzyOutput 'LICENSE-grzyClothTool.txt')
+$grzyCommit = (git -C $grzyRoot rev-parse HEAD).Trim()
+@("grzyClothTool is distributed under GPL-3.0.", '', 'Source: https://github.com/Badlands-RP/grzyClothTool', "Commit: $grzyCommit") |
+    Set-Content -LiteralPath (Join-Path $grzyOutput 'SOURCE.txt') -Encoding utf8
 
 $sharedRoot = Join-Path $packageRoot 'shared'
 New-Item -ItemType Directory -Path $sharedRoot -Force | Out-Null
@@ -39,7 +59,7 @@ foreach ($name in @('CodeWalker.Core.dll', 'SharpDX.dll', 'SharpDX.Mathematics.d
         if (Test-Path -LiteralPath $duplicate) { Remove-Item -LiteralPath $duplicate -Force }
     }
 }
-foreach ($tool in @('LiveryTool', 'MappingDeconflicter')) {
+foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool', 'MappingDeconflicter')) {
     $duplicateLogo = Join-Path $packageRoot "tools\$tool\BLRP_Logo.png"
     if (Test-Path -LiteralPath $duplicateLogo) { Remove-Item -LiteralPath $duplicateLogo -Force }
 }
