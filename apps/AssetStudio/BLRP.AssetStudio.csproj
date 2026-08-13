@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>BLRP.AssetStudio</AssemblyName>
+    <RootNamespace>BLRP.WeaponSkinTool</RootNamespace>
+    <Version>1.2.4</Version>
+    <Company>BadlandsRP</Company>
+    <Product>BLRP Asset Studio</Product>
+    <Description>Previews and builds BadlandsRP weapon skins, cups, and inventory images.</Description>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <Reference Include="CodeWalker.Core"><HintPath>..\..\shared\lib\CodeWalker.Core.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpDX"><HintPath>..\..\shared\lib\SharpDX.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpDX.Mathematics"><HintPath>..\..\shared\lib\SharpDX.Mathematics.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

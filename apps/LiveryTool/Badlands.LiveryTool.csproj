@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
+    <Company>BadlandsRP</Company>
+    <Product>BLRP Livery Tool</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\shared\BlrpTheme.cs" Link="BlrpTheme.cs" />
+    <Reference Include="CodeWalker.Core"><HintPath>..\..\shared\lib\CodeWalker.Core.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpDX"><HintPath>..\..\shared\lib\SharpDX.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpDX.Mathematics"><HintPath>..\..\shared\lib\SharpDX.Mathematics.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory></Content>
+  </ItemGroup>
+
+</Project>

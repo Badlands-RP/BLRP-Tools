@@ -15,6 +15,7 @@ tools/*
 tools/grzyClothTool-outfit/*
 !tools/grzyClothTool-outfit/BLRP-preview.patch
 *.zip
+apps/*/blrp.ico
 
 # Backups created beside edited clothing packs
 .clothing-locator-backups/
