@@ -1,0 +1,5 @@
+bin/
+obj/
+*.dds
+*.yft.bak
+/publish/

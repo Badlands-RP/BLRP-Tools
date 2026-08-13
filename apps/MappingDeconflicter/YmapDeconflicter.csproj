@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
+    <Company>BadlandsRP</Company>
+    <Product>BLRP Mapping Deconflicter</Product>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\shared\BlrpTheme.cs" Link="BlrpTheme.cs" />
+    <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory></Content>
+  </ItemGroup>
+
+</Project>
