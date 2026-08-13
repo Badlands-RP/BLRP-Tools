@@ -48,7 +48,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = $"BLRP Clothing Utility v{Application.ProductVersion.Split('+')[0]}";
+        Text = $"BLRP Clothing Utility v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(980, 740);

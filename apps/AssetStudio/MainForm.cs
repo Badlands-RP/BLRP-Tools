@@ -59,7 +59,7 @@ internal sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = $"BLRP Asset Studio v{Application.ProductVersion.Split('+')[0]}";
+        Text = $"BLRP Asset Studio v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(1240, 820);
