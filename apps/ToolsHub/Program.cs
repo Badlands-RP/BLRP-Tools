@@ -29,8 +29,9 @@ internal static class Program
     {
         try
         {
-            var context = new ToolContext(assemblyPath, Path.Combine(AppContext.BaseDirectory, "shared"));
-            Assembly assembly = context.LoadFromAssemblyPath(Path.GetFullPath(assemblyPath));
+            string fullAssemblyPath = Path.GetFullPath(assemblyPath, AppContext.BaseDirectory);
+            var context = new ToolContext(fullAssemblyPath, Path.Combine(AppContext.BaseDirectory, "shared"));
+            Assembly assembly = context.LoadFromAssemblyPath(fullAssemblyPath);
             MethodInfo entry = assembly.EntryPoint ?? throw new InvalidDataException("The selected tool has no entry point.");
             object? result = entry.Invoke(null, entry.GetParameters().Length == 0 ? null : [Array.Empty<string>()]);
             if (result is Task task) task.GetAwaiter().GetResult();

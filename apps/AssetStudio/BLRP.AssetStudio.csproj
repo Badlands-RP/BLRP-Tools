@@ -28,6 +28,10 @@
     <Reference Include="SharpDX.Mathematics"><HintPath>..\..\shared\lib\SharpDX.Mathematics.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="assets\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

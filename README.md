@@ -10,8 +10,9 @@ One Windows launcher and updater for BadlandsRP's internal desktop utilities.
 - **BLRP Mapping Deconflicter** — scans mapping resources and reports duplicate assets.
 
 The Hub launches each utility in its own hosted process, so a crash or long-running job
-in one tool does not take down the others. The package carries one .NET runtime and
-one shared CodeWalker/SharpDX dependency set. Updates are distributed as one GitHub
+in one tool does not take down the others. The four native utilities share the Hub's
+runtime and CodeWalker dependencies; Clothing's separate WPF preview includes its
+pinned `grzyClothTool` runtime. Updates are distributed as one GitHub
 release ZIP; the Hub checks `Badlands-RP/BLRP-Tools`, replaces the complete
 installation, and restarts itself.
 
@@ -26,11 +27,13 @@ apps/
   MappingDeconflicter/
 branding/
 shared/
+external/grzyClothTool/  (git submodule)
 ```
 
 ## Build
 
 ```powershell
+git submodule update --init --recursive
 dotnet build .\BLRP.Tools.sln -c Release
 ```
 

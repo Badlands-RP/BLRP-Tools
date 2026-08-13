@@ -67,7 +67,9 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "BLRP Livery Tool";
-        MinimumSize = new Size(1100, 820);
+        string iconPath = Path.Combine(AppContext.BaseDirectory, "BLRP.ico");
+        if (File.Exists(iconPath)) Icon = new Icon(iconPath);
+        MinimumSize = new Size(1100, 650);
         StartPosition = FormStartPosition.CenterScreen;
 
         BuildLayout();
@@ -80,9 +82,16 @@ internal sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        var root = new TableLayoutPanel
+        var viewport = new Panel
         {
             Dock = DockStyle.Fill,
+            AutoScroll = true,
+        };
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
             RowCount = 7,
             Padding = new Padding(12),
@@ -90,9 +99,9 @@ internal sealed class MainForm : Form
 
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 28));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 190));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 32));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 230));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 330));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 250));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
 
@@ -104,7 +113,20 @@ internal sealed class MainForm : Form
         root.Controls.Add(BuildWorkflowPanel(), 0, 5);
         root.Controls.Add(BuildLogPanel(), 0, 6);
 
-        Controls.Add(root);
+        viewport.Controls.Add(root);
+        Controls.Add(viewport);
+        Shown += (_, _) =>
+        {
+            var resetScroll = new System.Windows.Forms.Timer { Interval = 50 };
+            resetScroll.Tick += (_, _) =>
+            {
+                resetScroll.Stop();
+                ActiveControl = null;
+                viewport.AutoScrollPosition = Point.Empty;
+                resetScroll.Dispose();
+            };
+            resetScroll.Start();
+        };
     }
 
     private static Control BuildBrandHeader()

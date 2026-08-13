@@ -23,6 +23,10 @@
 
   <ItemGroup>
     <Compile Remove="release\**\*.cs" />
+    <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Reference Include="CodeWalker.Core">
       <HintPath>..\..\shared\lib\CodeWalker.Core.dll</HintPath>
       <Private>true</Private>
