@@ -38,6 +38,8 @@ internal sealed class MainForm : Form
     private readonly Button _extractBaseFiles;
     private readonly Button _replaceDrawable;
     private readonly Button _editYmtSettings;
+    private readonly Button _copyResultPath;
+    private readonly Button _openResultPath;
     private readonly Button _openPreview;
     private readonly Button _duplicateIntoCategory;
     private readonly Button _previewOutfit;
@@ -70,6 +72,10 @@ internal sealed class MainForm : Form
         _replaceDrawable.Enabled = false;
         _editYmtSettings = CreateButton("YMT SETTINGS...", async (_, _) => await EditYmtSettingsAsync(), true);
         _editYmtSettings.Enabled = false;
+        _copyResultPath = CreateButton("COPY PATH", CopyResultPath);
+        _copyResultPath.Enabled = false;
+        _openResultPath = CreateButton("OPEN PATH", OpenResultPath);
+        _openResultPath.Enabled = false;
         _openPreview = CreateButton("ADD TO OUTFIT", AddSelectedToOutfit, true);
         _openPreview.Enabled = false;
         _duplicateIntoCategory = CreateButton("DUPLICATE INTO CATEGORY", async (_, _) => await DuplicateIntoCategoryAsync(), true);
@@ -286,14 +292,16 @@ internal sealed class MainForm : Form
     private Control BuildResultsCard()
     {
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8), Padding = new Padding(12) };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 7, RowCount = 3 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 9, RowCount = 3 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 166));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 126));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 166));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
@@ -308,16 +316,20 @@ internal sealed class MainForm : Form
         layout.Controls.Add(_openPreview, 4, 0);
         _extractBaseFiles.Margin = new Padding(4, 1, 4, 5);
         layout.Controls.Add(_extractBaseFiles, 5, 0);
+        _copyResultPath.Margin = new Padding(4, 1, 4, 5);
+        layout.Controls.Add(_copyResultPath, 6, 0);
+        _openResultPath.Margin = new Padding(4, 1, 4, 5);
+        layout.Controls.Add(_openResultPath, 7, 0);
         _resultCount.Dock = DockStyle.Fill;
         _resultCount.TextAlign = ContentAlignment.MiddleRight;
-        layout.Controls.Add(_resultCount, 6, 0);
+        layout.Controls.Add(_resultCount, 8, 0);
 
         ConfigureGrid();
         layout.Controls.Add(_results, 0, 1);
-        layout.SetColumnSpan(_results, 7);
+        layout.SetColumnSpan(_results, 9);
         Control outfitBar = BuildOutfitBar();
         layout.Controls.Add(outfitBar, 0, 2);
-        layout.SetColumnSpan(outfitBar, 7);
+        layout.SetColumnSpan(outfitBar, 9);
         card.Controls.Add(layout);
         return card;
     }
@@ -429,6 +441,10 @@ internal sealed class MainForm : Form
         _gender.SelectedIndexChanged += (_, _) => SelectionChanged();
         _component.SelectedIndexChanged += (_, _) => SelectionChanged();
         _results.SelectionChanged += (_, _) => UpdateResultActions();
+        _results.CellDoubleClick += (_, e) =>
+        {
+            if (e.RowIndex >= 0) OpenResultPath(null, EventArgs.Empty);
+        };
     }
 
     private async Task ScanAsync()
@@ -1154,6 +1170,8 @@ internal sealed class MainForm : Form
         _extractBaseFiles.Enabled = false;
         _replaceDrawable.Enabled = false;
         _editYmtSettings.Enabled = false;
+        _copyResultPath.Enabled = false;
+        _openResultPath.Enabled = false;
         _openPreview.Enabled = false;
         _duplicateIntoCategory.Enabled = false;
         _results.Rows.Clear();
@@ -1186,6 +1204,8 @@ internal sealed class MainForm : Form
         _extractBaseFiles.Enabled = true;
         _replaceDrawable.Enabled = false;
         _editYmtSettings.Enabled = false;
+        _copyResultPath.Enabled = false;
+        _openResultPath.Enabled = false;
         _openPreview.Enabled = false;
         _duplicateIntoCategory.Enabled = false;
         _results.Rows.Clear();
@@ -1213,9 +1233,47 @@ internal sealed class MainForm : Form
             ? _results.SelectedRows[0].Tag as ClothingEntry
             : null;
         _openPreview.Enabled = entry != null && File.Exists(entry.FilePath);
+        _copyResultPath.Enabled = entry != null && File.Exists(entry.FilePath);
+        _openResultPath.Enabled = entry != null && File.Exists(entry.FilePath);
         _replaceDrawable.Enabled = entry is { Component.IsProp: false } && File.Exists(entry.FilePath);
         _editYmtSettings.Enabled = entry is { Component.Code: "feet" } && File.Exists(entry.FilePath);
         _duplicateIntoCategory.Enabled = entry is { Component.IsProp: false };
+    }
+
+    private ClothingEntry? SelectedResult() => _results.SelectedRows.Count == 1
+        ? _results.SelectedRows[0].Tag as ClothingEntry
+        : null;
+
+    private void CopyResultPath(object? sender, EventArgs e)
+    {
+        if (SelectedResult() is not { } entry || !File.Exists(entry.FilePath)) return;
+        try
+        {
+            Clipboard.SetText(entry.FilePath);
+            SetStatus("COPIED FILE PATH", false);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+    }
+
+    private void OpenResultPath(object? sender, EventArgs e)
+    {
+        if (SelectedResult() is not { } entry || !File.Exists(entry.FilePath)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe")
+            {
+                UseShellExecute = true,
+                ArgumentList = { "/select,", entry.FilePath }
+            });
+            SetStatus("OPENED FILE LOCATION", false);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
     }
 
     private void AddSelectedToOutfit(object? sender, EventArgs e)
@@ -1470,21 +1528,13 @@ internal sealed class MainForm : Form
 
     private void SetBusy(bool busy, string? text = null)
     {
-        SetWaitCursor(this, busy);
-        Cursor.Current = busy ? Cursors.WaitCursor : Cursors.Default;
+        UseWaitCursor = busy;
+        Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
+        if (!busy) Cursor.Current = Cursors.Default;
         _progress.Active = busy;
         if (text != null)
         {
             SetStatus(text, false);
-        }
-    }
-
-    private static void SetWaitCursor(Control control, bool busy)
-    {
-        control.UseWaitCursor = busy;
-        foreach (Control child in control.Controls)
-        {
-            SetWaitCursor(child, busy);
         }
     }
 
@@ -1505,14 +1555,15 @@ internal sealed class MainForm : Form
                form._customStart.Text == "178" &&
                form._duplicateIntoCategory.Text == "DUPLICATE INTO CATEGORY" &&
                form._openPreview.Text == "ADD TO OUTFIT" &&
+               form._copyResultPath.Text == "COPY PATH" &&
+               form._openResultPath.Text == "OPEN PATH" &&
                replaced &&
                outfit.Count == 2 &&
                outfit[0] == replacementTop &&
-               !HasWaitCursor(form);
+               !form.UseWaitCursor &&
+               form.Cursor != Cursors.WaitCursor &&
+               !form._progress.Active;
     }
-
-    private static bool HasWaitCursor(Control control) =>
-        control.UseWaitCursor || control.Controls.Cast<Control>().Any(HasWaitCursor);
 
     private void SetStatus(string text, bool warning)
     {
