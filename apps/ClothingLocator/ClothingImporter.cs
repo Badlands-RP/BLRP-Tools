@@ -37,7 +37,7 @@ internal sealed record ClothingImportPlan(
 
 internal sealed record ClothingTextureImportResult(string TexturePath, int TextureCount, string Compression);
 internal sealed record ClothingMetadataUpdateResult(string BackupDirectory, string CreatureMetadataPath);
-internal sealed record ClothingModelQuality(string Summary, string Details);
+internal sealed record ClothingModelQuality(string Summary, string Details, long? HighPolygons = null);
 
 internal static class ClothingImporter
 {
@@ -1959,7 +1959,8 @@ internal static class ClothingImporter
             warnings.Count == 0 ? "OK" : string.Join(" / ", warnings),
             $"HIGH POLYGONS: {highPolygons:N0} (LIMIT 20,000)\n" +
             $"LODS: HIGH {(high ? "YES" : "NO")} / MED {(medium ? "YES" : "NO")} / LOW {(low ? "YES" : "NO")}\n" +
-            $"MATCHING YTDS: {textureCount}");
+            $"MATCHING YTDS: {textureCount}",
+            highPolygons);
     }
 
     internal static bool QualitySelfTest(string? rootPath = null)
@@ -1967,7 +1968,8 @@ internal static class ClothingImporter
         ClothingModelQuality good = SummarizeQuality(19_999, true, true, true, 1);
         ClothingModelQuality bad = SummarizeQuality(20_001, true, false, false, 0);
         bool summariesValid = good.Summary == "OK" &&
-            bad.Summary == "OVER 20K / NO MED / NO LOW / NO YTD";
+            bad.Summary == "OVER 20K / NO MED / NO LOW / NO YTD" &&
+            bad.HighPolygons == 20_001;
         if (!summariesValid || string.IsNullOrWhiteSpace(rootPath)) return summariesValid;
         string? model = Directory.EnumerateFiles(rootPath, "*.ydd", SearchOption.AllDirectories).FirstOrDefault();
         return model is not null && InspectModel(model, 1).Summary is not ("READ ERROR" or "INVALID MODEL");

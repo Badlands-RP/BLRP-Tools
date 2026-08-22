@@ -48,6 +48,7 @@ internal sealed class MainForm : Form
     private readonly Button _refreshBusinesses;
     private readonly Button _combineBlacklist;
     private readonly Button _scanQuality;
+    private readonly Button _exportQuality;
     private readonly ListBox _outfitItems = new();
     private readonly List<ClothingEntry> _outfit = new();
 
@@ -90,6 +91,8 @@ internal sealed class MainForm : Form
         _refreshBusinesses = CreateButton("REFRESH OPTIONS", async (_, _) => await RefreshBusinessesAsync(true), true);
         _combineBlacklist = CreateButton("COMBINE...", (_, _) => CombineBlacklistGroups(), true);
         _scanQuality = CreateButton("SCAN REPO QC", async (_, _) => await ScanQualityAsync(), true);
+        _exportQuality = CreateButton("EXPORT QC CSV", ExportQualityCsv);
+        _exportQuality.Enabled = false;
 
         foreach (ComponentDefinition component in ClothingComponents.All)
         {
@@ -374,17 +377,19 @@ internal sealed class MainForm : Form
 
     private Control BuildStatusBar()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3, RowCount = 1 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 4, RowCount = 1 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
         _status.Dock = DockStyle.Fill;
         _status.TextAlign = ContentAlignment.MiddleLeft;
         layout.Controls.Add(_scanQuality, 1, 0);
+        layout.Controls.Add(_exportQuality, 2, 0);
         _progress.Dock = DockStyle.Fill;
         _progress.Margin = new Padding(0, 11, 0, 11);
         layout.Controls.Add(_status, 0, 0);
-        layout.Controls.Add(_progress, 2, 0);
+        layout.Controls.Add(_progress, 3, 0);
         return layout;
     }
 
@@ -429,6 +434,7 @@ internal sealed class MainForm : Form
         _results.Columns.Add("Pack", "PACK");
         _results.Columns.Add("Relative", "RELATIVE");
         _results.Columns.Add("Textures", "TEXTURES");
+        _results.Columns.Add("Polygons", "POLYS");
         _results.Columns.Add("Quality", "MODEL QC");
         _results.Columns.Add("File", "FILE");
         _results.Columns[0].Width = 76;
@@ -438,8 +444,9 @@ internal sealed class MainForm : Form
         _results.Columns[4].Width = 56;
         _results.Columns[5].Width = 76;
         _results.Columns[6].Width = 76;
-        _results.Columns[7].Width = 190;
-        _results.Columns[8].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        _results.Columns[7].Width = 90;
+        _results.Columns[8].Width = 190;
+        _results.Columns[9].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
     }
 
     private void WireEvents()
@@ -533,6 +540,29 @@ internal sealed class MainForm : Form
             SetBusy(false);
         }
     }
+
+    private void ExportQualityCsv(object? sender, EventArgs e)
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Export clothing QC results",
+            Filter = "CSV file (*.csv)|*.csv",
+            FileName = $"clothing-qc-{DateTime.Now:yyyy-MM-dd}.csv",
+            AddExtension = true,
+            DefaultExt = "csv"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        string[] headers = [.. _results.Columns.Cast<DataGridViewColumn>().Select(column => column.HeaderText), "QC DETAILS", "FULL PATH"];
+        var lines = new List<string> { string.Join(',', headers.Select(CsvCell)) };
+        lines.AddRange(_results.Rows.Cast<DataGridViewRow>().Select(row => string.Join(',',
+            row.Cells.Cast<DataGridViewCell>().Select(cell => CsvCell(cell.Value?.ToString() ?? string.Empty))
+                .Concat([CsvCell(row.Cells[8].ToolTipText), CsvCell((row.Tag as ClothingEntry)?.FilePath ?? string.Empty)]))));
+        File.WriteAllLines(dialog.FileName, lines, new UTF8Encoding(true));
+        SetStatus($"EXPORTED {_results.Rows.Count:N0} QC RESULT{(_results.Rows.Count == 1 ? string.Empty : "S")} TO {dialog.FileName}", false);
+    }
+
+    internal static string CsvCell(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 
     private IReadOnlyList<string> BuildBlacklistOptions(IEnumerable<string> panelBusinesses) =>
         BusinessDirectory.Normalize(panelBusinesses
@@ -1209,6 +1239,7 @@ internal sealed class MainForm : Form
         _openResultPath.Enabled = false;
         _openPreview.Enabled = false;
         _duplicateIntoCategory.Enabled = false;
+        _exportQuality.Enabled = qualityByPath != null && qualityByPath.Count > 0;
         _results.Rows.Clear();
         foreach (ClothingEntry entry in entries)
         {
@@ -1226,13 +1257,14 @@ internal sealed class MainForm : Form
                 entry.Pack,
                 entry.RelativeIndex,
                 entry.TextureCount,
+                quality.HighPolygons?.ToString("N0") ?? "—",
                 quality.Summary,
                 relativePath);
-            _results.Rows[rowIndex].Cells[7].ToolTipText = quality.Details;
-            _results.Rows[rowIndex].Cells[7].Style.ForeColor = quality.Summary == "OK"
+            _results.Rows[rowIndex].Cells[8].ToolTipText = quality.Details;
+            _results.Rows[rowIndex].Cells[8].Style.ForeColor = quality.Summary == "OK"
                 ? Color.FromArgb(120, 220, 150)
                 : Color.FromArgb(255, 180, 50);
-            _results.Rows[rowIndex].Cells[8].ToolTipText = entry.FilePath;
+            _results.Rows[rowIndex].Cells[9].ToolTipText = entry.FilePath;
             _results.Rows[rowIndex].Tag = entry;
         }
 
@@ -1250,6 +1282,7 @@ internal sealed class MainForm : Form
         _openResultPath.Enabled = false;
         _openPreview.Enabled = false;
         _duplicateIntoCategory.Enabled = false;
+        _exportQuality.Enabled = false;
         _results.Rows.Clear();
         string slot = entry.Component.IsProp ? $"PROP {entry.Component.Slot}" : entry.Component.Slot.ToString();
         string fileSummary = entry.ModelArchivePath +
@@ -1262,9 +1295,10 @@ internal sealed class MainForm : Form
             "R*",
             entry.RelativeIndex,
             entry.TextureArchivePaths.Count,
+            "—",
             "ROCKSTAR",
             fileSummary);
-        _results.Rows[rowIndex].Cells[8].ToolTipText = string.Join(
+        _results.Rows[rowIndex].Cells[9].ToolTipText = string.Join(
             Environment.NewLine,
             new[] { entry.ModelArchivePath }.Concat(entry.TextureArchivePaths));
         _resultCount.Text = "1 RESULT";
@@ -1601,6 +1635,8 @@ internal sealed class MainForm : Form
                form._copyResultPath.Text == "COPY PATH" &&
                form._openResultPath.Text == "OPEN PATH" &&
                form._scanQuality.Text == "SCAN REPO QC" &&
+               form._exportQuality.Text == "EXPORT QC CSV" &&
+               CsvCell("a,\"b") == "\"a,\"\"b\"" &&
                replaced &&
                outfit.Count == 2 &&
                outfit[0] == replacementTop &&
