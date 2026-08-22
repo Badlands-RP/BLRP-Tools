@@ -32,4 +32,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          gh release create $env:GITHUB_REF_NAME "release/BLRP-Tools-v$version-win-x64.zip" --generate-notes --title "BLRP Tools $env:GITHUB_REF_NAME"
+          $archive = "release/BLRP-Tools-v$version-win-x64.zip"
+          $notes = "release-notes/$env:GITHUB_REF_NAME.md"
+
+          if (-not (Test-Path -LiteralPath $notes)) {
+            throw "Missing required release changelog: $notes"
+          }
+
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $env:GITHUB_REF_NAME --title "BLRP Tools $env:GITHUB_REF_NAME" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update the GitHub release notes." }
+            gh release upload $env:GITHUB_REF_NAME $archive --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Failed to upload the release archive." }
+          }
+          else {
+            gh release create $env:GITHUB_REF_NAME $archive --title "BLRP Tools $env:GITHUB_REF_NAME" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create the GitHub release." }
+          }
