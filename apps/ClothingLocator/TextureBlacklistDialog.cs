@@ -8,6 +8,7 @@ internal sealed class TextureBlacklistDialog : Form
     private readonly IReadOnlyList<string> _texturePaths;
     private readonly int _startingTextureIndex;
     private readonly string? _drawableRestriction;
+    private readonly IReadOnlyList<string> _businesses;
     private readonly DataGridView _grid = new();
     private readonly ComboBox _applyAll = new();
     private readonly CheckBox _optimizeCompression = new();
@@ -21,6 +22,7 @@ internal sealed class TextureBlacklistDialog : Form
         _texturePaths = texturePaths;
         _startingTextureIndex = startingTextureIndex;
         _drawableRestriction = drawableRestriction;
+        _businesses = businesses;
 
         Text = "Assign texture blacklists";
         StartPosition = FormStartPosition.CenterParent;
@@ -44,7 +46,7 @@ internal sealed class TextureBlacklistDialog : Form
         layout.Controls.Add(Label("ASSIGN EACH NEW TEXTURE", 15F, Color.White, FontStyle.Bold), 0, 0);
         layout.Controls.Add(Label(
             drawableRestriction == null
-                ? "Each texture defaults to public. Choose a business only where needed."
+                ? "Each texture defaults to public. Choose or combine restrictions only where needed."
                 : $"Whole drawable is already restricted to {drawableRestriction}. Per-texture choices are disabled.",
             9F,
             drawableRestriction == null ? Color.FromArgb(180, 200, 215) : Color.FromArgb(255, 180, 50),
@@ -83,20 +85,26 @@ internal sealed class TextureBlacklistDialog : Form
 
     private Control BuildApplyAll(IReadOnlyList<string> businesses)
     {
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1 };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1 };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
         panel.Controls.Add(Label("APPLY TO ALL", 9F, Color.FromArgb(135, 206, 235), FontStyle.Bold), 0, 0);
         ConfigureCombo(_applyAll, businesses);
         _applyAll.Dock = DockStyle.Fill;
         _applyAll.Enabled = _drawableRestriction == null;
         panel.Controls.Add(_applyAll, 1, 0);
+        Button combine = Button("COMBINE...", false);
+        combine.DialogResult = DialogResult.None;
+        combine.Enabled = _drawableRestriction == null;
+        combine.Click += (_, _) => CreateCombinedChoice();
+        panel.Controls.Add(combine, 2, 0);
         Button apply = Button("APPLY", false);
         apply.DialogResult = DialogResult.None;
         apply.Enabled = _drawableRestriction == null;
         apply.Click += (_, _) => ApplyToAll();
-        panel.Controls.Add(apply, 2, 0);
+        panel.Controls.Add(apply, 3, 0);
         return panel;
     }
 
@@ -165,6 +173,25 @@ internal sealed class TextureBlacklistDialog : Form
         {
             row.Cells[2].Value = _applyAll.SelectedItem;
         }
+    }
+
+    private void CreateCombinedChoice()
+    {
+        string? current = _applyAll.SelectedItem as string;
+        string? combined = BlacklistGroupPicker.Pick(
+            this,
+            _businesses,
+            current == PublicChoice ? null : current);
+        if (combined == null)
+        {
+            return;
+        }
+        if (!_applyAll.Items.Contains(combined))
+        {
+            _applyAll.Items.Add(combined);
+            ((DataGridViewComboBoxColumn)_grid.Columns[2]).Items.Add(combined);
+        }
+        _applyAll.SelectedItem = combined;
     }
 
     private static void ConfigureCombo(ComboBox combo, IReadOnlyList<string> businesses)

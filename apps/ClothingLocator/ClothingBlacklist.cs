@@ -5,6 +5,34 @@ namespace BLRP.ClothingLocator;
 
 internal static class ClothingBlacklist
 {
+    public static IReadOnlyList<string> GetRestrictionNames(string rootPath)
+    {
+        if (!Directory.Exists(rootPath))
+        {
+            return [];
+        }
+
+        string directory = Path.Combine(Path.GetFullPath(rootPath), "blrp_clothingstore", "blacklists");
+        if (!Directory.Exists(directory))
+        {
+            return [];
+        }
+
+        var pattern = new Regex(
+            @"^\s*\[\d+\]\s*=\s*'(?<value>(?:\\.|[^'])*)'",
+            RegexOptions.CultureInvariant);
+        return Directory.EnumerateFiles(directory, "*.lua", SearchOption.TopDirectoryOnly)
+            .SelectMany(File.ReadLines)
+            .Select(line => pattern.Match(line))
+            .Where(match => match.Success)
+            .Select(match => match.Groups["value"].Value
+                .Replace("\\'", "'", StringComparison.Ordinal)
+                .Replace("\\\\", "\\", StringComparison.Ordinal))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     public static string? GetDrawableRestriction(
         string rootPath,
         Gender gender,
@@ -218,13 +246,20 @@ internal static class ClothingBlacklist
         Directory.CreateDirectory(directory);
         const string fixture = "blacklists[`mp_m_freemode_01`] = {\r\n  sex = 'male',\r\n  ['4'] = {\r\n  },\r\n}\r\n";
         File.WriteAllText(Path.Combine(directory, "mp_m_freemode_01.lua"), fixture);
+        File.WriteAllText(
+            Path.Combine(directory, "existing.lua"),
+            "sex = 'female'\r\n  [1] = 'LEO',\r\n  [2] = 'Bob\\'s Burgers',\r\n");
 
         AddDrawable(root, Gender.Male, ClothingComponents.ByCode["lowr"], 400, "Bob's Burgers");
         AddTexture(root, Gender.Male, ClothingComponents.ByCode["lowr"], 401, 2, "Aces and Eights");
         AddDrawable(root, Gender.Male, ClothingComponents.ByCode["lowr"], 400, "Bob's Burgers");
         AddTexture(root, Gender.Male, ClothingComponents.ByCode["lowr"], 401, 2, "Aces and Eights");
         string result = File.ReadAllText(Path.Combine(directory, "mp_m_freemode_01.lua"));
-        return GetDrawableRestriction(root, Gender.Male, ClothingComponents.ByCode["lowr"], 400) == "Bob's Burgers" &&
+        IReadOnlyList<string> names = GetRestrictionNames(root);
+        return names.Contains("LEO") &&
+               names.Contains("Bob's Burgers") &&
+               !names.Contains("female") &&
+               GetDrawableRestriction(root, Gender.Male, ClothingComponents.ByCode["lowr"], 400) == "Bob's Burgers" &&
                GetDrawableRestriction(root, Gender.Male, ClothingComponents.ByCode["lowr"], 401) == null &&
                result.Contains("[400] = 'Bob\\'s Burgers',", StringComparison.Ordinal) &&
                result.Contains("[401] = {", StringComparison.Ordinal) &&

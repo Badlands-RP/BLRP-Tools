@@ -8,6 +8,11 @@ namespace BLRP.ClothingLocator;
 internal sealed class MainForm : Form
 {
     private const string NoBlacklistBusiness = "(NO BLACKLIST - PUBLIC CLOTHING)";
+    private static readonly string[] CommonBlacklistGroups =
+    [
+        "LEO", "LSFD", "LEO|LSFD", "LSPD", "Sheriff", "SAHP", "FIB", "NYSP",
+        "Dispatch", "Ranger", "LEO|Ranger", "DOC", "DOJ"
+    ];
     private static readonly Color BackgroundTop = Color.FromArgb(12, 12, 28);
     private static readonly Color BackgroundBottom = Color.FromArgb(20, 20, 40);
     private static readonly Color CardTop = Color.FromArgb(20, 20, 40);
@@ -39,6 +44,7 @@ internal sealed class MainForm : Form
     private readonly Button _removeOutfitItem;
     private readonly Button _clearOutfit;
     private readonly Button _refreshBusinesses;
+    private readonly Button _combineBlacklist;
     private readonly ListBox _outfitItems = new();
     private readonly List<ClothingEntry> _outfit = new();
 
@@ -74,7 +80,8 @@ internal sealed class MainForm : Form
         _removeOutfitItem.Enabled = false;
         _clearOutfit = CreateButton("CLEAR", ClearOutfit);
         _clearOutfit.Enabled = false;
-        _refreshBusinesses = CreateButton("REFRESH BUSINESSES", async (_, _) => await RefreshBusinessesAsync(true), true);
+        _refreshBusinesses = CreateButton("REFRESH OPTIONS", async (_, _) => await RefreshBusinessesAsync(true), true);
+        _combineBlacklist = CreateButton("COMBINE...", (_, _) => CombineBlacklistGroups(), true);
 
         foreach (ComponentDefinition component in ClothingComponents.All)
         {
@@ -191,7 +198,8 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(businessLabel, 5);
         _business.Dock = DockStyle.Fill;
         layout.Controls.Add(_business, 0, 3);
-        layout.SetColumnSpan(_business, 4);
+        layout.SetColumnSpan(_business, 3);
+        layout.Controls.Add(_combineBlacklist, 3, 3);
         layout.Controls.Add(_refreshBusinesses, 4, 3);
         card.Controls.Add(layout);
         return card;
@@ -436,6 +444,7 @@ internal sealed class MainForm : Form
         try
         {
             _catalog = await ClothingCatalog.LoadAsync(root);
+            PopulateBusinesses(BuildBlacklistOptions(BusinessDirectory.LoadCached()));
             SetStatus($"READY  /  {_catalog.FileCount:N0} COMPILED YDD FILES INDEXED", false);
         }
         catch (Exception exception)
@@ -454,17 +463,17 @@ internal sealed class MainForm : Form
         _refreshBusinesses.Enabled = false;
         try
         {
-            IReadOnlyList<string> names = await BusinessDirectory.RefreshAsync();
+            IReadOnlyList<string> names = BuildBlacklistOptions(await BusinessDirectory.RefreshAsync());
 
             PopulateBusinesses(names);
             if (reportErrors)
             {
-                SetStatus($"BUSINESS LIST REFRESHED / {names.Count} CURRENT BUSINESSES", false);
+                SetStatus($"BLACKLIST OPTIONS REFRESHED / {names.Count} AVAILABLE", false);
             }
         }
         catch (Exception exception)
         {
-            PopulateBusinesses(BusinessDirectory.LoadCached());
+            PopulateBusinesses(BuildBlacklistOptions(BusinessDirectory.LoadCached()));
             if (reportErrors)
             {
                 ShowError(exception.Message);
@@ -474,6 +483,25 @@ internal sealed class MainForm : Form
         {
             _refreshBusinesses.Enabled = true;
         }
+    }
+
+    private IReadOnlyList<string> BuildBlacklistOptions(IEnumerable<string> panelBusinesses) =>
+        BusinessDirectory.Normalize(panelBusinesses
+            .Concat(CommonBlacklistGroups)
+            .Concat(ClothingBlacklist.GetRestrictionNames(_rootPath.Text.Trim())));
+
+    private void CombineBlacklistGroups()
+    {
+        string? combined = BlacklistGroupPicker.Pick(
+            this,
+            _business.Items.Cast<string>().Skip(1),
+            SelectedBusiness);
+        if (combined == null)
+        {
+            return;
+        }
+        int index = _business.FindStringExact(combined);
+        _business.SelectedIndex = index >= 0 ? index : _business.Items.Add(combined);
     }
 
     private void PopulateBusinesses(IReadOnlyList<string> names)

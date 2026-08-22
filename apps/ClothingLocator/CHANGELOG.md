@@ -2,6 +2,15 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.5.4 - 2026-08-22
+
+### Added
+
+- Blacklist selectors now combine current Panel businesses, common vRP service
+  groups, and restriction values already used by the selected EUP repository.
+- Multiple groups can be selected and saved as the server's existing
+  pipe-separated access rule, such as `LEO|LSFD`.
+
 ## 1.5.2 - 2026-08-12
 
 ### Fixed
