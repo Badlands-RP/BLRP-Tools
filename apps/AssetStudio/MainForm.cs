@@ -37,7 +37,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _cupYdrTarget = CreateTextBox(true);
     private readonly TextBox _cupIconTarget = CreateTextBox(true);
     private readonly TextBox _inventoryModel = CreateTextBox();
-    private readonly TextBox _inventoryTexture = CreateTextBox();
+    private readonly ComboBox _inventoryTexture = CreatePathComboBox();
     private readonly TextBox _inventoryReplacement = CreateTextBox();
     private readonly Label _status = CreateLabel("READY", 9, AccentLight, FontStyle.Bold);
     private readonly ModelPreview _preview = new() { Dock = DockStyle.Fill };
@@ -77,6 +77,7 @@ internal sealed class MainForm : Form
         _cupPng.PlaceholderText = "OPTIONAL FOR PREVIEW / REQUIRED TO CREATE";
         _cupTop.PlaceholderText = "OPTIONAL - KEEPS SOURCE WHEN BLANK";
         _cupLod.PlaceholderText = "OPTIONAL - KEEPS SOURCE WHEN BLANK";
+        _inventoryTexture.SelectionChangeCommitted += (_, _) => _ = LoadPreviewAsync();
         BuildInterface();
         SetBatDefaults();
         _mode.Items.AddRange(["STAFF PREVIEW", "DEVELOPER IMPORT", "CUP CREATOR", "INVENTORY PHOTO"]);
@@ -295,16 +296,16 @@ internal sealed class MainForm : Form
         Label heading = CreateLabel("INVENTORY ITEM PHOTO", 11, AccentLight, FontStyle.Bold);
         layout.Controls.Add(heading, 0, 0);
         layout.SetColumnSpan(heading, 3);
-        Label explanation = CreateLabel("Load any GTA YDR with its optional YTD, pose it in 3D, then save the current view as a transparent 256x256 WebP with drop shadow.", 9, TextPrimary);
+        Label explanation = CreateLabel("Load any GTA YDR, YDD, or YFT with its optional YTD, pose it in 3D, then save the current view as a transparent 256x256 WebP with drop shadow.", 9, TextPrimary);
         explanation.AutoEllipsis = false;
         layout.Controls.Add(explanation, 0, 1);
         layout.SetColumnSpan(explanation, 3);
         AddSection(layout, "MODEL SOURCE", 2);
-        AddField(layout, "MODEL (.YDR)", _inventoryModel, 3,
-            CreateButton("BROWSE", (_, _) => BrowseAsset(_inventoryModel, "YDR model|*.ydr")));
-        AddField(layout, "TEXTURES (.YTD, OPTIONAL)", _inventoryTexture, 4,
-            CreateButton("BROWSE", (_, _) => BrowseAsset(_inventoryTexture, "YTD textures|*.ytd")),
-            CreateButton("CLEAR", (_, _) => _inventoryTexture.Clear()));
+        AddField(layout, "MODEL (.YDR / .YDD / .YFT)", _inventoryModel, 3,
+            CreateButton("BROWSE", (_, _) => BrowseAsset(_inventoryModel, "GTA model|*.ydr;*.ydd;*.yft|YDR model|*.ydr|YDD dictionary|*.ydd|YFT fragment|*.yft")));
+        AddField(layout, "TEXTURES (.YTD, OPTIONAL / DETECTED)", _inventoryTexture, 4,
+            CreateButton("CUSTOM YTD", (_, _) => BrowseAsset(_inventoryTexture, "YTD textures|*.ytd")),
+            CreateButton("CLEAR", (_, _) => { _inventoryTexture.SelectedIndex = -1; _inventoryTexture.Text = string.Empty; }));
         AddField(layout, "DIFFUSE OVERRIDE (.PNG / .DDS, OPTIONAL)", _inventoryReplacement, 5,
             CreateButton("BROWSE", (_, _) => BrowseAsset(_inventoryReplacement, ReplacementFilter)),
             CreateButton("CLEAR", (_, _) => _inventoryReplacement.Clear()));
@@ -378,7 +379,7 @@ internal sealed class MainForm : Form
         _inventoryCard.Visible = IsInventory;
         if (IsInventory) _inventoryCard.BringToFront(); else if (IsCup) _cupCard.BringToFront(); else if (IsDeveloper) _developerCard.BringToFront(); else _staffCard.BringToFront();
         _preview.EmptyMessage = IsInventory
-            ? "SELECT A GTA YDR, THEN LOAD MODEL"
+            ? "SELECT A GTA YDR, YDD, OR YFT, THEN LOAD MODEL"
             : IsCup
             ? "SELECT A CUP YDR, THEN LOAD PREVIEW"
             : IsDeveloper
@@ -438,7 +439,7 @@ internal sealed class MainForm : Form
         if (!File.Exists(modelPath) || (texturePath is not null && !File.Exists(texturePath)))
         {
             ShowError(IsInventory
-                ? "Choose a valid YDR and, when used by the model, its YTD texture dictionary."
+                ? "Choose a valid YDR, YDD, or YFT and, when used by the model, its YTD texture dictionary."
                 : IsCup
                 ? "Choose a cup YDR first."
                 : IsDeveloper
@@ -621,7 +622,7 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) == DialogResult.OK) target.Text = dialog.SelectedPath;
     }
 
-    private void BrowseAsset(TextBox target, string filter)
+    private void BrowseAsset(Control target, string filter)
     {
         string? initialDirectory = target == _cupModel
             ? CupStreamFolder()
@@ -639,13 +640,54 @@ internal sealed class MainForm : Form
         }
         if (target == _inventoryModel)
         {
-            string pair = Path.ChangeExtension(dialog.FileName, ".ytd");
-            _inventoryTexture.Text = File.Exists(pair) ? pair : string.Empty;
+            SetDetectedInventoryTextures(dialog.FileName);
+        }
+        if (target == _inventoryTexture && !_inventoryTexture.Items.Contains(dialog.FileName))
+        {
+            _inventoryTexture.Items.Add(dialog.FileName);
         }
         if (target == _cupModel || ((target == _cupPng || target == _cupTop || target == _cupLod) && File.Exists(_cupModel.Text)) || target == _staffPng ||
             (target == _sourcePng && File.Exists(_sourceModel.Text) && File.Exists(_sourceTexture.Text)) ||
             ((target == _inventoryTexture || target == _inventoryReplacement) && File.Exists(_inventoryModel.Text)))
             _ = LoadPreviewAsync();
+    }
+
+    private void SetDetectedInventoryTextures(string modelPath)
+    {
+        _inventoryTexture.Items.Clear();
+        string exact = Path.ChangeExtension(modelPath, ".ytd");
+        IEnumerable<string> matches = File.Exists(exact) ? [exact] : [];
+        Regex? clothing = ClothingTextureRegex(modelPath);
+        string? folder = Path.GetDirectoryName(modelPath);
+        if (clothing is not null && folder is not null)
+            matches = matches.Concat(Directory.EnumerateFiles(folder, "*.ytd")
+                .Where(path => clothing.IsMatch(Path.GetFileNameWithoutExtension(path))));
+        string[] options = matches.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        _inventoryTexture.Items.AddRange(options);
+        _inventoryTexture.SelectedIndex = options.Length > 0 ? 0 : -1;
+        _inventoryTexture.Text = options.FirstOrDefault() ?? string.Empty;
+        if (options.Length > 1) SetStatus($"DETECTED {options.Length} MATCHING YTDS  /  CHOOSE A TEXTURE VARIANT");
+    }
+
+    private static Regex? ClothingTextureRegex(string modelPath)
+    {
+        string stem = Path.GetFileNameWithoutExtension(modelPath);
+        string prefix = stem.Contains('^') ? stem[..(stem.LastIndexOf('^') + 1)] : string.Empty;
+        string name = stem[(stem.LastIndexOf('^') + 1)..];
+        string[] parts = name.Split('_');
+        bool prop = parts.Length >= 3 && parts[0].Equals("p", StringComparison.OrdinalIgnoreCase);
+        int numberIndex = prop ? 2 : 1;
+        if (parts.Length <= numberIndex || !int.TryParse(parts[numberIndex], out _)) return null;
+        string component = prop ? parts[0] + "_" + parts[1] : parts[0];
+        return new Regex($"^{Regex.Escape(prefix + component)}_diff_{Regex.Escape(parts[numberIndex])}(?:_|$)", RegexOptions.IgnoreCase);
+    }
+
+    internal static bool TextureMatchingSelfTest()
+    {
+        Regex component = ClothingTextureRegex(@"C:\pack\shop.v1^jbib_005_u.ydd")!;
+        Regex prop = ClothingTextureRegex(@"C:\pack\p_head_012.ydd")!;
+        return component.IsMatch("shop.v1^jbib_diff_005_a_uni") && !component.IsMatch("shopXv1^jbib_diff_005_a_uni") &&
+            !component.IsMatch("shop.v1^jbib_diff_006_a_uni") && prop.IsMatch("p_head_diff_012_a");
     }
 
     private string? StreamFolder()
@@ -728,6 +770,7 @@ internal sealed class MainForm : Form
     }
 
     private static TextBox CreateTextBox(bool readOnly = false) => new() { BackColor = InputBackground, ForeColor = readOnly ? AccentLight : TextPrimary, BorderStyle = BorderStyle.FixedSingle, Font = PickMonoFont(8.5F), ReadOnly = readOnly };
+    private static ComboBox CreatePathComboBox() => new() { BackColor = InputBackground, ForeColor = TextPrimary, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDown, DropDownWidth = 720, Font = PickMonoFont(8.5F) };
     private static ComboBox CreateComboBox() => new() { BackColor = InputBackground, ForeColor = TextPrimary, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList, Font = PickMonoFont(8.5F, FontStyle.Bold) };
     private static Label CreateLabel(string text, float size, Color color, FontStyle style = FontStyle.Regular) => new() { Text = text, ForeColor = color, BackColor = Color.Transparent, Font = PickMonoFont(size, style), Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static Button CreateButton(string text, EventHandler handler, bool primary = false)

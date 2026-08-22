@@ -5,6 +5,20 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0].Equals("--optimize-ytd", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                YtdOptimizer.Optimize(args[1], args[2]);
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine(exception);
+                return 1;
+            }
+        }
+
         if (args.Length is 3 or 4 && args[0].Equals("--render-embedded-inventory", StringComparison.OrdinalIgnoreCase))
         {
             string? replacementPng = args.Length == 4 ? args[2] : null;
@@ -51,7 +65,8 @@ internal static class Program
             try
             {
                 return WeaponSkinImporter.SelfTest() && WeaponTextureBuilder.SelfTest() &&
-                    WeaponBoneExpander.SelfTest() && InventoryImageExporter.SelfTest() ? 0 : 1;
+                    WeaponBoneExpander.SelfTest() && InventoryImageExporter.SelfTest() &&
+                    MainForm.TextureMatchingSelfTest() ? 0 : 1;
             }
             catch (Exception exception)
             {

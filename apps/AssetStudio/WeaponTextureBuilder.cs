@@ -95,7 +95,15 @@ internal static class WeaponTextureBuilder
         diffuse.Data = new TextureData { FullData = EncodeMipChain(image, format, levels) };
     }
 
-    private static Texture? FindDiffuse(Drawable? drawable, Texture[] textures)
+    internal static void ApplyDiffuse(DrawableBase drawable, Texture[] textures, string imagePath)
+    {
+        Texture diffuse = FindDiffuse(drawable, textures) ??
+            textures.FirstOrDefault(texture => texture.Name.EndsWith("_d", StringComparison.OrdinalIgnoreCase)) ??
+            textures.FirstOrDefault() ?? throw new InvalidDataException("The model has no diffuse texture.");
+        ReplaceDiffuse(diffuse, imagePath);
+    }
+
+    private static Texture? FindDiffuse(DrawableBase? drawable, Texture[] textures)
     {
         if (drawable is null) return null;
         var byName = textures.ToDictionary(texture => texture.Name, StringComparer.OrdinalIgnoreCase);
@@ -108,6 +116,11 @@ internal static class WeaponTextureBuilder
             {
                 if ((uint)parameters.Hashes[index] == DiffuseSampler &&
                     parameters.Parameters[index].Data is TextureBase reference &&
+                    byName.TryGetValue(reference.Name, out Texture? texture)) return texture;
+            }
+            for (int index = 0; index < parameters.Hashes.Length; index++)
+            {
+                if (parameters.Parameters[index].Data is TextureBase reference &&
                     byName.TryGetValue(reference.Name, out Texture? texture)) return texture;
             }
         }
@@ -135,7 +148,7 @@ internal static class WeaponTextureBuilder
         return result;
     }
 
-    private static byte[] EncodeMipChain(Bitmap source, TextureFormat format, int levels)
+    internal static byte[] EncodeMipChain(Bitmap source, TextureFormat format, int levels)
     {
         using var output = new MemoryStream();
         Bitmap current = (Bitmap)source.Clone();

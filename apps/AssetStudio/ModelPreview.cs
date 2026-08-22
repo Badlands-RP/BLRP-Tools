@@ -134,12 +134,12 @@ internal sealed class PreviewScene
 
     public static PreviewScene Load(string modelPath, string? texturePath, string? replacementImage = null, string? replacementTop = null, string? replacementLod = null)
     {
-        var ydr = new YdrFile();
-        ydr.Load(string.IsNullOrWhiteSpace(texturePath) &&
+        bool isYdr = Path.GetExtension(modelPath).Equals(".ydr", StringComparison.OrdinalIgnoreCase);
+        byte[] modelData = isYdr && string.IsNullOrWhiteSpace(texturePath) &&
             (!string.IsNullOrWhiteSpace(replacementImage) || !string.IsNullOrWhiteSpace(replacementTop) || !string.IsNullOrWhiteSpace(replacementLod))
             ? WeaponTextureBuilder.BuildEmbedded(modelPath, replacementImage, replacementTop, replacementLod)
-            : File.ReadAllBytes(modelPath));
-        Drawable drawable = ydr.Drawable ?? throw new InvalidDataException("The YDR has no drawable.");
+            : File.ReadAllBytes(modelPath);
+        DrawableBase drawable = LoadDrawable(modelPath, modelData);
         Texture[] sourceTextures;
         if (string.IsNullOrWhiteSpace(texturePath))
         {
@@ -148,12 +148,14 @@ internal sealed class PreviewScene
         else
         {
             var ytd = new YtdFile();
-            ytd.Load(string.IsNullOrWhiteSpace(replacementImage)
+            ytd.Load(!isYdr || string.IsNullOrWhiteSpace(replacementImage)
                 ? File.ReadAllBytes(texturePath)
                 : WeaponTextureBuilder.Build(modelPath, texturePath, replacementImage));
             sourceTextures = ytd.TextureDict?.Textures?.data_items ?? [];
         }
         if (sourceTextures.Length == 0) throw new InvalidDataException("The model has no available textures.");
+        if (!isYdr && !string.IsNullOrWhiteSpace(replacementImage))
+            WeaponTextureBuilder.ApplyDiffuse(drawable, sourceTextures, replacementImage);
         var textures = new Dictionary<string, PreviewTexture>(StringComparer.OrdinalIgnoreCase);
         foreach (Texture texture in sourceTextures)
         {
@@ -162,6 +164,11 @@ internal sealed class PreviewScene
         }
         PreviewTexture fallback = textures.GetValueOrDefault("coffee_main")
             ?? textures.FirstOrDefault(pair => pair.Key.EndsWith("_d", StringComparison.OrdinalIgnoreCase)).Value
+            ?? textures.FirstOrDefault(pair => !pair.Key.Contains("normal", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.Contains("bump", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.Contains("spec", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.Equals("blank", StringComparison.OrdinalIgnoreCase) &&
+                !pair.Key.EndsWith("_n", StringComparison.OrdinalIgnoreCase)).Value
             ?? textures.Values.First();
         var triangles = new List<PreviewTriangle>();
         Vector3 min = new(float.MaxValue), max = new(float.MinValue);
@@ -182,11 +189,50 @@ internal sealed class PreviewScene
                 triangles.Add(new PreviewTriangle(a, b, c, texture));
             }
         }
-        if (triangles.Count == 0) throw new InvalidDataException("The YDR has no high-detail triangles to preview.");
+        if (triangles.Count == 0) throw new InvalidDataException("The model has no high-detail triangles to preview.");
         Vector3 center = (min + max) * 0.5f;
         float radius = triangles.SelectMany(triangle => new[] { triangle.A, triangle.B, triangle.C })
             .Max(vertex => Vector3.Distance(center, vertex.Position));
         return new PreviewScene(triangles.ToArray(), center, Math.Max(0.001f, radius));
+    }
+
+    private static DrawableBase LoadDrawable(string path, byte[] data)
+    {
+        if (data.AsSpan().StartsWith("FXAP"u8))
+            throw new InvalidDataException("Asset Escrow-protected models cannot be previewed.");
+        return Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".ydr" => LoadYdr(data),
+            ".ydd" => LoadYdd(data),
+            ".yft" => LoadYft(data),
+            _ => throw new InvalidDataException("Choose a YDR, YDD, or YFT model file.")
+        };
+    }
+
+    private static DrawableBase LoadYdr(byte[] data)
+    {
+        var file = new YdrFile();
+        file.Load(data);
+        return file.Drawable ?? throw new InvalidDataException("The YDR has no drawable.");
+    }
+
+    private static DrawableBase LoadYdd(byte[] data)
+    {
+        var file = new YddFile();
+        file.Load(data);
+        return file.Drawables?.FirstOrDefault(drawable => drawable.DrawableModels?.High?.Length > 0)
+            ?? file.Drawables?.FirstOrDefault() ?? throw new InvalidDataException("The YDD has no drawables.");
+    }
+
+    private static DrawableBase LoadYft(byte[] data)
+    {
+        var file = new YftFile();
+        file.Load(data);
+        DrawableBase? main = file.Fragment?.Drawable;
+        return (main?.DrawableModels?.High?.Length > 0 ? main : null)
+            ?? file.Fragment?.DrawableArray?.data_items?.FirstOrDefault(drawable => drawable.DrawableModels?.High?.Length > 0)
+            ?? main ?? file.Fragment?.DrawableArray?.data_items?.FirstOrDefault()
+            ?? throw new InvalidDataException("The YFT has no drawable.");
     }
 
     public Bitmap Render(int width, int height, float yaw, float pitch, float zoom, bool transparent = false, float tilt = 0f)
@@ -282,6 +328,11 @@ internal sealed class PreviewScene
             if ((uint)parameters.Hashes[index] == DiffuseSampler && parameters.Parameters[index].Data is TextureBase reference &&
                 textures.TryGetValue(reference.Name, out PreviewTexture? texture)) return texture;
         }
+        for (int index = 0; index < parameters.Hashes.Length; index++)
+        {
+            if (parameters.Parameters[index].Data is TextureBase reference &&
+                textures.TryGetValue(reference.Name, out PreviewTexture? texture)) return texture;
+        }
         return null;
     }
 
@@ -292,7 +343,7 @@ internal sealed class PreviewScene
         Pixels = Enumerable.Repeat(color.ToArgb(), 4).ToArray()
     };
 
-    private static PreviewTexture DecodeTexture(Texture texture)
+    internal static PreviewTexture DecodeTexture(Texture texture)
     {
         int width = texture.Width, height = texture.Height;
         byte[] data = texture.Data?.FullData ?? throw new InvalidDataException($"Texture {texture.Name} has no pixel data.");
