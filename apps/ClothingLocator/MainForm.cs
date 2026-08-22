@@ -47,6 +47,7 @@ internal sealed class MainForm : Form
     private readonly Button _clearOutfit;
     private readonly Button _refreshBusinesses;
     private readonly Button _combineBlacklist;
+    private readonly Button _scanQuality;
     private readonly ListBox _outfitItems = new();
     private readonly List<ClothingEntry> _outfit = new();
 
@@ -88,6 +89,7 @@ internal sealed class MainForm : Form
         _clearOutfit.Enabled = false;
         _refreshBusinesses = CreateButton("REFRESH OPTIONS", async (_, _) => await RefreshBusinessesAsync(true), true);
         _combineBlacklist = CreateButton("COMBINE...", (_, _) => CombineBlacklistGroups(), true);
+        _scanQuality = CreateButton("SCAN REPO QC", async (_, _) => await ScanQualityAsync(), true);
 
         foreach (ComponentDefinition component in ClothingComponents.All)
         {
@@ -372,15 +374,17 @@ internal sealed class MainForm : Form
 
     private Control BuildStatusBar()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 1 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3, RowCount = 1 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
         _status.Dock = DockStyle.Fill;
         _status.TextAlign = ContentAlignment.MiddleLeft;
+        layout.Controls.Add(_scanQuality, 1, 0);
         _progress.Dock = DockStyle.Fill;
         _progress.Margin = new Padding(0, 11, 0, 11);
         layout.Controls.Add(_status, 0, 0);
-        layout.Controls.Add(_progress, 1, 0);
+        layout.Controls.Add(_progress, 2, 0);
         return layout;
     }
 
@@ -500,6 +504,33 @@ internal sealed class MainForm : Form
         finally
         {
             _refreshBusinesses.Enabled = true;
+        }
+    }
+
+    private async Task ScanQualityAsync()
+    {
+        if (!EnsureCatalog()) return;
+
+        ClothingCatalog catalog = _catalog!;
+        SetBusy(true, $"CHECKING {catalog.FileCount:N0} MODELS FOR QC WARNINGS...");
+        try
+        {
+            IReadOnlyList<(ClothingEntry Entry, ClothingModelQuality Quality)> report =
+                await catalog.CreateQualityReportAsync();
+            ShowResults(
+                report.Select(item => item.Entry),
+                report.ToDictionary(item => item.Entry.FilePath, item => item.Quality, StringComparer.OrdinalIgnoreCase));
+            SetStatus(
+                report.Count == 0 ? "REPO QC PASSED  /  NO MODEL WARNINGS" : $"REPO QC FOUND {report.Count:N0} MODEL{(report.Count == 1 ? string.Empty : "S")} TO REVIEW",
+                report.Count > 0);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        finally
+        {
+            SetBusy(false);
         }
     }
 
@@ -1166,7 +1197,9 @@ internal sealed class MainForm : Form
         }
     }
 
-    private void ShowResults(IEnumerable<ClothingEntry> entries)
+    private void ShowResults(
+        IEnumerable<ClothingEntry> entries,
+        IReadOnlyDictionary<string, ClothingModelQuality>? qualityByPath = null)
     {
         _selectedBaseEntry = null;
         _extractBaseFiles.Enabled = false;
@@ -1183,7 +1216,8 @@ internal sealed class MainForm : Form
             int globalIndex = _catalog!.GetGlobalIndex(entry, baseOffset);
             string slot = entry.Component.IsProp ? $"PROP {entry.Component.Slot}" : entry.Component.Slot.ToString();
             string relativePath = Path.GetRelativePath(_catalog.RootPath, entry.FilePath);
-            ClothingModelQuality quality = ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
+            ClothingModelQuality quality = qualityByPath?.GetValueOrDefault(entry.FilePath)
+                ?? ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
             int rowIndex = _results.Rows.Add(
                 entry.Gender.ToString().ToUpperInvariant(),
                 slot,
@@ -1566,6 +1600,7 @@ internal sealed class MainForm : Form
                form._openPreview.Text == "ADD TO OUTFIT" &&
                form._copyResultPath.Text == "COPY PATH" &&
                form._openResultPath.Text == "OPEN PATH" &&
+               form._scanQuality.Text == "SCAN REPO QC" &&
                replaced &&
                outfit.Count == 2 &&
                outfit[0] == replacementTop &&

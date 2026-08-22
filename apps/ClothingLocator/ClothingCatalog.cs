@@ -81,6 +81,7 @@ internal sealed class ClothingCatalog
 
     public string RootPath { get; }
     public int FileCount => _entries.Count;
+    public IReadOnlyList<ClothingEntry> Entries => _entries;
 
     public static Task<ClothingCatalog> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -163,6 +164,22 @@ internal sealed class ClothingCatalog
 
         return baseOffset + priorPackCount + entry.RelativeIndex;
     }
+
+    public Task<IReadOnlyList<(ClothingEntry Entry, ClothingModelQuality Quality)>> CreateQualityReportAsync(
+        CancellationToken cancellationToken = default) => Task.Run<IReadOnlyList<(ClothingEntry, ClothingModelQuality)>>(() =>
+    {
+        var report = new List<(ClothingEntry, ClothingModelQuality)>();
+        foreach (ClothingEntry entry in _entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ClothingModelQuality quality = ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
+            if (quality.Summary != "OK") report.Add((entry, quality));
+        }
+        return report
+            .OrderBy(item => item.Item2.Summary)
+            .ThenBy(item => item.Item1.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }, cancellationToken);
 
     public async Task<IReadOnlyList<ClothingEntry>> FindDuplicatesAsync(
         string selectedFile,
@@ -312,6 +329,10 @@ internal sealed class ClothingCatalog
         }
 
         IReadOnlyList<ClothingEntry> duplicates = realCatalog.FindDuplicatesAsync(item115.FilePath).GetAwaiter().GetResult();
-        return duplicates.Count == 1 && duplicates[0].RelativeIndex == 115;
+        IReadOnlyList<(ClothingEntry Entry, ClothingModelQuality Quality)> qualityReport =
+            realCatalog.CreateQualityReportAsync().GetAwaiter().GetResult();
+        return duplicates.Count == 1 &&
+            duplicates[0].RelativeIndex == 115 &&
+            qualityReport.All(item => item.Quality.Summary != "OK");
     }
 }
