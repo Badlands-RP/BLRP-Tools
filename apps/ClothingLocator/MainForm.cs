@@ -425,6 +425,7 @@ internal sealed class MainForm : Form
         _results.Columns.Add("Pack", "PACK");
         _results.Columns.Add("Relative", "RELATIVE");
         _results.Columns.Add("Textures", "TEXTURES");
+        _results.Columns.Add("Quality", "MODEL QC");
         _results.Columns.Add("File", "FILE");
         _results.Columns[0].Width = 76;
         _results.Columns[1].Width = 76;
@@ -433,7 +434,8 @@ internal sealed class MainForm : Form
         _results.Columns[4].Width = 56;
         _results.Columns[5].Width = 76;
         _results.Columns[6].Width = 76;
-        _results.Columns[7].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        _results.Columns[7].Width = 190;
+        _results.Columns[8].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
     }
 
     private void WireEvents()
@@ -1181,6 +1183,7 @@ internal sealed class MainForm : Form
             int globalIndex = _catalog!.GetGlobalIndex(entry, baseOffset);
             string slot = entry.Component.IsProp ? $"PROP {entry.Component.Slot}" : entry.Component.Slot.ToString();
             string relativePath = Path.GetRelativePath(_catalog.RootPath, entry.FilePath);
+            ClothingModelQuality quality = ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
             int rowIndex = _results.Rows.Add(
                 entry.Gender.ToString().ToUpperInvariant(),
                 slot,
@@ -1189,8 +1192,13 @@ internal sealed class MainForm : Form
                 entry.Pack,
                 entry.RelativeIndex,
                 entry.TextureCount,
+                quality.Summary,
                 relativePath);
-            _results.Rows[rowIndex].Cells[7].ToolTipText = entry.FilePath;
+            _results.Rows[rowIndex].Cells[7].ToolTipText = quality.Details;
+            _results.Rows[rowIndex].Cells[7].Style.ForeColor = quality.Summary == "OK"
+                ? Color.FromArgb(120, 220, 150)
+                : Color.FromArgb(255, 180, 50);
+            _results.Rows[rowIndex].Cells[8].ToolTipText = entry.FilePath;
             _results.Rows[rowIndex].Tag = entry;
         }
 
@@ -1220,8 +1228,9 @@ internal sealed class MainForm : Form
             "R*",
             entry.RelativeIndex,
             entry.TextureArchivePaths.Count,
+            "ROCKSTAR",
             fileSummary);
-        _results.Rows[rowIndex].Cells[7].ToolTipText = string.Join(
+        _results.Rows[rowIndex].Cells[8].ToolTipText = string.Join(
             Environment.NewLine,
             new[] { entry.ModelArchivePath }.Concat(entry.TextureArchivePaths));
         _resultCount.Text = "1 RESULT";

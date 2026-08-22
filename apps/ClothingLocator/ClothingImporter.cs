@@ -37,6 +37,7 @@ internal sealed record ClothingImportPlan(
 
 internal sealed record ClothingTextureImportResult(string TexturePath, int TextureCount, string Compression);
 internal sealed record ClothingMetadataUpdateResult(string BackupDirectory, string CreatureMetadataPath);
+internal sealed record ClothingModelQuality(string Summary, string Details);
 
 internal static class ClothingImporter
 {
@@ -1915,6 +1916,61 @@ internal static class ClothingImporter
     {
         byte[] bytes = File.ReadAllBytes(path);
         return RpfFile.GetResourceFile<PedFile>(bytes) ?? throw new InvalidDataException("Unable to read YMT: " + path);
+    }
+
+    internal static ClothingModelQuality InspectModel(string path, int textureCount)
+    {
+        try
+        {
+            Drawable[] drawables = LoadYdd(path).DrawableDict?.Drawables?.data_items ?? [];
+            if (drawables.Length == 0)
+            {
+                return new ClothingModelQuality("INVALID MODEL", "The YDD contains no drawables.");
+            }
+
+            long highPolygons = drawables.Sum(drawable =>
+                drawable.DrawableModels?.High?.Sum(model =>
+                    model.Geometries?.Sum(geometry => (long)geometry.IndicesCount / 3) ?? 0) ?? 0);
+            bool high = drawables.All(drawable => drawable.DrawableModels?.High?.Length > 0);
+            bool medium = drawables.All(drawable => drawable.DrawableModels?.Med?.Length > 0);
+            bool low = drawables.All(drawable => drawable.DrawableModels?.Low?.Length > 0);
+            return SummarizeQuality(highPolygons, high, medium, low, textureCount);
+        }
+        catch (Exception exception)
+        {
+            return new ClothingModelQuality("READ ERROR", exception.Message);
+        }
+    }
+
+    private static ClothingModelQuality SummarizeQuality(
+        long highPolygons,
+        bool high,
+        bool medium,
+        bool low,
+        int textureCount)
+    {
+        var warnings = new List<string>();
+        if (highPolygons > 20_000) warnings.Add("OVER 20K");
+        if (!high) warnings.Add("NO HIGH");
+        if (!medium) warnings.Add("NO MED");
+        if (!low) warnings.Add("NO LOW");
+        if (textureCount == 0) warnings.Add("NO YTD");
+        return new ClothingModelQuality(
+            warnings.Count == 0 ? "OK" : string.Join(" / ", warnings),
+            $"HIGH POLYGONS: {highPolygons:N0} (LIMIT 20,000)\n" +
+            $"LODS: HIGH {(high ? "YES" : "NO")} / MED {(medium ? "YES" : "NO")} / LOW {(low ? "YES" : "NO")}\n" +
+            $"MATCHING YTDS: {textureCount}");
+    }
+
+    internal static bool QualitySelfTest(string? rootPath = null)
+    {
+        ClothingModelQuality good = SummarizeQuality(19_999, true, true, true, 1);
+        ClothingModelQuality bad = SummarizeQuality(20_001, true, false, false, 0);
+        bool summariesValid = good.Summary == "OK" &&
+            bad.Summary == "OVER 20K / NO MED / NO LOW / NO YTD";
+        if (!summariesValid || string.IsNullOrWhiteSpace(rootPath)) return summariesValid;
+        string? model = Directory.EnumerateFiles(rootPath, "*.ydd", SearchOption.AllDirectories).FirstOrDefault();
+        return model is not null && InspectModel(model, 1).Summary is not ("READ ERROR" or "INVALID MODEL");
     }
 
     private static YddFile LoadYdd(string path)

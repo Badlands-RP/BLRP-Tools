@@ -112,6 +112,7 @@ internal static class Program
             string? rootPath = args.FirstOrDefault(arg => !arg.Equals("--self-test", StringComparison.OrdinalIgnoreCase));
             return ClothingCatalog.SelfTest(rootPath) &&
                 ClothingBlacklist.SelfTest() &&
+                ClothingImporter.QualitySelfTest(rootPath) &&
                 BlacklistGroupPicker.SelfTest() &&
                 BusinessDirectory.Normalize([" Zebra ", "alpha", "ALPHA"]).SequenceEqual(["alpha", "Zebra"]) &&
                 TextureBlacklistDialog.SelfTest() &&

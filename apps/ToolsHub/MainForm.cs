@@ -56,15 +56,17 @@ internal sealed class MainForm : Form
         header.Controls.Add(Label("BADLANDSRP  /  SELECT A TOOL", 9, AccentLight, FontStyle.Bold), 1, 1);
         page.Controls.Add(header, 0, 0);
 
-        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 2 };
+        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 3 };
         tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
+        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
+        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
         tools.Controls.Add(ToolCard("ASSET STUDIO", "Weapon skins, cups, model previews and inventory images.", @"tools\AssetStudio\BLRP.AssetStudio.dll"), 0, 0);
         tools.Controls.Add(ToolCard("CLOTHING LOCATOR", "Find, preview and manage BadlandsRP clothing assets.", @"tools\ClothingLocator\BLRP.ClothingUtility.dll"), 1, 0);
         tools.Controls.Add(ToolCard("LIVERY TOOL", "Build and install vehicle liveries and metadata.", @"tools\LiveryTool\Badlands.LiveryTool.dll"), 0, 1);
         tools.Controls.Add(ToolCard("MAPPING DECONFLICTER", "Scan YMAP resources and identify mapping conflicts.", @"tools\MappingDeconflicter\YmapDeconflicter.dll"), 1, 1);
+        tools.Controls.Add(ToolCard("GRZY CLOTH TOOL", "Build, inspect and preview GTA clothing packs.", @"tools\grzyClothTool-outfit\grzyClothTool.exe"), 0, 2);
         page.Controls.Add(tools, 0, 1);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2 };
@@ -104,11 +106,22 @@ internal sealed class MainForm : Form
                 "BLRP Tools", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var start = new ProcessStartInfo(Application.ExecutablePath) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(path)! };
-        start.ArgumentList.Add("--run-tool");
-        start.ArgumentList.Add(path);
+        bool managedTool = IsManagedTool(path);
+        var start = new ProcessStartInfo(managedTool ? Application.ExecutablePath : path)
+        {
+            UseShellExecute = true,
+            WorkingDirectory = Path.GetDirectoryName(path)!
+        };
+        if (managedTool)
+        {
+            start.ArgumentList.Add("--run-tool");
+            start.ArgumentList.Add(path);
+        }
         Process.Start(start);
     }
+
+    private static bool IsManagedTool(string path) =>
+        Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase);
 
     private async Task UpdateClicked()
     {
@@ -221,7 +234,9 @@ internal sealed class MainForm : Form
             new GithubRelease("v1.0.1", "Installed", false, [])
         ], new Version(1, 0, 1));
         return update is { TagName: "v1.0.4" } &&
-            update.Notes.IndexOf("v1.0.2", StringComparison.Ordinal) < update.Notes.IndexOf("v1.0.4", StringComparison.Ordinal);
+            update.Notes.IndexOf("v1.0.2", StringComparison.Ordinal) < update.Notes.IndexOf("v1.0.4", StringComparison.Ordinal) &&
+            IsManagedTool("tool.dll") &&
+            !IsManagedTool("grzyClothTool.exe");
     }
 
     private sealed record ReleaseInfo(string TagName, string DownloadUrl, string Notes);
