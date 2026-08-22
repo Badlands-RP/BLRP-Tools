@@ -1605,9 +1605,7 @@ internal sealed class MainForm : Form
 
     private void SetBusy(bool busy, string? text = null)
     {
-        UseWaitCursor = busy;
         Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
-        if (!busy) Cursor.Current = Cursors.Default;
         _progress.Active = busy;
         if (text != null)
         {
@@ -1640,7 +1638,6 @@ internal sealed class MainForm : Form
                replaced &&
                outfit.Count == 2 &&
                outfit[0] == replacementTop &&
-               !form.UseWaitCursor &&
                form.Cursor != Cursors.WaitCursor &&
                !form._progress.Active;
     }
