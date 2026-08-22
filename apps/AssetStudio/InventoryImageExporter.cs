@@ -78,6 +78,7 @@ internal static class InventoryImageExporter
     public static bool SelfTest()
     {
         string path = Path.Combine(Path.GetTempPath(), "BLRP-inventory-" + Guid.NewGuid().ToString("N") + ".webp");
+        string highPath = Path.Combine(Path.GetTempPath(), "BLRP-inventory-high-" + Guid.NewGuid().ToString("N") + ".webp");
         try
         {
             using var model = new Bitmap(256, 256, PixelFormat.Format32bppArgb);
@@ -98,8 +99,21 @@ internal static class InventoryImageExporter
                         if (row[x].A is > 0 and < 100) { hasShadow = true; break; }
                 }
             });
-            return image.Width == 256 && image.Height == 256 && image[0, 0].A == 0 && hasShadow;
+            using var highModel = new Bitmap(1000, 1000, PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(highModel))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.FillEllipse(Brushes.CornflowerBlue, 450, 400, 90, 150);
+            }
+            SaveWebp(highModel, highPath);
+            using SixLabors.ImageSharp.Image<Bgra32> high = SixLabors.ImageSharp.Image.Load<Bgra32>(highPath);
+            return image.Width == 256 && image.Height == 256 && image[0, 0].A == 0 && hasShadow &&
+                high.Width == 1000 && high.Height == 1000 && high[0, 0].A == 0;
         }
-        finally { File.Delete(path); }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(highPath);
+        }
     }
 }

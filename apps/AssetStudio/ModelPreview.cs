@@ -58,10 +58,10 @@ internal sealed class ModelPreview : Control
         Render();
     }
 
-    public void SaveInventoryImage(string outputPath)
+    public void SaveInventoryImage(string outputPath, int size = 256)
     {
         if (_scene is null) throw new InvalidOperationException("Load and pose a model before saving its inventory image.");
-        using Bitmap model = _scene.Render(256, 256, _yaw, _pitch, _zoom, true, _tilt);
+        using Bitmap model = _scene.Render(size, size, _yaw, _pitch, _zoom, true, _tilt);
         InventoryImageExporter.SaveWebp(model, outputPath);
     }
 

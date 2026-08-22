@@ -333,17 +333,21 @@ internal sealed class MainForm : Form
         layout.Controls.Add(buttons, 1, 0);
         layout.Controls.Add(_preview, 0, 1);
         layout.SetColumnSpan(_preview, 2);
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3 };
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 4 };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         footer.Controls.Add(CreateLabel("LEFT DRAG ROTATE  /  RIGHT DRAG TILT  /  WHEEL ZOOM", 8, TextMuted, FontStyle.Bold), 0, 0);
-        Button saveInventory = CreateButton("SAVE 256 WEBP", (_, _) => SaveInventoryImage(), true);
+        Button saveInventory = CreateButton("SAVE 256 WEBP", (_, _) => SaveInventoryImage(256), true);
         saveInventory.Dock = DockStyle.Fill;
         footer.Controls.Add(saveInventory, 1, 0);
+        Button saveHighQuality = CreateButton("SAVE 1000 WEBP", (_, _) => SaveInventoryImage(1000), true);
+        saveHighQuality.Dock = DockStyle.Fill;
+        footer.Controls.Add(saveHighQuality, 2, 0);
         Button loadPreview = CreateButton("LOAD PREVIEW", async (_, _) => await LoadPreviewAsync(), true);
         loadPreview.Dock = DockStyle.Fill;
-        footer.Controls.Add(loadPreview, 2, 0);
+        footer.Controls.Add(loadPreview, 3, 0);
         layout.Controls.Add(footer, 0, 2);
         layout.SetColumnSpan(footer, 2);
         card.Controls.Add(layout);
@@ -548,7 +552,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private void SaveInventoryImage()
+    private void SaveInventoryImage(int size)
     {
         string name;
         try
@@ -572,8 +576,8 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         try
         {
-            _preview.SaveInventoryImage(dialog.FileName);
-            SetStatus("SAVED 256x256 TRANSPARENT WEBP  /  CURRENT POSE + DROP SHADOW");
+            _preview.SaveInventoryImage(dialog.FileName, size);
+            SetStatus($"SAVED {size}x{size} TRANSPARENT WEBP  /  CURRENT POSE + DROP SHADOW");
         }
         catch (Exception exception) { ShowError("Inventory image failed: " + exception.Message); }
     }
