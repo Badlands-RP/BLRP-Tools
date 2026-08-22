@@ -10,6 +10,11 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args is ["--self-test"])
+        {
+            Environment.ExitCode = MainForm.SelfTest() ? 0 : 1;
+            return;
+        }
         if (args.Length == 5 && args[0] == "--apply-update")
         {
             ApplyUpdate(int.Parse(args[1]), args[2], args[3], args[4]);

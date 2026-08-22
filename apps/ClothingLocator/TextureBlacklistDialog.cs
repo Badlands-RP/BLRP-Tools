@@ -10,6 +10,7 @@ internal sealed class TextureBlacklistDialog : Form
     private readonly string? _drawableRestriction;
     private readonly DataGridView _grid = new();
     private readonly ComboBox _applyAll = new();
+    private readonly CheckBox _optimizeCompression = new();
 
     public TextureBlacklistDialog(
         IReadOnlyList<string> texturePaths,
@@ -27,16 +28,17 @@ internal sealed class TextureBlacklistDialog : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(800, Math.Min(700, 260 + texturePaths.Count * 34));
+        ClientSize = new Size(800, Math.Min(740, 304 + texturePaths.Count * 34));
         BackColor = Color.FromArgb(12, 12, 28);
         ForeColor = Color.White;
         Font = new Font("Cascadia Mono", 9F);
         Padding = new Padding(20);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6 };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         layout.Controls.Add(Label("ASSIGN EACH NEW TEXTURE", 15F, Color.White, FontStyle.Bold), 0, 0);
@@ -48,7 +50,12 @@ internal sealed class TextureBlacklistDialog : Form
             drawableRestriction == null ? Color.FromArgb(180, 200, 215) : Color.FromArgb(255, 180, 50),
             FontStyle.Bold), 0, 1);
         layout.Controls.Add(BuildApplyAll(businesses), 0, 2);
-        layout.Controls.Add(BuildGrid(businesses), 0, 3);
+        _optimizeCompression.Text = "OPTIMISE: DXT1 FOR OPAQUE / DXT5 WHEN ALPHA IS DETECTED";
+        _optimizeCompression.Dock = DockStyle.Fill;
+        _optimizeCompression.ForeColor = Color.FromArgb(135, 206, 235);
+        _optimizeCompression.Font = new Font("Cascadia Mono", 8.5F, FontStyle.Bold);
+        layout.Controls.Add(_optimizeCompression, 0, 3);
+        layout.Controls.Add(BuildGrid(businesses), 0, 4);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         Button import = Button($"IMPORT {texturePaths.Count}", true);
@@ -57,7 +64,7 @@ internal sealed class TextureBlacklistDialog : Form
         cancel.Click += (_, _) => DialogResult = DialogResult.Cancel;
         buttons.Controls.Add(import);
         buttons.Controls.Add(cancel);
-        layout.Controls.Add(buttons, 0, 4);
+        layout.Controls.Add(buttons, 0, 5);
         Controls.Add(layout);
         AcceptButton = import;
         CancelButton = cancel;
@@ -71,6 +78,8 @@ internal sealed class TextureBlacklistDialog : Form
                 ? choice
                 : null))
         .ToArray();
+
+    public bool OptimizeCompression => _optimizeCompression.Checked;
 
     private Control BuildApplyAll(IReadOnlyList<string> businesses)
     {
@@ -194,6 +203,7 @@ internal sealed class TextureBlacklistDialog : Form
     internal static bool SelfTest()
     {
         using var dialog = new TextureBlacklistDialog(["a.ytd", "b.ytd"], 6, ["Aces and Eights"], null);
+        dialog._optimizeCompression.Checked = true;
         dialog._applyAll.SelectedItem = "Aces and Eights";
         dialog.ApplyToAll();
         IReadOnlyList<TextureBlacklistAssignment> assigned = dialog.Assignments;
@@ -201,6 +211,7 @@ internal sealed class TextureBlacklistDialog : Form
         return assigned.Count == 2 &&
                assigned[0] is { TextureIndex: 6, Business: "Aces and Eights" } &&
                assigned[1] is { TextureIndex: 7, Business: "Aces and Eights" } &&
+               dialog.OptimizeCompression &&
                restricted.Assignments[0] is { TextureIndex: 8, Business: null } &&
                restricted._grid.Columns[2].ReadOnly;
     }

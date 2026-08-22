@@ -113,7 +113,10 @@ internal sealed class MainForm : Form
     private async Task UpdateClicked()
     {
         if (_release is null) { await CheckForUpdates(true); return; }
-        if (MessageBox.Show(this, $"Install BLRP Tools {_release.TagName}? The Hub will restart automatically.",
+        string prompt = $"You are on v{Application.ProductVersion.Split('+')[0]}. " +
+            $"Here is what you are missing in {_release.TagName}:\n\n{_release.Notes}\n\n" +
+            "Install now? The Hub will restart automatically.";
+        if (MessageBox.Show(this, prompt,
             "Install update", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
         try
         {
@@ -148,14 +151,14 @@ internal sealed class MainForm : Form
         try
         {
             using HttpClient client = Client();
-            string json = await client.GetStringAsync("https://api.github.com/repos/Badlands-RP/BLRP-Tools/releases/latest");
-            GithubRelease? latest = JsonSerializer.Deserialize<GithubRelease>(json);
-            GithubAsset? asset = latest?.Assets.FirstOrDefault(item => item.Name.EndsWith("-win-x64.zip", StringComparison.OrdinalIgnoreCase));
+            string json = await client.GetStringAsync("https://api.github.com/repos/Badlands-RP/BLRP-Tools/releases?per_page=50");
+            GithubRelease[] releases = JsonSerializer.Deserialize<GithubRelease[]>(json) ?? [];
             Version current = Version.Parse(Application.ProductVersion.Split('+')[0]);
-            if (latest is not null && asset is not null && Version.TryParse(latest.TagName.TrimStart('v'), out Version? available) && available > current)
+            ReleaseInfo? update = FindUpdate(releases, current);
+            if (update is not null)
             {
-                _release = new ReleaseInfo(latest.TagName, asset.DownloadUrl);
-                _updateStatus.Text = $"UPDATE AVAILABLE  /  {latest.TagName}";
+                _release = update;
+                _updateStatus.Text = $"UPDATE AVAILABLE  /  {update.TagName}";
                 _updateButton.Text = "INSTALL UPDATE";
             }
             else
@@ -168,6 +171,22 @@ internal sealed class MainForm : Form
         {
             _updateStatus.Text = "UPDATE CHECK UNAVAILABLE";
         }
+    }
+
+    private static ReleaseInfo? FindUpdate(IEnumerable<GithubRelease> releases, Version current)
+    {
+        var pending = releases
+            .Where(release => !release.Prerelease && Version.TryParse(release.TagName.TrimStart('v'), out Version? version) && version > current)
+            .Select(release => (Release: release, Version: Version.Parse(release.TagName.TrimStart('v'))))
+            .OrderBy(item => item.Version)
+            .ToArray();
+        if (pending.Length == 0) return null;
+        GithubRelease latest = pending[^1].Release;
+        GithubAsset? asset = latest.Assets.FirstOrDefault(item => item.Name.EndsWith("-win-x64.zip", StringComparison.OrdinalIgnoreCase));
+        if (asset is null) return null;
+        string notes = string.Join("\n\n", pending.Select(item =>
+            $"{item.Release.TagName}\n{(string.IsNullOrWhiteSpace(item.Release.Body) ? "No release notes supplied." : item.Release.Body.Trim())}"));
+        return new ReleaseInfo(latest.TagName, asset.DownloadUrl, notes);
     }
 
     private static HttpClient Client()
@@ -192,8 +211,23 @@ internal sealed class MainForm : Form
         return button;
     }
 
-    private sealed record ReleaseInfo(string TagName, string DownloadUrl);
+    internal static bool SelfTest()
+    {
+        GithubAsset asset = new("BLRP-Tools-v1.0.4-win-x64.zip", "https://example.invalid/update.zip");
+        ReleaseInfo? update = FindUpdate(
+        [
+            new GithubRelease("v1.0.4", "Fourth release", false, [asset]),
+            new GithubRelease("v1.0.2", "Second release", false, []),
+            new GithubRelease("v1.0.1", "Installed", false, [])
+        ], new Version(1, 0, 1));
+        return update is { TagName: "v1.0.4" } &&
+            update.Notes.IndexOf("v1.0.2", StringComparison.Ordinal) < update.Notes.IndexOf("v1.0.4", StringComparison.Ordinal);
+    }
+
+    private sealed record ReleaseInfo(string TagName, string DownloadUrl, string Notes);
     private sealed record GithubRelease([property: JsonPropertyName("tag_name")] string TagName,
+        [property: JsonPropertyName("body")] string? Body,
+        [property: JsonPropertyName("prerelease")] bool Prerelease,
         [property: JsonPropertyName("assets")] GithubAsset[] Assets);
     private sealed record GithubAsset([property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("browser_download_url")] string DownloadUrl);

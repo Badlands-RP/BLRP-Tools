@@ -597,9 +597,9 @@ internal sealed class MainForm : Form
             : null;
         if (target == null)
         {
-            if (SelectedComponent is not { IsProp: false } component)
+            if (SelectedComponent is not { } component)
             {
-                ShowError("Select a component clothing model first.");
+                ShowError("Select a clothing or prop model first.");
                 return;
             }
             if (_catalog == null || !Path.GetFullPath(root).Equals(_catalog.RootPath, StringComparison.OrdinalIgnoreCase))
@@ -654,7 +654,7 @@ internal sealed class MainForm : Form
 
             SetBusy(true, $"IMPORTING {textureDialog.FileNames.Length} TEXTURE{(textureDialog.FileNames.Length == 1 ? string.Empty : "S")} AND UPDATING YMT...");
             IReadOnlyList<ClothingTextureImportResult> results = await Task.Run(() =>
-                ClothingImporter.ImportTextures(root, target, textureDialog.FileNames));
+                ClothingImporter.ImportTextures(root, target, textureDialog.FileNames, assignmentsDialog.OptimizeCompression));
             var blacklistErrors = new string?[results.Count];
             for (int index = 0; index < results.Count; index++)
             {
@@ -1547,7 +1547,7 @@ internal sealed class MainForm : Form
             {
                 assignment = $"BLACKLIST FAILED ({assignments[index].Business}): {errors[index]}";
             }
-            lines.Add($"#{textureIndex}  {Path.GetFileName(assignments[index].TexturePath)}  —  {assignment}");
+            lines.Add($"#{textureIndex}  {Path.GetFileName(assignments[index].TexturePath)}  —  {results[index].Compression}  —  {assignment}");
         }
 
         MessageBox.Show(

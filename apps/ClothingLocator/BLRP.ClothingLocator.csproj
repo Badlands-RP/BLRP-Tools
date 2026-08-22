@@ -10,8 +10,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>BLRP.ClothingUtility</AssemblyName>
     <RootNamespace>BLRP.ClothingLocator</RootNamespace>
-    <Version>1.5.2</Version>
-    <InformationalVersion>1.5.2</InformationalVersion>
+    <Version>1.5.3</Version>
+    <InformationalVersion>1.5.3</InformationalVersion>
     <Company>BadlandsRP</Company>
     <Product>BLRP Clothing Utility</Product>
     <Description>BadlandsRP clothing collection utility.</Description>
@@ -22,6 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
     <Compile Remove="release\**\*.cs" />
     <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
