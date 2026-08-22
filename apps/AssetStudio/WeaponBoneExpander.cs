@@ -132,7 +132,7 @@ internal static class WeaponBoneExpander
 
     public static bool SelfTest()
     {
-        string template = Path.Combine(AppContext.BaseDirectory, "assets", "bat-template", "w_me_bat_bl_template.ydr");
+        string template = BundledAssets.BatTemplate(".ydr");
         var ydr = new YdrFile();
         ydr.Load(File.ReadAllBytes(template));
         Skeleton skeleton = ydr.Drawable!.Skeleton!;

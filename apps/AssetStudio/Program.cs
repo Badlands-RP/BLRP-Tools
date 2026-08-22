@@ -64,7 +64,7 @@ internal static class Program
         {
             try
             {
-                return WeaponSkinImporter.SelfTest() && WeaponTextureBuilder.SelfTest() &&
+                return BundledAssets.SelfTest() && WeaponSkinImporter.SelfTest() && WeaponTextureBuilder.SelfTest() &&
                     WeaponBoneExpander.SelfTest() && InventoryImageExporter.SelfTest() &&
                     MainForm.TextureMatchingSelfTest() ? 0 : 1;
             }

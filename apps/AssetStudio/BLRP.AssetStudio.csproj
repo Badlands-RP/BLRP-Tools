@@ -10,7 +10,7 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>BLRP.AssetStudio</AssemblyName>
     <RootNamespace>BLRP.WeaponSkinTool</RootNamespace>
-    <Version>1.2.5</Version>
+    <Version>1.2.6</Version>
     <Company>BadlandsRP</Company>
     <Product>BLRP Asset Studio</Product>
     <Description>Previews and builds BadlandsRP weapon skins, cups, and inventory images.</Description>

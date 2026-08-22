@@ -359,7 +359,7 @@ internal sealed class MainForm : Form
         _modelPrefix.Text = "W_ME_Bat_BL";
         _componentPrefix.Text = "COMPONENT_BAT_VARMOD_BL";
         _cupRoot.Text = _root.Text;
-        _cupModel.Text = Path.Combine(AppContext.BaseDirectory, "assets", "cup-template", "prop_coffeecup_template.ydr");
+        _cupModel.Text = BundledAssets.CupTemplate();
         _cupId.Text = "prop_coffeecup_new";
         _cupRoot.TextChanged += (_, _) => UpdateCupTargets();
         _cupId.TextChanged += (_, _) => UpdateCupTargets();
@@ -368,7 +368,7 @@ internal sealed class MainForm : Form
 
     private WeaponSkinSettings Settings() => new(_root.Text, _dataDirectory.Text, _streamDirectory.Text, _weaponMeta.Text, _modelPrefix.Text, _componentPrefix.Text);
 
-    private string BatTemplate(string extension) => Path.Combine(AppContext.BaseDirectory, "assets", "bat-template", "w_me_bat_bl_template" + extension);
+    private string BatTemplate(string extension) => BundledAssets.BatTemplate(extension);
 
     private void ApplyMode()
     {

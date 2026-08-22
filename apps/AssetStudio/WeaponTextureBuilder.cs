@@ -290,7 +290,7 @@ internal static class WeaponTextureBuilder
                 graphics.FillEllipse(brush, 32, 64, 192, 192);
                 image.Save(png, ImageFormat.Png);
             }
-            string template = Path.Combine(AppContext.BaseDirectory, "assets", "bat-template", "w_me_bat_bl_template");
+            string template = BundledAssets.BatTemplate();
             byte[] rebuilt = Build(template + ".ydr", template + ".ytd", png);
             var ytd = new YtdFile();
             ytd.Load(rebuilt);
@@ -307,7 +307,7 @@ internal static class WeaponTextureBuilder
                 graphics.FillRectangle(Brushes.White, 128, 32, 256, 192);
                 image.Save(cupPng, ImageFormat.Png);
             }
-            string cupTemplate = Path.Combine(AppContext.BaseDirectory, "assets", "cup-template", "prop_coffeecup_template.ydr");
+            string cupTemplate = BundledAssets.CupTemplate();
             string cupOutput = Path.Combine(directory, "created-cup.ydr");
             File.WriteAllBytes(cupOutput, BuildEmbedded(cupTemplate, cupPng));
             var cup = new YdrFile();
