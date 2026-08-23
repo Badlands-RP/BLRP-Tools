@@ -55,13 +55,20 @@ internal sealed class LodReviewDialog : Form
     private readonly LodMeshPreview _after = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown _medium = new() { Minimum = 10, Maximum = 90, Value = 50, Width = 70 };
     private readonly NumericUpDown _low = new() { Minimum = 5, Maximum = 80, Value = 20, Width = 70 };
-    private readonly CheckBox _aggressive = new() { Text = "AGGRESSIVE FALLBACK", Checked = true, AutoSize = true, ForeColor = Color.White, Margin = new Padding(18, 9, 0, 0) };
+    private readonly CheckBox _aggressiveLow = new() { Text = "AGGRESSIVE LOW", Checked = false, AutoSize = true, ForeColor = Color.White, Margin = new Padding(18, 9, 0, 0) };
+    private readonly CheckBox _optimizeHigh = new() { Text = "OPTIMISE HIGH", Checked = false, AutoSize = true, ForeColor = Color.White, Margin = new Padding(0, 9, 8, 0) };
+    private readonly ComboBox _highTargetMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+    private readonly NumericUpDown _highTarget = new() { Minimum = 100, Maximum = 1_000_000, Value = 20_000, ThousandsSeparator = true, Width = 92 };
+    private readonly ComboBox _highMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120 };
     private readonly ComboBox _afterLod = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+    private readonly ComboBox _distance = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90 };
     private readonly Label _stats = new() { AutoSize = true, ForeColor = Color.White };
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(135, 206, 235) };
     private readonly Button _generate = Button("GENERATE CANDIDATE");
-    private readonly Button _apply = Button("APPLY REVIEWED LODS");
+    private readonly Button _apply = Button("APPLY REVIEWED CHANGES");
+    private readonly ClothingLodStats _sourceStats;
     private bool _generationAllowed = true;
+    private bool _candidateOptimizesHigh;
     private string? _candidatePath;
 
     public string? BackupPath { get; private set; }
@@ -72,6 +79,7 @@ internal sealed class LodReviewDialog : Form
         _rootPath = rootPath;
         _texturePath = texturePath;
         _gitHistory = GitFileHistory.Describe(rootPath, sourcePath);
+        _sourceStats = ClothingLodGenerator.Analyze(sourcePath);
         Text = "BLRP Clothing LOD Review";
         StartPosition = FormStartPosition.CenterParent;
         MinimumSize = new Size(980, 680);
@@ -81,9 +89,18 @@ internal sealed class LodReviewDialog : Form
         Font = new Font("Consolas", 9F);
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
-        _afterLod.Items.AddRange([ClothingPreviewLod.Medium, ClothingPreviewLod.Low]);
-        _afterLod.SelectedIndex = 0;
+        _afterLod.Items.AddRange([ClothingPreviewLod.High, ClothingPreviewLod.Medium, ClothingPreviewLod.Low]);
+        _afterLod.SelectedIndex = 1;
         _afterLod.SelectedIndexChanged += (_, _) => LoadAfterPreview();
+        _distance.Items.AddRange(["CLOSE", "MEDIUM", "FAR"]);
+        _distance.SelectedIndex = 0;
+        _distance.SelectedIndexChanged += (_, _) => SetPreviewDistance();
+        _highTargetMode.Items.AddRange(["POLYGONS", "PERCENT"]);
+        _highTargetMode.SelectedIndex = 0;
+        _highTargetMode.SelectedIndexChanged += (_, _) => UpdateHighTargetMode();
+        _highMode.Items.AddRange(["CONSERVATIVE", "AGGRESSIVE"]);
+        _highMode.SelectedIndex = 0;
+        _optimizeHigh.CheckedChanged += (_, _) => UpdateHighControls();
         _generate.Click += async (_, _) => await GenerateAsync();
         _apply.Click += (_, _) => Apply();
         _apply.Enabled = false;
@@ -91,33 +108,34 @@ internal sealed class LodReviewDialog : Form
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 2, RowCount = 3 };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
         Control header = BuildHeader();
         root.Controls.Add(header, 0, 0);
         root.SetColumnSpan(header, 2);
-        root.Controls.Add(PreviewCard("BEFORE / HIGH", _before), 0, 1);
-        root.Controls.Add(PreviewCard("AFTER / GENERATED LOD", _after), 1, 1);
+        root.Controls.Add(PreviewCard("BEFORE / ORIGINAL HIGH", _before), 0, 1);
+        root.Controls.Add(PreviewCard("AFTER / CANDIDATE", _after), 1, 1);
         Control footer = BuildFooter();
         root.Controls.Add(footer, 0, 2);
         root.SetColumnSpan(footer, 2);
         Controls.Add(root);
 
-        ClothingLodStats stats = ClothingLodGenerator.Analyze(sourcePath);
-        _stats.Text = FormatStats("CURRENT", stats);
+        _stats.Text = FormatStats("CURRENT", _sourceStats);
+        UpdateHighControls();
         if (ownsCloth)
         {
             _generationAllowed = false;
             _generate.Enabled = false;
+            _optimizeHigh.Enabled = false;
+            _aggressiveLow.Enabled = false;
+            UpdateHighControls();
             _status.Text = "CLOTH-SIMULATED MODEL / AUTOMATIC LODS DISABLED";
             _status.ForeColor = Color.FromArgb(255, 180, 50);
         }
-        else if (stats.HasMedium && stats.HasLow)
+        else if (_sourceStats.HasMedium && _sourceStats.HasLow)
         {
-            _generationAllowed = false;
-            _generate.Enabled = false;
-            _status.Text = "THIS MODEL ALREADY HAS MEDIUM AND LOW LODS";
+            _status.Text = "MEDIUM AND LOW ALREADY EXIST / HIGH OPTIMISATION IS OPTIONAL";
         }
         Shown += async (_, _) =>
         {
@@ -128,8 +146,9 @@ internal sealed class LodReviewDialog : Form
 
     private Control BuildHeader()
     {
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
         panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+        panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         string info = $"{Path.GetFileName(_sourcePath)}  /  {(_texturePath == null ? "NO MATCHING YTD" : Path.GetFileName(_texturePath))}";
         if (_gitHistory != null) info += "  /  " + _gitHistory;
@@ -141,16 +160,27 @@ internal sealed class LodReviewDialog : Form
             Font = new Font(Font, FontStyle.Bold),
             ForeColor = Color.FromArgb(135, 206, 235)
         });
-        var controls = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
-        controls.Controls.Add(new Label { Text = "MEDIUM %", AutoSize = true, Margin = new Padding(0, 11, 6, 0) });
-        controls.Controls.Add(_medium);
-        controls.Controls.Add(new Label { Text = "LOW %", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
-        controls.Controls.Add(_low);
-        controls.Controls.Add(_aggressive);
-        controls.Controls.Add(_generate);
-        controls.Controls.Add(new Label { Text = "AFTER VIEW", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
-        controls.Controls.Add(_afterLod);
-        panel.Controls.Add(controls, 0, 1);
+        var lodControls = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        lodControls.Controls.Add(new Label { Text = "MEDIUM %", AutoSize = true, Margin = new Padding(0, 11, 6, 0) });
+        lodControls.Controls.Add(_medium);
+        lodControls.Controls.Add(new Label { Text = "LOW %", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
+        lodControls.Controls.Add(_low);
+        lodControls.Controls.Add(_aggressiveLow);
+        lodControls.Controls.Add(_generate);
+        lodControls.Controls.Add(new Label { Text = "AFTER VIEW", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
+        lodControls.Controls.Add(_afterLod);
+        lodControls.Controls.Add(new Label { Text = "DISTANCE", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
+        lodControls.Controls.Add(_distance);
+        panel.Controls.Add(lodControls, 0, 1);
+
+        var highControls = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        highControls.Controls.Add(_optimizeHigh);
+        highControls.Controls.Add(new Label { Text = "TARGET", AutoSize = true, Margin = new Padding(8, 11, 6, 0) });
+        highControls.Controls.Add(_highTargetMode);
+        highControls.Controls.Add(_highTarget);
+        highControls.Controls.Add(new Label { Text = "MODE", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
+        highControls.Controls.Add(_highMode);
+        panel.Controls.Add(highControls, 0, 2);
         return panel;
     }
 
@@ -184,13 +214,27 @@ internal sealed class LodReviewDialog : Form
     private async Task GenerateAsync()
     {
         if (_low.Value >= _medium.Value) { ShowError("Low must be smaller than Medium."); return; }
+        if (_sourceStats.HasMedium && _sourceStats.HasLow && !_optimizeHigh.Checked)
+        {
+            ShowError("This model already has Medium and Low LODs. Enable High optimisation to create a new candidate.");
+            return;
+        }
+        float? highRatio = HighRatio();
+        if (_optimizeHigh.Checked && highRatio is null) return;
         SetBusy(true, "GENERATING REVIEW CANDIDATE...");
         try
         {
             if (_candidatePath != null && File.Exists(_candidatePath)) File.Delete(_candidatePath);
             ClothingLodResult result = await Task.Run(() => ClothingLodGenerator.Generate(
-                _sourcePath, (float)_medium.Value / 100, (float)_low.Value / 100, _aggressive.Checked));
+                _sourcePath,
+                (float)_medium.Value / 100,
+                (float)_low.Value / 100,
+                _aggressiveLow.Checked,
+                highRatio,
+                _highMode.SelectedIndex == 1));
+            _afterLod.SelectedItem = result.HighOptimized ? ClothingPreviewLod.High : ClothingPreviewLod.Medium;
             _candidatePath = result.CandidatePath;
+            _candidateOptimizesHigh = result.HighOptimized;
             _stats.Text = FormatStats("BEFORE", result.Before) + "    " + FormatStats("AFTER", result.After);
             await _after.LoadAsync(_candidatePath, (ClothingPreviewLod)_afterLod.SelectedItem!, _texturePath);
             _apply.Enabled = true;
@@ -212,7 +256,7 @@ internal sealed class LodReviewDialog : Form
         if (_candidatePath == null) return;
         try
         {
-            BackupPath = ClothingLodGenerator.Apply(_sourcePath, _candidatePath, _rootPath);
+            BackupPath = ClothingLodGenerator.Apply(_sourcePath, _candidatePath, _rootPath, _candidateOptimizesHigh);
             DialogResult = DialogResult.OK;
             Close();
         }
@@ -225,6 +269,51 @@ internal sealed class LodReviewDialog : Form
         _generate.Enabled = !busy && _generationAllowed;
         _apply.Enabled = !busy && _candidatePath != null;
         if (busy) _status.Text = status;
+    }
+
+    private float? HighRatio()
+    {
+        if (!_optimizeHigh.Checked) return null;
+        float ratio = _highTargetMode.SelectedIndex == 0
+            ? (float)_highTarget.Value / _sourceStats.High
+            : (float)_highTarget.Value / 100;
+        if (ratio is > 0 and < 1) return ratio;
+        ShowError("The High target must be below the current High polygon count.");
+        return null;
+    }
+
+    private void UpdateHighControls()
+    {
+        bool enabled = _generationAllowed && _optimizeHigh.Checked;
+        _highTargetMode.Enabled = enabled;
+        _highTarget.Enabled = enabled;
+        _highMode.Enabled = enabled;
+    }
+
+    private void UpdateHighTargetMode()
+    {
+        if (_highTargetMode.SelectedIndex == 1)
+        {
+            _highTarget.Minimum = 10;
+            _highTarget.Maximum = 95;
+            _highTarget.Value = 50;
+            _highTarget.ThousandsSeparator = false;
+        }
+        else
+        {
+            _highTarget.Minimum = 1;
+            _highTarget.Maximum = Math.Max(1, _sourceStats.High - 1);
+            _highTarget.Minimum = Math.Min(100, _highTarget.Maximum);
+            _highTarget.Value = Math.Min(20_000, _highTarget.Maximum);
+            _highTarget.ThousandsSeparator = true;
+        }
+    }
+
+    private void SetPreviewDistance()
+    {
+        float zoom = _distance.SelectedIndex switch { 1 => 0.65f, 2 => 0.4f, _ => 1f };
+        _before.SetZoom(zoom);
+        _after.SetZoom(zoom);
     }
 
     private void ShowError(string message)
@@ -259,6 +348,7 @@ internal sealed class LodMeshPreview : Control
 {
     private LodPreviewScene? _scene;
     private Bitmap? _frame;
+    private readonly System.Windows.Forms.Timer _settle = new() { Interval = 140 };
     private Point _lastMouse;
     private float _yaw = -0.65f;
     private float _pitch = 0.35f;
@@ -268,7 +358,8 @@ internal sealed class LodMeshPreview : Control
     {
         DoubleBuffered = true;
         BackColor = Color.FromArgb(14, 14, 30);
-        Resize += (_, _) => Render();
+        _settle.Tick += (_, _) => { _settle.Stop(); Render(); };
+        Resize += (_, _) => RenderInteractive();
         MouseDown += (_, e) => _lastMouse = e.Location;
         MouseMove += (_, e) =>
         {
@@ -276,9 +367,9 @@ internal sealed class LodMeshPreview : Control
             _yaw += (e.X - _lastMouse.X) * 0.012f;
             _pitch = Math.Clamp(_pitch + (e.Y - _lastMouse.Y) * 0.012f, -1.5f, 1.5f);
             _lastMouse = e.Location;
-            Render();
+            RenderInteractive();
         };
-        MouseWheel += (_, e) => { _zoom = Math.Clamp(_zoom * (e.Delta > 0 ? 1.12f : 0.89f), 0.35f, 4f); Render(); };
+        MouseWheel += (_, e) => { _zoom = Math.Clamp(_zoom * (e.Delta > 0 ? 1.12f : 0.89f), 0.25f, 4f); RenderInteractive(); };
     }
 
     public async Task LoadAsync(string path, ClothingPreviewLod lod, string? texturePath)
@@ -288,22 +379,45 @@ internal sealed class LodMeshPreview : Control
         Render();
     }
 
+    public void SetZoom(float zoom)
+    {
+        _zoom = Math.Clamp(zoom, 0.25f, 4f);
+        RenderInteractive();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
-        if (_frame != null) e.Graphics.DrawImageUnscaled(_frame, 0, 0);
+        if (_frame != null)
+        {
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            e.Graphics.DrawImage(_frame, ClientRectangle);
+        }
         else TextRenderer.DrawText(e.Graphics, "GENERATE TO PREVIEW", Font, ClientRectangle, ForeColor,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 
-    private void Render()
+    private void RenderInteractive()
+    {
+        _settle.Stop();
+        Render(0.5f);
+        _settle.Start();
+    }
+
+    private void Render(float resolutionScale = 1f)
     {
         if (_scene == null || Width < 8 || Height < 8) return;
-        Bitmap next = _scene.Render(Width, Height, _yaw, _pitch, _zoom);
+        int width = Math.Max(8, (int)(Width * resolutionScale));
+        int height = Math.Max(8, (int)(Height * resolutionScale));
+        Bitmap next = _scene.Render(width, height, _yaw, _pitch, _zoom);
         Bitmap? old = _frame; _frame = next; old?.Dispose(); Invalidate();
     }
 
-    protected override void Dispose(bool disposing) { if (disposing) _frame?.Dispose(); base.Dispose(disposing); }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { _settle.Dispose(); _frame?.Dispose(); }
+        base.Dispose(disposing);
+    }
 }
 
 internal sealed record LodVertex(Vector3 Position, Vector2 UV);

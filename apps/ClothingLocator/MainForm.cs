@@ -95,7 +95,7 @@ internal sealed class MainForm : Form
         _scanQuality = CreateButton("SCAN REPO QC", async (_, _) => await ScanQualityAsync(), true);
         _exportQuality = CreateButton("EXPORT QC CSV", ExportQualityCsv);
         _exportQuality.Enabled = false;
-        _generateLods = CreateButton("GENERATE LODS...", async (_, _) => await GenerateLodsAsync());
+        _generateLods = CreateButton("OPTIMISE / LODS...", async (_, _) => await GenerateLodsAsync());
         _generateLods.Enabled = false;
 
         foreach (ComponentDefinition component in ClothingComponents.All)
@@ -598,7 +598,7 @@ internal sealed class MainForm : Form
             ownsCloth,
             _catalog?.FindPreviewTexture(entry));
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        SetBusy(true, "REFRESHING CLOTHING AFTER LOD GENERATION...");
+        SetBusy(true, "REFRESHING CLOTHING AFTER OPTIMISATION...");
         try
         {
             _catalog = await ClothingCatalog.LoadAsync(_rootPath.Text.Trim());
@@ -606,7 +606,7 @@ internal sealed class MainForm : Form
                 entry.Gender, entry.Component, _catalog.GetGlobalIndex(entry, entry.Component.DefaultOffset(entry.Gender)),
                 entry.Component.DefaultOffset(entry.Gender));
             ShowResults(refreshed == null ? [] : [refreshed]);
-            SetStatus($"LODS APPLIED / BACKUP: {dialog.BackupPath}", false);
+            SetStatus($"REVIEWED OPTIMISATION APPLIED / BACKUP: {dialog.BackupPath}", false);
         }
         finally { SetBusy(false); }
     }
@@ -1701,7 +1701,7 @@ internal sealed class MainForm : Form
                form._openResultPath.Text == "OPEN PATH" &&
                form._scanQuality.Text == "SCAN REPO QC" &&
                form._exportQuality.Text == "EXPORT QC CSV" &&
-               form._generateLods.Text == "GENERATE LODS..." &&
+               form._generateLods.Text == "OPTIMISE / LODS..." &&
                form._results.Columns[7].ValueType == typeof(long) &&
                polygonSortsNumerically &&
                CsvCell("a,\"b") == "\"a,\"\"b\"" &&

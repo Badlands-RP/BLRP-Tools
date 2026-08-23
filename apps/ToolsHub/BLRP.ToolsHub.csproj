@@ -8,7 +8,7 @@
     <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>BLRP.Tools</AssemblyName>
-    <Version>1.0.12</Version>
+    <Version>1.0.13</Version>
     <Company>BadlandsRP</Company>
     <Product>BLRP Tools</Product>
     <Description>Launcher and updater for BadlandsRP desktop tools.</Description>

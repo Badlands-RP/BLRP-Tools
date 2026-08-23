@@ -9,7 +9,7 @@ internal sealed record ClothingLodStats(long High, long Medium, long Low)
     public bool HasLow => Low > 0;
 }
 
-internal sealed record ClothingLodResult(string CandidatePath, ClothingLodStats Before, ClothingLodStats After);
+internal sealed record ClothingLodResult(string CandidatePath, ClothingLodStats Before, ClothingLodStats After, bool HighOptimized);
 
 internal static class ClothingLodGenerator
 {
@@ -22,15 +22,25 @@ internal static class ClothingLodGenerator
         return Analyze(file);
     }
 
-    public static ClothingLodResult Generate(string sourcePath, float mediumRatio, float lowRatio, bool aggressiveFallback = true)
+    public static ClothingLodResult Generate(
+        string sourcePath,
+        float mediumRatio,
+        float lowRatio,
+        bool aggressiveLow = false,
+        float? highRatio = null,
+        bool aggressiveHigh = false)
     {
         if (mediumRatio is <= 0 or >= 1 || lowRatio is <= 0 or >= 1 || lowRatio >= mediumRatio)
             throw new ArgumentOutOfRangeException(nameof(mediumRatio), "LOD ratios must satisfy 0 < Low < Medium < 100%.");
+        if (highRatio is <= 0 or >= 1)
+            throw new ArgumentOutOfRangeException(nameof(highRatio), "The High target must be below the original polygon count.");
 
         YddFile candidate = Load(sourcePath);
+        YddFile highSource = Load(sourcePath);
         YddFile mediumSource = Load(sourcePath);
         YddFile lowSource = Load(sourcePath);
         Drawable[] candidateDrawables = candidate.DrawableDict?.Drawables?.data_items ?? [];
+        Drawable[] highDrawables = highSource.DrawableDict?.Drawables?.data_items ?? [];
         Drawable[] mediumDrawables = mediumSource.DrawableDict?.Drawables?.data_items ?? [];
         Drawable[] lowDrawables = lowSource.DrawableDict?.Drawables?.data_items ?? [];
         if (candidateDrawables.Length == 0) throw new InvalidDataException("The YDD contains no drawables.");
@@ -42,41 +52,46 @@ internal static class ClothingLodGenerator
             DrawableModelsBlock models = target.DrawableModels ?? throw new InvalidDataException("A drawable has no model block.");
             DrawableModel[] high = models.High ?? [];
             if (high.Length == 0) continue;
+            float lodBaseRatio = highRatio ?? 1f;
+            if (highRatio.HasValue)
+                models.High = SimplifyModels(highDrawables[index].DrawableModels?.High ?? [], highRatio.Value, 0.0125f, target, aggressiveHigh);
             if (models.Med is not { Length: > 0 })
-                models.Med = SimplifyModels(mediumDrawables[index].DrawableModels?.High ?? [], mediumRatio, 0.025f, target, aggressiveFallback);
+                models.Med = SimplifyModels(mediumDrawables[index].DrawableModels?.High ?? [], mediumRatio * lodBaseRatio, 0.025f, target, false);
             if (models.Low is not { Length: > 0 })
             {
                 DrawableModel[] existingMedium = lowDrawables[index].DrawableModels?.Med ?? [];
                 bool deriveFromMedium = existingMedium.Length > 0;
                 models.Low = SimplifyModels(
                     deriveFromMedium ? existingMedium : lowDrawables[index].DrawableModels?.High ?? [],
-                    deriveFromMedium ? Math.Clamp(lowRatio / mediumRatio, 0.05f, 0.9f) : lowRatio,
+                    deriveFromMedium ? Math.Clamp(lowRatio / mediumRatio, 0.05f, 0.9f) : lowRatio * lodBaseRatio,
                     0.075f,
                     target,
-                    aggressiveFallback);
+                    aggressiveLow);
             }
         }
 
         string candidatePath = Path.Combine(Path.GetTempPath(), $"{Path.GetFileNameWithoutExtension(sourcePath)}-lod-review-{Guid.NewGuid():N}.ydd");
         File.WriteAllBytes(candidatePath, candidate.Save());
         YddFile savedCandidate = Load(candidatePath);
-        ValidateHighUnchanged(Load(sourcePath), savedCandidate);
+        ValidateHigh(Load(sourcePath), savedCandidate, highRatio.HasValue);
         ValidateIndices(savedCandidate);
         ClothingLodStats after = Analyze(savedCandidate);
+        if (highRatio.HasValue && after.High >= before.High)
+            throw new InvalidDataException("High optimisation did not reduce the model.");
         if (!after.HasMedium || !after.HasLow)
             throw new InvalidDataException("The generated candidate is missing a Medium or Low LOD.");
         if (!before.HasMedium && after.Medium >= before.High)
             throw new InvalidDataException("Medium LOD generation did not reduce the model.");
-        if (!before.HasLow && after.Low >= (after.HasMedium ? after.Medium : before.High))
-            throw new InvalidDataException("Low LOD generation did not reduce the model below Medium.");
-        return new ClothingLodResult(candidatePath, before, after);
+        if (!before.HasLow && after.Low > (after.HasMedium ? after.Medium : before.High))
+            throw new InvalidDataException("Low LOD generation produced more polygons than Medium.");
+        return new ClothingLodResult(candidatePath, before, after, highRatio.HasValue);
     }
 
-    public static string Apply(string sourcePath, string candidatePath, string rootPath)
+    public static string Apply(string sourcePath, string candidatePath, string rootPath, bool allowHighChanges = false)
     {
         YddFile source = Load(sourcePath);
         YddFile candidate = Load(candidatePath);
-        ValidateHighUnchanged(source, candidate);
+        ValidateHigh(source, candidate, allowHighChanges);
         ValidateIndices(candidate);
         string backupDirectory = Path.Combine(rootPath, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"), "lod-generation");
         Directory.CreateDirectory(backupDirectory);
@@ -103,21 +118,24 @@ internal static class ClothingLodGenerator
     private static bool SelfTestFile(string path)
     {
         ClothingLodStats before = Analyze(path);
-        ClothingLodResult result = Generate(path, 0.5f, 0.2f);
-        ClothingLodResult conservative = Generate(path, 0.5f, 0.2f, false);
+        ClothingLodResult result = Generate(path, 0.5f, 0.2f, true);
+        ClothingLodResult conservative = Generate(path, 0.5f, 0.2f);
+        ClothingLodResult high = Generate(path, 0.5f, 0.2f, false, 0.8f);
         try
         {
             return result.After.High == before.High &&
                 (before.HasMedium || result.After.Medium is > 0 && result.After.Medium < before.High) &&
-                (before.HasLow || result.After.Low is > 0 && result.After.Low < result.After.Medium) &&
+                (before.HasLow || result.After.Low is > 0 && result.After.Low <= result.After.Medium) &&
                 conservative.After.High == before.High &&
                 (before.HasMedium || conservative.After.Medium is > 0 && conservative.After.Medium < before.High) &&
-                (before.HasLow || conservative.After.Low is > 0 && conservative.After.Low < conservative.After.Medium);
+                (before.HasLow || conservative.After.Low is > 0 && conservative.After.Low <= conservative.After.Medium) &&
+                high.HighOptimized && high.After.High < before.High;
         }
         finally
         {
             if (File.Exists(result.CandidatePath)) File.Delete(result.CandidatePath);
             if (File.Exists(conservative.CandidatePath)) File.Delete(conservative.CandidatePath);
+            if (File.Exists(high.CandidatePath)) File.Delete(high.CandidatePath);
         }
     }
 
@@ -231,7 +249,7 @@ internal static class ClothingLodGenerator
         return new ClothingLodStats(Count(models => models.High), Count(models => models.Med), Count(models => models.Low));
     }
 
-    private static void ValidateHighUnchanged(YddFile source, YddFile candidate)
+    private static void ValidateHigh(YddFile source, YddFile candidate, bool allowChanges)
     {
         Drawable[] originals = source.DrawableDict?.Drawables?.data_items ?? [];
         Drawable[] generated = candidate.DrawableDict?.Drawables?.data_items ?? [];
@@ -254,8 +272,9 @@ internal static class ClothingLodGenerator
                 {
                     DrawableGeometry before = originalGeometry[geometryIndex];
                     DrawableGeometry after = generatedGeometry[geometryIndex];
-                    if (!(before.IndexBuffer?.Indices ?? []).SequenceEqual(after.IndexBuffer?.Indices ?? []) ||
-                        !(before.VertexData?.VertexBytes ?? []).SequenceEqual(after.VertexData?.VertexBytes ?? []))
+                    if (!allowChanges &&
+                        (!(before.IndexBuffer?.Indices ?? []).SequenceEqual(after.IndexBuffer?.Indices ?? []) ||
+                         !(before.VertexData?.VertexBytes ?? []).SequenceEqual(after.VertexData?.VertexBytes ?? [])))
                         throw new InvalidDataException("The candidate changed High LOD geometry.");
                 }
             }
@@ -265,7 +284,7 @@ internal static class ClothingLodGenerator
     private static void ValidateIndices(YddFile file)
     {
         foreach (Drawable drawable in file.DrawableDict?.Drawables?.data_items ?? [])
-        foreach (DrawableModel model in (drawable.DrawableModels?.Med ?? []).Concat(drawable.DrawableModels?.Low ?? []))
+        foreach (DrawableModel model in (drawable.DrawableModels?.High ?? []).Concat(drawable.DrawableModels?.Med ?? []).Concat(drawable.DrawableModels?.Low ?? []))
         foreach (DrawableGeometry geometry in model.Geometries ?? [])
         {
             int vertexCount = geometry.VertexData?.VertexCount ?? 0;
