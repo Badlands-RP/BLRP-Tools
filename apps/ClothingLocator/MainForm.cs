@@ -1365,6 +1365,7 @@ internal sealed class MainForm : Form
         _generateLods.Enabled = entry != null &&
             File.Exists(entry.FilePath) &&
             Path.GetExtension(entry.FilePath).Equals(".ydd", StringComparison.OrdinalIgnoreCase);
+        UpdatePreviewButton();
     }
 
     private ClothingEntry? SelectedResult() => _results.SelectedRows.Count == 1
@@ -1471,14 +1472,20 @@ internal sealed class MainForm : Form
             _outfitItems.Items.Add($"{slot,-7}  {entry.Component.Code.ToUpperInvariant(),-8}  #{globalIndex,-4}  {Path.GetFileName(entry.FilePath)}");
         }
 
-        _previewOutfit.Text = $"PREVIEW OUTFIT ({_outfit.Count})";
-        _previewOutfit.Enabled = _outfit.Count > 0;
+        UpdatePreviewButton();
         _clearOutfit.Enabled = _outfit.Count > 0;
         _removeOutfitItem.Enabled = false;
     }
 
     private void PreviewOutfit(object? sender, EventArgs e)
     {
+        if (_outfit.Count == 0 && SelectedResult() is { } selected)
+        {
+            using var dialog = new ClothingPreviewDialog(selected.FilePath, _catalog?.FindPreviewTexture(selected));
+            dialog.ShowDialog(this);
+            return;
+        }
+
         string[] modelPaths = _outfit.Select(entry => entry.FilePath).Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (modelPaths.Length == 0)
         {
@@ -1522,6 +1529,13 @@ internal sealed class MainForm : Form
         startInfo.ArgumentList.Add(gender);
         Process.Start(startInfo);
         SetStatus($"OUTFIT PREVIEW STARTED WITH {modelPaths.Length} ITEM{(modelPaths.Length == 1 ? string.Empty : "S")} / COMPLETE GRZYCLOTHTOOL SETUP IF PROMPTED", false);
+    }
+
+    private void UpdatePreviewButton()
+    {
+        bool hasOutfit = _outfit.Count > 0;
+        _previewOutfit.Text = hasOutfit ? $"PREVIEW OUTFIT ({_outfit.Count})" : "PREVIEW SELECTED";
+        _previewOutfit.Enabled = hasOutfit || SelectedResult() is { } entry && File.Exists(entry.FilePath);
     }
 
     private static bool TryReusePreview(string previewExe, IReadOnlyList<string> modelPaths, string gender)
@@ -1655,7 +1669,6 @@ internal sealed class MainForm : Form
 
     private void SetBusy(bool busy, string? text = null)
     {
-        Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
         _progress.Active = busy;
         if (text != null)
         {

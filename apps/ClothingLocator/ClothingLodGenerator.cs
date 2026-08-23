@@ -22,7 +22,7 @@ internal static class ClothingLodGenerator
         return Analyze(file);
     }
 
-    public static ClothingLodResult Generate(string sourcePath, float mediumRatio, float lowRatio)
+    public static ClothingLodResult Generate(string sourcePath, float mediumRatio, float lowRatio, bool aggressiveFallback = true)
     {
         if (mediumRatio is <= 0 or >= 1 || lowRatio is <= 0 or >= 1 || lowRatio >= mediumRatio)
             throw new ArgumentOutOfRangeException(nameof(mediumRatio), "LOD ratios must satisfy 0 < Low < Medium < 100%.");
@@ -43,7 +43,7 @@ internal static class ClothingLodGenerator
             DrawableModel[] high = models.High ?? [];
             if (high.Length == 0) continue;
             if (models.Med is not { Length: > 0 })
-                models.Med = SimplifyModels(mediumDrawables[index].DrawableModels?.High ?? [], mediumRatio, 0.025f, target);
+                models.Med = SimplifyModels(mediumDrawables[index].DrawableModels?.High ?? [], mediumRatio, 0.025f, target, aggressiveFallback);
             if (models.Low is not { Length: > 0 })
             {
                 DrawableModel[] existingMedium = lowDrawables[index].DrawableModels?.Med ?? [];
@@ -52,7 +52,8 @@ internal static class ClothingLodGenerator
                     deriveFromMedium ? existingMedium : lowDrawables[index].DrawableModels?.High ?? [],
                     deriveFromMedium ? Math.Clamp(lowRatio / mediumRatio, 0.05f, 0.9f) : lowRatio,
                     0.075f,
-                    target);
+                    target,
+                    aggressiveFallback);
             }
         }
 
@@ -103,15 +104,20 @@ internal static class ClothingLodGenerator
     {
         ClothingLodStats before = Analyze(path);
         ClothingLodResult result = Generate(path, 0.5f, 0.2f);
+        ClothingLodResult conservative = Generate(path, 0.5f, 0.2f, false);
         try
         {
             return result.After.High == before.High &&
                 (before.HasMedium || result.After.Medium is > 0 && result.After.Medium < before.High) &&
-                (before.HasLow || result.After.Low is > 0 && result.After.Low < result.After.Medium);
+                (before.HasLow || result.After.Low is > 0 && result.After.Low < result.After.Medium) &&
+                conservative.After.High == before.High &&
+                (before.HasMedium || conservative.After.Medium is > 0 && conservative.After.Medium < before.High) &&
+                (before.HasLow || conservative.After.Low is > 0 && conservative.After.Low < conservative.After.Medium);
         }
         finally
         {
             if (File.Exists(result.CandidatePath)) File.Delete(result.CandidatePath);
+            if (File.Exists(conservative.CandidatePath)) File.Delete(conservative.CandidatePath);
         }
     }
 
@@ -121,13 +127,13 @@ internal static class ClothingLodGenerator
         catch { return null; }
     }
 
-    private static DrawableModel[] SimplifyModels(DrawableModel[] models, float ratio, float maxError, Drawable targetDrawable)
+    private static DrawableModel[] SimplifyModels(DrawableModel[] models, float ratio, float maxError, Drawable targetDrawable, bool aggressiveFallback)
     {
         foreach (DrawableModel model in models)
         {
             foreach (DrawableGeometry geometry in model.Geometries ?? [])
             {
-                SimplifyGeometry(geometry, ratio, maxError);
+                SimplifyGeometry(geometry, ratio, maxError, aggressiveFallback);
                 ShaderFX[] shaders = targetDrawable.ShaderGroup?.Shaders?.data_items ?? [];
                 if (geometry.ShaderID < shaders.Length) geometry.Shader = shaders[geometry.ShaderID];
             }
@@ -135,7 +141,7 @@ internal static class ClothingLodGenerator
         return models;
     }
 
-    private static void SimplifyGeometry(DrawableGeometry geometry, float ratio, float maxError)
+    private static void SimplifyGeometry(DrawableGeometry geometry, float ratio, float maxError, bool aggressiveFallback)
     {
         VertexData vertices = geometry.VertexData ?? throw new InvalidDataException("A geometry has no vertex data.");
         ushort[] sourceUshort = geometry.IndexBuffer?.Indices ?? [];
@@ -157,6 +163,18 @@ internal static class ClothingLodGenerator
         int resultCount = Meshopt.Simplify(
             destination, source, in positions[0], vertices.VertexCount, sizeof(float) * 3,
             targetCount, maxError, SimplifyLockBorder | SimplifyRegularize, out resultError);
+        if (aggressiveFallback && resultCount > targetCount * 1.15f)
+        {
+            uint[] fallback = new uint[source.Length];
+            int fallbackCount = Meshopt.SimplifySloppy(
+                fallback, source, in positions[0], vertices.VertexCount, sizeof(float) * 3,
+                targetCount, maxError, out resultError);
+            if (fallbackCount >= 3 && fallbackCount < resultCount)
+            {
+                destination = fallback;
+                resultCount = fallbackCount;
+            }
+        }
         if (resultCount < 3 || resultCount >= source.Length) return;
         CompactGeometry(geometry, destination.AsSpan(0, resultCount));
     }

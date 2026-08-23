@@ -8,6 +8,43 @@ namespace BLRP.ClothingLocator;
 
 internal enum ClothingPreviewLod { High, Medium, Low }
 
+internal sealed class ClothingPreviewDialog : Form
+{
+    private readonly LodMeshPreview _preview = new() { Dock = DockStyle.Fill };
+
+    public ClothingPreviewDialog(string modelPath, string? texturePath)
+    {
+        Text = "BLRP Clothing Preview";
+        StartPosition = FormStartPosition.CenterParent;
+        MinimumSize = new Size(700, 600);
+        ClientSize = new Size(900, 760);
+        BackColor = Color.FromArgb(12, 12, 28);
+        ForeColor = Color.White;
+        Font = new Font("Consolas", 9F);
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), RowCount = 2 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.Controls.Add(new Label
+        {
+            Text = $"{Path.GetFileName(modelPath)}  /  {(texturePath == null ? "NO MATCHING YTD" : Path.GetFileName(texturePath))}",
+            Dock = DockStyle.Fill,
+            AutoEllipsis = true,
+            ForeColor = Color.FromArgb(135, 206, 235),
+            Font = new Font(Font, FontStyle.Bold)
+        });
+        layout.Controls.Add(_preview, 0, 1);
+        Controls.Add(layout);
+
+        Shown += async (_, _) =>
+        {
+            try { await _preview.LoadAsync(modelPath, ClothingPreviewLod.High, texturePath); }
+            catch (Exception exception) { MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        };
+    }
+}
+
 internal sealed class LodReviewDialog : Form
 {
     private readonly string _sourcePath;
@@ -18,6 +55,7 @@ internal sealed class LodReviewDialog : Form
     private readonly LodMeshPreview _after = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown _medium = new() { Minimum = 10, Maximum = 90, Value = 50, Width = 70 };
     private readonly NumericUpDown _low = new() { Minimum = 5, Maximum = 80, Value = 20, Width = 70 };
+    private readonly CheckBox _aggressive = new() { Text = "AGGRESSIVE FALLBACK", Checked = true, AutoSize = true, ForeColor = Color.White, Margin = new Padding(18, 9, 0, 0) };
     private readonly ComboBox _afterLod = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
     private readonly Label _stats = new() { AutoSize = true, ForeColor = Color.White };
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.FromArgb(135, 206, 235) };
@@ -108,6 +146,7 @@ internal sealed class LodReviewDialog : Form
         controls.Controls.Add(_medium);
         controls.Controls.Add(new Label { Text = "LOW %", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
         controls.Controls.Add(_low);
+        controls.Controls.Add(_aggressive);
         controls.Controls.Add(_generate);
         controls.Controls.Add(new Label { Text = "AFTER VIEW", AutoSize = true, Margin = new Padding(18, 11, 6, 0) });
         controls.Controls.Add(_afterLod);
@@ -150,7 +189,7 @@ internal sealed class LodReviewDialog : Form
         {
             if (_candidatePath != null && File.Exists(_candidatePath)) File.Delete(_candidatePath);
             ClothingLodResult result = await Task.Run(() => ClothingLodGenerator.Generate(
-                _sourcePath, (float)_medium.Value / 100, (float)_low.Value / 100));
+                _sourcePath, (float)_medium.Value / 100, (float)_low.Value / 100, _aggressive.Checked));
             _candidatePath = result.CandidatePath;
             _stats.Text = FormatStats("BEFORE", result.Before) + "    " + FormatStats("AFTER", result.After);
             await _after.LoadAsync(_candidatePath, (ClothingPreviewLod)_afterLod.SelectedItem!, _texturePath);
