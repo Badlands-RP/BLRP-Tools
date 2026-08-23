@@ -165,6 +165,16 @@ internal sealed class ClothingCatalog
         return baseOffset + priorPackCount + entry.RelativeIndex;
     }
 
+    public string? FindPreviewTexture(ClothingEntry entry)
+    {
+        string key = GetModelTextureKey(entry);
+        return Directory.EnumerateFiles(Path.GetDirectoryName(entry.FilePath)!, "*.ytd")
+            .Where(path => string.Equals(GetTextureKey(path), key, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(path => Path.GetFileNameWithoutExtension(path).EndsWith("_a_uni", StringComparison.OrdinalIgnoreCase))
+            .ThenBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
     public Task<IReadOnlyList<(ClothingEntry Entry, ClothingModelQuality Quality)>> CreateQualityReportAsync(
         CancellationToken cancellationToken = default) => Task.Run<IReadOnlyList<(ClothingEntry, ClothingModelQuality)>>(() =>
     {
@@ -176,7 +186,9 @@ internal sealed class ClothingCatalog
             if (quality.Summary != "OK") report.Add((entry, quality));
         }
         return report
-            .OrderBy(item => item.Item2.Summary)
+            .OrderByDescending(item => item.Item2.HighPolygons > 20_000)
+            .ThenByDescending(item => item.Item2.HighPolygons ?? -1)
+            .ThenBy(item => item.Item2.Summary)
             .ThenBy(item => item.Item1.FilePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }, cancellationToken);
@@ -314,7 +326,8 @@ internal sealed class ClothingCatalog
         }
 
         ClothingCatalog realCatalog = LoadAsync(rootPath).GetAwaiter().GetResult();
-        if (!realCatalog._entries.Any(entry => entry.TextureCount > 0))
+        ClothingEntry? texturedEntry = realCatalog._entries.FirstOrDefault(entry => entry.TextureCount > 0);
+        if (texturedEntry == null || realCatalog.FindPreviewTexture(texturedEntry) == null)
         {
             return false;
         }

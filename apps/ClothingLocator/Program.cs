@@ -5,6 +5,27 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Contains("--git-self-test", StringComparer.OrdinalIgnoreCase))
+        {
+            string[] values = args.Where(arg => !arg.Equals("--git-self-test", StringComparison.OrdinalIgnoreCase)).ToArray();
+            return values.Length == 2 && GitFileHistory.SelfTest(values[0], values[1]) ? 0 : 1;
+        }
+
+        if (args.Contains("--lod-preview-self-test", StringComparer.OrdinalIgnoreCase))
+        {
+            string[] values = args.Where(arg => !arg.Equals("--lod-preview-self-test", StringComparison.OrdinalIgnoreCase)).ToArray();
+            try { return values.Length == 2 && LodPreviewScene.SelfTest(values[0], values[1]) ? 0 : 1; }
+            catch (Exception exception) { Console.Error.WriteLine(exception); return 1; }
+        }
+
+        if (args.Contains("--lod-self-test", StringComparer.OrdinalIgnoreCase))
+        {
+            string root = args.FirstOrDefault(arg => !arg.Equals("--lod-self-test", StringComparison.OrdinalIgnoreCase))
+                ?? @"D:\BadlandsRP_EUP";
+            try { return ClothingLodGenerator.SelfTest(root) ? 0 : 1; }
+            catch (Exception exception) { Console.Error.WriteLine(exception); return 1; }
+        }
+
         if (args.Contains("--repair-heel-metadata", StringComparer.OrdinalIgnoreCase))
         {
             string[] values = args.Where(arg => !arg.Equals("--repair-heel-metadata", StringComparison.OrdinalIgnoreCase)).ToArray();

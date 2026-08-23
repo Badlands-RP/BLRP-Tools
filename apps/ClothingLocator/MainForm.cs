@@ -49,12 +49,14 @@ internal sealed class MainForm : Form
     private readonly Button _combineBlacklist;
     private readonly Button _scanQuality;
     private readonly Button _exportQuality;
+    private readonly Button _generateLods;
     private readonly ListBox _outfitItems = new();
     private readonly List<ClothingEntry> _outfit = new();
 
     private ClothingCatalog? _catalog;
     private BaseGameCatalog? _baseGameCatalog;
     private BaseGameClothingEntry? _selectedBaseEntry;
+    private IReadOnlyDictionary<string, GitFileChange> _gitHistory = new Dictionary<string, GitFileChange>(StringComparer.OrdinalIgnoreCase);
 
     public MainForm()
     {
@@ -93,6 +95,8 @@ internal sealed class MainForm : Form
         _scanQuality = CreateButton("SCAN REPO QC", async (_, _) => await ScanQualityAsync(), true);
         _exportQuality = CreateButton("EXPORT QC CSV", ExportQualityCsv);
         _exportQuality.Enabled = false;
+        _generateLods = CreateButton("GENERATE LODS...", async (_, _) => await GenerateLodsAsync());
+        _generateLods.Enabled = false;
 
         foreach (ComponentDefinition component in ClothingComponents.All)
         {
@@ -377,8 +381,9 @@ internal sealed class MainForm : Form
 
     private Control BuildStatusBar()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 4, RowCount = 1 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 5, RowCount = 1 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
@@ -386,10 +391,11 @@ internal sealed class MainForm : Form
         _status.TextAlign = ContentAlignment.MiddleLeft;
         layout.Controls.Add(_scanQuality, 1, 0);
         layout.Controls.Add(_exportQuality, 2, 0);
+        layout.Controls.Add(_generateLods, 3, 0);
         _progress.Dock = DockStyle.Fill;
         _progress.Margin = new Padding(0, 11, 0, 11);
         layout.Controls.Add(_status, 0, 0);
-        layout.Controls.Add(_progress, 3, 0);
+        layout.Controls.Add(_progress, 4, 0);
         return layout;
     }
 
@@ -436,6 +442,7 @@ internal sealed class MainForm : Form
         _results.Columns.Add("Textures", "TEXTURES");
         _results.Columns.Add("Polygons", "POLYS");
         _results.Columns.Add("Quality", "MODEL QC");
+        _results.Columns.Add("Git", "GIT");
         _results.Columns.Add("File", "FILE");
         _results.Columns[0].Width = 76;
         _results.Columns[1].Width = 76;
@@ -445,8 +452,12 @@ internal sealed class MainForm : Form
         _results.Columns[5].Width = 76;
         _results.Columns[6].Width = 76;
         _results.Columns[7].Width = 90;
+        _results.Columns[7].ValueType = typeof(long);
+        _results.Columns[7].DefaultCellStyle.Format = "N0";
+        _results.Columns[7].DefaultCellStyle.NullValue = "—";
         _results.Columns[8].Width = 190;
-        _results.Columns[9].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+        _results.Columns[9].Width = 72;
+        _results.Columns[10].AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
     }
 
     private void WireEvents()
@@ -472,7 +483,11 @@ internal sealed class MainForm : Form
         SetBusy(true, "SCANNING COMPILED CLOTHING...");
         try
         {
-            _catalog = await ClothingCatalog.LoadAsync(root);
+            Task<ClothingCatalog> catalogTask = ClothingCatalog.LoadAsync(root);
+            Task<IReadOnlyDictionary<string, GitFileChange>> gitTask = Task.Run(() => GitFileHistory.BuildIndex(root));
+            await Task.WhenAll(catalogTask, gitTask);
+            _catalog = await catalogTask;
+            _gitHistory = await gitTask;
             PopulateBusinesses(BuildBlacklistOptions(BusinessDirectory.LoadCached()));
             SetStatus($"READY  /  {_catalog.FileCount:N0} COMPILED YDD FILES INDEXED", false);
         }
@@ -553,16 +568,48 @@ internal sealed class MainForm : Form
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
-        string[] headers = [.. _results.Columns.Cast<DataGridViewColumn>().Select(column => column.HeaderText), "QC DETAILS", "FULL PATH"];
+        string[] headers = [.. _results.Columns.Cast<DataGridViewColumn>().Select(column => column.HeaderText), "QC DETAILS", "GIT DETAILS", "FULL PATH"];
         var lines = new List<string> { string.Join(',', headers.Select(CsvCell)) };
         lines.AddRange(_results.Rows.Cast<DataGridViewRow>().Select(row => string.Join(',',
             row.Cells.Cast<DataGridViewCell>().Select(cell => CsvCell(cell.Value?.ToString() ?? string.Empty))
-                .Concat([CsvCell(row.Cells[8].ToolTipText), CsvCell((row.Tag as ClothingEntry)?.FilePath ?? string.Empty)]))));
+                .Concat([CsvCell(row.Cells[8].ToolTipText), CsvCell(row.Cells[9].ToolTipText), CsvCell((row.Tag as ClothingEntry)?.FilePath ?? string.Empty)]))));
         File.WriteAllLines(dialog.FileName, lines, new UTF8Encoding(true));
         SetStatus($"EXPORTED {_results.Rows.Count:N0} QC RESULT{(_results.Rows.Count == 1 ? string.Empty : "S")} TO {dialog.FileName}", false);
     }
 
     internal static string CsvCell(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
+
+    private async Task GenerateLodsAsync()
+    {
+        ClothingEntry? entry = SelectedResult();
+        if (entry == null || !File.Exists(entry.FilePath)) return;
+        if (!Path.GetExtension(entry.FilePath).Equals(".ydd", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowError("Automatic LOD generation currently supports clothing YDD files only.");
+            return;
+        }
+        bool ownsCloth;
+        try { ownsCloth = ClothingImporter.OwnsCloth(_rootPath.Text.Trim(), entry); }
+        catch (Exception exception) { ShowError(exception.Message); return; }
+
+        using var dialog = new LodReviewDialog(
+            entry.FilePath,
+            _rootPath.Text.Trim(),
+            ownsCloth,
+            _catalog?.FindPreviewTexture(entry));
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        SetBusy(true, "REFRESHING CLOTHING AFTER LOD GENERATION...");
+        try
+        {
+            _catalog = await ClothingCatalog.LoadAsync(_rootPath.Text.Trim());
+            ClothingEntry? refreshed = _catalog.FindByGlobalIndex(
+                entry.Gender, entry.Component, _catalog.GetGlobalIndex(entry, entry.Component.DefaultOffset(entry.Gender)),
+                entry.Component.DefaultOffset(entry.Gender));
+            ShowResults(refreshed == null ? [] : [refreshed]);
+            SetStatus($"LODS APPLIED / BACKUP: {dialog.BackupPath}", false);
+        }
+        finally { SetBusy(false); }
+    }
 
     private IReadOnlyList<string> BuildBlacklistOptions(IEnumerable<string> panelBusinesses) =>
         BusinessDirectory.Normalize(panelBusinesses
@@ -1245,6 +1292,7 @@ internal sealed class MainForm : Form
             string relativePath = Path.GetRelativePath(_catalog.RootPath, entry.FilePath);
             ClothingModelQuality quality = qualityByPath?.GetValueOrDefault(entry.FilePath)
                 ?? ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
+            _gitHistory.TryGetValue(Path.GetFullPath(entry.FilePath), out GitFileChange? git);
             int rowIndex = _results.Rows.Add(
                 entry.Gender.ToString().ToUpperInvariant(),
                 slot,
@@ -1253,14 +1301,16 @@ internal sealed class MainForm : Form
                 entry.Pack,
                 entry.RelativeIndex,
                 entry.TextureCount,
-                quality.HighPolygons?.ToString("N0") ?? "—",
+                quality.HighPolygons,
                 quality.Summary,
+                git?.Hash ?? "—",
                 relativePath);
             _results.Rows[rowIndex].Cells[8].ToolTipText = quality.Details;
             _results.Rows[rowIndex].Cells[8].Style.ForeColor = quality.Summary == "OK"
                 ? Color.FromArgb(120, 220, 150)
                 : Color.FromArgb(255, 180, 50);
-            _results.Rows[rowIndex].Cells[9].ToolTipText = entry.FilePath;
+            _results.Rows[rowIndex].Cells[9].ToolTipText = git?.Tooltip ?? "No committed Git history found for this file.";
+            _results.Rows[rowIndex].Cells[10].ToolTipText = entry.FilePath;
             _results.Rows[rowIndex].Tag = entry;
         }
 
@@ -1291,10 +1341,11 @@ internal sealed class MainForm : Form
             "R*",
             entry.RelativeIndex,
             entry.TextureArchivePaths.Count,
-            "—",
+            null,
             "ROCKSTAR",
+            "—",
             fileSummary);
-        _results.Rows[rowIndex].Cells[9].ToolTipText = string.Join(
+        _results.Rows[rowIndex].Cells[10].ToolTipText = string.Join(
             Environment.NewLine,
             new[] { entry.ModelArchivePath }.Concat(entry.TextureArchivePaths));
         _resultCount.Text = "1 RESULT";
@@ -1311,6 +1362,9 @@ internal sealed class MainForm : Form
         _replaceDrawable.Enabled = entry is { Component.IsProp: false } && File.Exists(entry.FilePath);
         _editYmtSettings.Enabled = entry is { Component.Code: "feet" } && File.Exists(entry.FilePath);
         _duplicateIntoCategory.Enabled = entry is { Component.IsProp: false };
+        _generateLods.Enabled = entry != null &&
+            File.Exists(entry.FilePath) &&
+            Path.GetExtension(entry.FilePath).Equals(".ydd", StringComparison.OrdinalIgnoreCase);
     }
 
     private ClothingEntry? SelectedResult() => _results.SelectedRows.Count == 1
@@ -1622,6 +1676,10 @@ internal sealed class MainForm : Form
         AddOrReplaceOutfitItem(outfit, firstTop);
         bool replaced = AddOrReplaceOutfitItem(outfit, replacementTop);
         AddOrReplaceOutfitItem(outfit, new ClothingEntry("shoes.ydd", 1, Gender.Male, shoes, 1, 0));
+        form._results.Rows.Add("", "", "", 0, 0, 0, 0, 96L, "", "", "");
+        form._results.Rows.Add("", "", "", 0, 0, 0, 0, 956L, "", "", "");
+        form._results.Sort(form._results.Columns[7], System.ComponentModel.ListSortDirection.Descending);
+        bool polygonSortsNumerically = (long)form._results.Rows[0].Cells[7].Value == 956L;
         return form._customStart.ReadOnly &&
                form._customStart.Text == "178" &&
                form._duplicateIntoCategory.Text == "DUPLICATE INTO CATEGORY" &&
@@ -1630,6 +1688,9 @@ internal sealed class MainForm : Form
                form._openResultPath.Text == "OPEN PATH" &&
                form._scanQuality.Text == "SCAN REPO QC" &&
                form._exportQuality.Text == "EXPORT QC CSV" &&
+               form._generateLods.Text == "GENERATE LODS..." &&
+               form._results.Columns[7].ValueType == typeof(long) &&
+               polygonSortsNumerically &&
                CsvCell("a,\"b") == "\"a,\"\"b\"" &&
                replaced &&
                outfit.Count == 2 &&
