@@ -52,6 +52,7 @@ internal sealed class MainForm : Form
     private readonly DataGridView slotsGrid = new();
     private readonly TextBox logTextBox = new();
     private readonly Button convertButton = new();
+    private readonly Button signBatchButton = new();
     private readonly Button scanButton = new();
     private readonly Button findMetadataButton = new();
     private readonly Button copyVehiclesMetadataButton = new();
@@ -263,6 +264,15 @@ internal sealed class MainForm : Form
         convertButton.AutoSize = true;
         convertButton.Click += (_, _) => ConvertImage();
         fields.Controls.Add(convertButton, 1, 2);
+
+        signBatchButton.Text = "Open Sign Batch Builder...";
+        signBatchButton.AutoSize = true;
+        signBatchButton.Click += (_, _) =>
+        {
+            using var dialog = new SignBatchBuilderForm();
+            dialog.ShowDialog(this);
+        };
+        fields.Controls.Add(signBatchButton, 2, 2);
 
         var note = new Label
         {
@@ -1164,6 +1174,7 @@ internal sealed class MainForm : Form
         inputImageTextBox.PlaceholderText = @"Example: D:\Liveries\bisonhf_silent.png";
 
         SetHelp(outputDdsTextBox, "Optional standalone DDS output path used by the Convert button. Apply Livery also creates a temporary DXT5 DDS automatically.");
+        SetHelp(signBatchButton, "Batch-convert sign PNG or DDS files into ready-to-use YFT and DDS pairs using the built-in sign template.");
         outputDdsTextBox.PlaceholderText = @"Example: D:\Liveries\bisonhf_livery_29.dds";
         SetHelp(convertButton, "Only converts the selected image to a DXT5 DDS. It does not edit any vehicle files.");
         SetHelp(previewBox, "Image preview for the selected input artwork.");

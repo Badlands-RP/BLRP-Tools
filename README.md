@@ -6,7 +6,7 @@ One Windows launcher and updater for BadlandsRP's internal desktop utilities.
 
 - **BLRP Asset Studio** — weapon skins, cups, 3D previews, and inventory images.
 - **BLRP Clothing Utility** — clothing search, preview, import, metadata, and blacklist workflows.
-- **BLRP Livery Tool** — vehicle livery conversion, scanning, metadata, and installation.
+- **BLRP Livery Tool** — vehicle livery conversion, sign batch building, scanning, metadata, and installation.
 - **BLRP Mapping Deconflicter** — scans mapping resources and reports duplicate assets.
 
 The Hub launches each utility in its own hosted process, so a crash or long-running job

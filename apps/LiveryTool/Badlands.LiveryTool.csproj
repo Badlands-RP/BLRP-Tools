@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory></Content>
+    <EmbeddedResource Include="Assets\SignTemplate.yft.xml" />
   </ItemGroup>
 
 </Project>

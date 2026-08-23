@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Fragment>
+ <Name>pack:/template</Name>
+ <BoundingSphereCenter x="0" y="0" z="-0.017822" />
+ <BoundingSphereRadius value="0.00848499965" />
+ <UnknownB0 value="0" />
+ <UnknownB8 value="0" />
+ <UnknownBC value="0" />
+ <UnknownC0 value="65280" />
+ <UnknownC4 value="1" />
+ <UnknownCC value="0" />
+ <GravityFactor value="1" />
+ <BuoyancyFactor value="1" />
+ <Drawable>
+  <Name>skel</Name>
+  <Matrix>
+   1 0 0
+   0 1 0
+   0 0 1
+   0 0 0
+  </Matrix>
+  <BoundingSphereCenter x="0" y="0" z="-0.017822" />
+  <BoundingSphereRadius value="0.00848499965" />
+  <BoundingBoxMin x="-0.006" y="-0.006" z="-0.017822" />
+  <BoundingBoxMax x="0.006" y="0.006" z="-0.017822" />
+  <LodDistHigh value="5" />
+  <LodDistMed value="15" />
+  <LodDistLow value="9998" />
+  <LodDistVlow value="9998" />
+  <FlagsHigh value="1" />
+  <FlagsMed value="1" />
+  <FlagsLow value="1" />
+  <FlagsVlow value="0" />
+  <Unknown9A value="54" />
+  <ShaderGroup>
+   <Unknown30 value="8" />
+   <TextureDictionary>
+    <Item>
+     <Name>template</Name>
+     <Unk32 value="128" />
+     <Usage>DIFFUSE</Usage>
+     <UsageFlags>X64, Y64, X256, Y512, Y1024, Y2048, UNK24</UsageFlags>
+     <ExtraFlags value="0" />
+     <Width value="2048" />
+     <Height value="2048" />
+     <MipLevels value="10" />
+     <Format>D3DFMT_DXT5</Format>
+     <FileName>template.dds</FileName>
+    </Item>
+   </TextureDictionary>
+   <Shaders>
+    <Item>
+      <Name>vehicle_paint3</Name>
+      <FileName>vehicle_paint3.sps</FileName>
+      <RenderBucket value="0" />
+      <Parameters>
+       <Item name="DiffuseSampler" type="Texture">
+        <Name>vehicle_generic_smallspecmap</Name>
+       </Item>
+       <Item name="DamageSampler" type="Texture" />
+       <Item name="DiffuseSampler2" type="Texture">
+        <Name>template</Name>
+       </Item>
+       <Item name="DirtSampler" type="Texture">
+        <Name>vehicle_genericmud_car</Name>
+       </Item>
+       <Item name="SpecSampler" type="Texture">
+        <Name>vehicle_generic_smallspecmap</Name>
+       </Item>
+       <Item name="envEffTexTileUV" type="Vector" x="8" y="0" z="0" w="0" />
+       <Item name="envEffScale" type="Vector" x="1" y="0.001" z="0" w="0" />
+       <Item name="envEffThickness" type="Vector" x="25" y="0" z="0" w="0" />
+       <Item name="diffuse2SpecMod" type="Vector" x="8" y="0" z="0" w="0" />
+       <Item name="reflectivePower" type="Vector" x="0.45" y="0" z="0" w="0" />
+       <Item name="specular2Color_DirLerp" type="Vector" x="0" y="0.5" z="0" w="0" />
+       <Item name="specMapIntMask" type="Vector" x="1" y="0" z="0" w="0" />
+       <Item name="specularIntensityMult" type="Vector" x="1" y="0" z="0" w="0" />
+       <Item name="specularFalloffMult" type="Vector" x="50" y="0" z="0" w="0" />
+       <Item name="specularFresnel" type="Vector" x="0.75" y="0" z="0" w="0" />
+       <Item name="dirtColor" type="Vector" x="0.231372" y="0.223529" z="0.203921" w="0" />
+       <Item name="dirtLevelMod" type="Vector" x="1" y="1" z="1" w="1" />
+       <Item name="matDiffuseColor2" type="Vector" x="1" y="1" z="1" w="0" />
+       <Item name="matDiffuseColor" type="Vector" x="2" y="1" z="1" w="0" />
+       <Item name="DamagedWheelOffsets" type="Array">
+        <Value x="0" y="0" z="0" w="0" />
+        <Value x="0" y="0" z="0" w="0" />
+       </Item>
+       <Item name="DamageTextureOffset" type="Vector" x="0" y="0" z="0" w="0" />
+       <Item name="DamageMultiplier" type="Vector" x="0" y="0" z="0" w="0" />
+       <Item name="BoundRadius" type="Vector" x="0" y="0" z="0" w="0" />
+      </Parameters>
+     </Item>
+   </Shaders>
+  </ShaderGroup>
+  <Skeleton>
+   <Unknown1C value="0" />
+   <Unknown50 value="3283568608" />
+   <Unknown54 value="3954038922" />
+   <Unknown58 value="3624623659" />
+   <Bones>
+    <Item>
+     <Name>template_ng</Name>
+     <Tag value="0" />
+     <Index value="0" />
+     <ParentIndex value="-1" />
+     <SiblingIndex value="-1" />
+     <Flags>RotX, RotY, RotZ, TransX, TransY, TransZ</Flags>
+     <Translation x="0" y="0" z="0" />
+     <Rotation x="0" y="0" z="0" w="1" />
+     <Scale x="1" y="1" z="1" />
+     <TransformUnk x="0" y="4" z="-3" w="0" />
+    </Item>
+   </Bones>
+  </Skeleton>
+  <DrawableModelsHigh>
+   <Item>
+    <RenderMask value="255" />
+    <Flags value="0" />
+    <HasSkin value="0" />
+    <BoneIndex value="0" />
+    <Unknown1 value="0" />
+    <Geometries>
+     <Item>
+      <ShaderIndex value="0" />
+      <BoundingBoxMin x="-0.005859375" y="-0.005859375" z="-0.01806641" w="-0.005859375" />
+      <BoundingBoxMax x="0.005859375" y="0.005859375" z="-0.01806641" w="0.005859375" />
+      <VertexBuffer>
+       <Flags value="0" />
+       <Layout type="GTAV1">
+        <Position />
+        <Normal />
+        <Colour0 />
+        <TexCoord0 />
+        <TexCoord1 />
+       </Layout>
+       <Data>
+        0.005859375 -0.005859375 -0.01806641   0 0 1   255 255 255 255   0 1   0 1
+        0.005859375 0.005859375 -0.01806641   0 0 1   255 255 255 255   1 1   1 1
+        -0.005859375 0.005859375 -0.01806641   0 0 1   255 255 255 255   1 0   1 0
+        -0.005859375 -0.005859375 -0.01806641   0 0 1   255 255 255 255   0 0   0 0
+       </Data>
+      </VertexBuffer>
+      <IndexBuffer>
+       <Data>0 1 2 2 3 0</Data>
+      </IndexBuffer>
+     </Item>
+    </Geometries>
+   </Item>
+  </DrawableModelsHigh>
+  <DrawableModelsMedium>
+   <Item>
+    <RenderMask value="255" />
+    <Flags value="0" />
+    <HasSkin value="0" />
+    <BoneIndex value="0" />
+    <Unknown1 value="0" />
+    <Geometries>
+     <Item>
+      <ShaderIndex value="0" />
+      <BoundingBoxMin x="-0.005859375" y="-0.005859375" z="-0.01806641" w="-0.005859375" />
+      <BoundingBoxMax x="0.005859375" y="0.005859375" z="-0.01806641" w="0.005859375" />
+      <VertexBuffer>
+       <Flags value="0" />
+       <Layout type="GTAV1">
+        <Position />
+        <Normal />
+        <Colour0 />
+        <TexCoord0 />
+        <TexCoord1 />
+       </Layout>
+       <Data>
+        0.005859375 -0.005859375 -0.01806641   0 0 1   255 255 255 255   0 1   0 1
+        0.005859375 0.005859375 -0.01806641   0 0 1   255 255 255 255   1 1   1 1
+        -0.005859375 0.005859375 -0.01806641   0 0 1   255 255 255 255   1 0   1 0
+        -0.005859375 -0.005859375 -0.01806641   0 0 1   255 255 255 255   0 0   0 0
+       </Data>
+      </VertexBuffer>
+      <IndexBuffer>
+       <Data>0 1 2 2 3 0</Data>
+      </IndexBuffer>
+     </Item>
+    </Geometries>
+   </Item>
+  </DrawableModelsMedium>
+  <DrawableModelsLow>
+   <Item>
+    <RenderMask value="255" />
+    <Flags value="0" />
+    <HasSkin value="0" />
+    <BoneIndex value="0" />
+    <Unknown1 value="0" />
+    <Geometries>
+     <Item>
+      <ShaderIndex value="0" />
+      <BoundingBoxMin x="-0.005859375" y="-0.005859375" z="-0.01806641" w="-0.005859375" />
+      <BoundingBoxMax x="0.005859375" y="0.005859375" z="-0.01806641" w="0.005859375" />
+      <VertexBuffer>
+       <Flags value="0" />
+       <Layout type="GTAV1">
+        <Position />
+        <Normal />
+        <Colour0 />
+        <TexCoord0 />
+        <TexCoord1 />
+       </Layout>
+       <Data>
+        0.005859375 -0.005859375 -0.01806641   0 0 1   255 255 255 255   0 1   0 1
+        0.005859375 0.005859375 -0.01806641   0 0 1   255 255 255 255   1 1   1 1
+        -0.005859375 0.005859375 -0.01806641   0 0 1   255 255 255 255   1 0   1 0
+        -0.005859375 -0.005859375 -0.01806641   0 0 1   255 255 255 255   0 0   0 0
+       </Data>
+      </VertexBuffer>
+      <IndexBuffer>
+       <Data>0 1 2 2 3 0</Data>
+      </IndexBuffer>
+     </Item>
+    </Geometries>
+   </Item>
+  </DrawableModelsLow>
+ </Drawable>
+ <BoneTransforms unk="0">
+  <Item>
+   1 0 0 0
+   0 1 0 0
+   0 0 1 0
+  </Item>
+ </BoneTransforms>
+ <Physics>
+  <LOD1>
+   <Unknown14 value="0" />
+   <Unknown18 value="0" />
+   <Unknown1C value="0" />
+   <PositionOffset x="0" y="0" z="0" />
+   <Unknown40 x="0" y="0" z="0" />
+   <Unknown50 x="0" y="0" z="0" />
+   <DampingLinearC x="0.02" y="0.02" z="0.02" />
+   <DampingLinearV x="0.02" y="0.02" z="0.02" />
+   <DampingLinearV2 x="0.01" y="0.01" z="0.01" />
+   <DampingAngularC x="0.02" y="0.02" z="0.02" />
+   <DampingAngularV x="0.02" y="0.02" z="0.02" />
+   <DampingAngularV2 x="0.01" y="0.01" z="0.01" />
+   <Archetype>
+    <Name>template</Name>
+    <Mass value="1" />
+    <MassInv value="1" />
+    <Unknown48 value="1" />
+    <Unknown4C value="150" />
+    <Unknown50 value="6.28318548" />
+    <Unknown54 value="1" />
+    <InertiaTensor x="0" y="0" z="0" />
+    <InertiaTensorInv x="3.402823E+38" y="3.402823E+38" z="3.402823E+38" />
+    <Bounds type="Composite">
+     <BoxMin x="0" y="0" z="0" />
+     <BoxMax x="0" y="0" z="0" />
+     <BoxCenter x="0" y="0" z="0" />
+     <SphereCenter x="0" y="0" z="0" />
+     <SphereRadius value="0.00848499965" />
+     <Margin value="0" />
+     <Volume value="1" />
+     <Inertia x="1" y="1" z="1" />
+     <MaterialIndex value="0" />
+     <MaterialColourIndex value="0" />
+     <ProceduralID value="0" />
+     <RoomID value="0" />
+     <PedDensity value="0" />
+     <UnkFlags value="0" />
+     <PolyFlags value="0" />
+     <UnkType value="2" />
+     <Children>
+      <Item type="None" />
+     </Children>
+    </Bounds>
+   </Archetype>
+   <Transforms>
+    <Item>
+     1 0 0 0
+     0 1 0 0
+     0 0 1 0
+     0 0 0 0
+    </Item>
+   </Transforms>
+   <Groups>
+    <Item>
+     <Name>template</Name>
+     <ParentIndex value="255" />
+     <GlassWindowIndex value="0" />
+     <GlassFlags value="0" />
+     <Strength value="0" />
+     <ForceTransmissionScaleUp value="0.200000003" />
+     <ForceTransmissionScaleDown value="0.200000003" />
+     <JointStiffness value="0" />
+     <MinSoftAngle1 value="1" />
+     <MaxSoftAngle1 value="-1" />
+     <MaxSoftAngle2 value="1" />
+     <MaxSoftAngle3 value="1" />
+     <RotationSpeed value="0" />
+     <RotationStrength value="0" />
+     <RestoringStrength value="0" />
+     <RestoringMaxTorque value="0" />
+     <LatchStrength value="0" />
+     <Mass value="1" />
+     <MinDamageForce value="0" />
+     <DamageHealth value="0" />
+     <UnkFloat5C value="0" />
+     <UnkFloat60 value="1" />
+     <UnkFloat64 value="1" />
+     <UnkFloat68 value="1" />
+     <UnkFloat6C value="1" />
+     <UnkFloat70 value="1" />
+     <UnkFloat74 value="1" />
+     <UnkFloat78 value="1" />
+     <UnkFloatA8 value="1" />
+    </Item>
+   </Groups>
+   <Children>
+    <Item>
+     <GroupIndex value="0" />
+     <BoneTag value="0" />
+     <PristineMass value="1" />
+     <DamagedMass value="1" />
+     <UnkFloat value="0" />
+     <UnkVec x="0" y="0" z="0" w="0" />
+     <InertiaTensor x="0" y="0" z="0" w="0" />
+     <Drawable>
+      <Name />
+      <Matrix>
+       1 0 0
+       0 1 0
+       0 0 1
+       0 0 0
+      </Matrix>
+      <BoundingSphereCenter x="0" y="0" z="0" />
+      <BoundingSphereRadius value="0" />
+      <BoundingBoxMin x="0" y="0" z="0" />
+      <BoundingBoxMax x="0" y="0" z="0" />
+      <LodDistHigh value="0" />
+      <LodDistMed value="0" />
+      <LodDistLow value="0" />
+      <LodDistVlow value="0" />
+      <FlagsHigh value="0" />
+      <FlagsMed value="0" />
+      <FlagsLow value="0" />
+      <FlagsVlow value="0" />
+      <Unknown9A value="0" />
+     </Drawable>
+    </Item>
+   </Children>
+  </LOD1>
+ </Physics>
+ <Lights />
+</Fragment>
+

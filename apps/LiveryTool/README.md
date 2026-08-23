@@ -43,6 +43,12 @@ The tool currently:
 - Can create timestamped `.bak` files before editing metadata/Lua files when the checkbox is enabled.
 - Saves your repo path, modkit master list path, and backup preference between app launches.
 
+## Sign Batch Builder
+
+Select **Open Sign Batch Builder** beside the image conversion controls to turn a folder of sign PNG or DDS files into numbered, ready-to-use YFT/DDS pairs. The builder previews every source-to-output mapping, converts textures to DXT5 with mipmaps when needed, and compiles the bundled sign template directly through CodeWalker. Existing output files are never overwritten.
+
+The built-in blank is used by default. A custom `.yft.xml` and replacement token can be selected for advanced batches.
+
 ## Notes
 
 The YFT generation path is template-based. Use an existing livery `.yft` from the same vehicle when possible so the drawable shape and shader setup already match the vehicle.
