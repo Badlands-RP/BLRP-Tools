@@ -107,7 +107,7 @@ internal sealed class MainForm : Form
             return;
         }
         bool managedTool = IsManagedTool(path);
-        var start = new ProcessStartInfo(managedTool ? Application.ExecutablePath : path)
+        var start = new ProcessStartInfo(managedTool ? Environment.ProcessPath ?? Application.ExecutablePath : path)
         {
             UseShellExecute = true,
             WorkingDirectory = Path.GetDirectoryName(path)!
@@ -141,13 +141,14 @@ internal sealed class MainForm : Form
             string updaterDirectory = Path.Combine(Path.GetTempPath(), "BLRP-Tools-Updater-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(updaterDirectory);
             string updater = Path.Combine(updaterDirectory, "BLRP.Tools.Updater.exe");
-            File.Copy(Application.ExecutablePath, updater);
+            string launcherPath = Environment.ProcessPath ?? Application.ExecutablePath;
+            File.Copy(launcherPath, updater);
             var start = new ProcessStartInfo(updater) { UseShellExecute = true };
             start.ArgumentList.Add("--apply-update");
             start.ArgumentList.Add(Environment.ProcessId.ToString());
             start.ArgumentList.Add(zip);
             start.ArgumentList.Add(AppContext.BaseDirectory);
-            start.ArgumentList.Add(Application.ExecutablePath);
+            start.ArgumentList.Add(launcherPath);
             Process.Start(start);
             Application.Exit();
         }

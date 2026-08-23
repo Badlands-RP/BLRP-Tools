@@ -2150,6 +2150,10 @@ internal static class ClothingImporter
         bool summariesValid = good.Summary == "OK" &&
             bad.Summary == "OVER 20K / NO MED / NO LOW / NO YTD" &&
             bad.HighPolygons == 20_001 && good.MediumPolygons == 9_000 && good.LowPolygons == 3_000;
+        string testRoot = Path.Combine(Path.GetTempPath(), "blrp-clothing-root-test");
+        string testAddon = Path.Combine(testRoot, "clothing_addon_1");
+        summariesValid &= ResolveAddonRoot(testRoot, 1).Equals(Path.GetFullPath(testAddon), StringComparison.OrdinalIgnoreCase) &&
+            ResolveAddonRoot(testAddon, 1).Equals(Path.GetFullPath(testAddon), StringComparison.OrdinalIgnoreCase);
         if (!summariesValid || string.IsNullOrWhiteSpace(rootPath)) return summariesValid;
         string? model = Directory.EnumerateFiles(rootPath, "*.ydd", SearchOption.AllDirectories).FirstOrDefault();
         return model is not null && InspectModel(model, 1).Summary is not ("READ ERROR" or "INVALID MODEL");
@@ -2261,11 +2265,19 @@ internal static class ClothingImporter
     private static string GetYmtPath(string rootPath, ClothingEntry target)
     {
         string path = Path.Combine(
-            Path.GetFullPath(rootPath),
-            $"clothing_addon_{target.Pack}",
+            ResolveAddonRoot(rootPath, target.Pack),
             "stream",
             GetCollectionName(target.Gender, target.Pack) + ".ymt");
         return File.Exists(path) ? path : throw new FileNotFoundException("The YMT for the selected model was not found.", path);
+    }
+
+    private static string ResolveAddonRoot(string rootPath, int pack)
+    {
+        string fullRoot = Path.GetFullPath(rootPath);
+        string addonName = $"clothing_addon_{pack}";
+        return Path.GetFileName(Path.TrimEndingDirectorySeparator(fullRoot)).Equals(addonName, StringComparison.OrdinalIgnoreCase)
+            ? fullRoot
+            : Path.Combine(fullRoot, addonName);
     }
 
     private static (string Path, byte[] Bytes) BuildCreatureMetadata(

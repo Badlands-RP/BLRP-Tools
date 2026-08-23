@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.Loader;
@@ -12,7 +13,7 @@ internal static class Program
     {
         if (args is ["--self-test"])
         {
-            Environment.ExitCode = MainForm.SelfTest() ? 0 : 1;
+            Environment.ExitCode = MainForm.SelfTest() && UpdaterSelfTest() ? 0 : 1;
             return;
         }
         if (args.Length == 5 && args[0] == "--apply-update")
@@ -55,6 +56,14 @@ internal static class Program
             try { Process.GetProcessById(processId).WaitForExit(60_000); }
             catch (ArgumentException) { }
 
+            while (FindInstallProcessIds(launcherPath).Length > 0)
+            {
+                DialogResult result = MessageBox.Show(
+                    "Another BLRP Tools window is still open. Close all Asset Studio, Clothing Utility, Livery Tool, Mapping Deconflicter, and Hub windows, then select Retry.",
+                    "BLRP Tools Updater", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning);
+                if (result == DialogResult.Cancel) return;
+            }
+
             string extracted = Path.Combine(Path.GetTempPath(), "BLRP-Tools-Update-" + Guid.NewGuid().ToString("N"));
             ZipFile.ExtractToDirectory(zipPath, extracted);
             string[] roots = Directory.GetDirectories(extracted);
@@ -73,6 +82,30 @@ internal static class Program
                 "BLRP Tools Updater", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
+
+    private static int[] FindInstallProcessIds(string launcherPath)
+    {
+        string expectedPath = Path.GetFullPath(launcherPath);
+        string processName = Path.GetFileNameWithoutExtension(expectedPath);
+        var matches = new List<int>();
+        foreach (Process process in Process.GetProcessesByName(processName))
+        {
+            try
+            {
+                if (string.Equals(process.MainModule?.FileName, expectedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    matches.Add(process.Id);
+                }
+            }
+            catch (Win32Exception) { }
+            catch (InvalidOperationException) { }
+            finally { process.Dispose(); }
+        }
+        return matches.ToArray();
+    }
+
+    private static bool UpdaterSelfTest() =>
+        Environment.ProcessPath is { } path && FindInstallProcessIds(path).Contains(Environment.ProcessId);
 
     private sealed class ToolContext(string assemblyPath, string sharedDirectory) : AssemblyLoadContext
     {
