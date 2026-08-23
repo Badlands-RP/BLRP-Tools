@@ -10,8 +10,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>BLRP.ClothingUtility</AssemblyName>
     <RootNamespace>BLRP.ClothingLocator</RootNamespace>
-    <Version>1.5.7</Version>
-    <InformationalVersion>1.5.7</InformationalVersion>
+    <Version>1.5.8</Version>
+    <InformationalVersion>1.5.8</InformationalVersion>
     <Company>BadlandsRP</Company>
     <Product>BLRP Clothing Utility</Product>
     <Description>BadlandsRP clothing collection utility.</Description>

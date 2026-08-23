@@ -29,6 +29,7 @@ internal sealed record ClothingImportPlan(
     PedFile PedFile,
     MCPVDrawblData? DrawableTemplate = null,
     MCComponentInfo? ComponentInfoTemplate = null,
+    CPedPropMetaData? PropTemplate = null,
     bool CopyRawAssets = false)
 {
     public int CountAfterImport => ExistingCount + 1;
@@ -73,10 +74,6 @@ internal static class ClothingImporter
         IReadOnlyList<string> texturePaths,
         bool hasSkin)
     {
-        if (component.IsProp)
-        {
-            throw new NotSupportedException("Component models are supported; prop import is not available yet.");
-        }
         if (!File.Exists(modelPath) || !new[] { ".ydd", ".ydr" }.Contains(Path.GetExtension(modelPath), StringComparer.OrdinalIgnoreCase))
         {
             throw new FileNotFoundException("Select a valid .ydd or .ydr model.", modelPath);
@@ -84,6 +81,10 @@ internal static class ClothingImporter
         if (texturePaths.Count < 1 || texturePaths.Any(path => !File.Exists(path) || !Path.GetExtension(path).Equals(".ytd", StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException("Select one or more valid .ytd texture files.");
+        }
+        if (component.IsProp)
+        {
+            return CreatePropPlans(rootPath, gender, component, modelPath, texturePaths);
         }
         IReadOnlyList<TextureLayout> textureLayout = CreateTextureLayout(texturePaths, hasSkin);
 
@@ -164,6 +165,67 @@ internal static class ClothingImporter
         return plans;
     }
 
+    private static IReadOnlyList<ClothingImportPlan> CreatePropPlans(
+        string rootPath,
+        Gender gender,
+        ComponentDefinition component,
+        string modelPath,
+        IReadOnlyList<string> texturePaths)
+    {
+        string fullRoot = Path.GetFullPath(rootPath);
+        if (texturePaths.Count > 26)
+        {
+            throw new InvalidOperationException("A prop can have at most 26 textures.");
+        }
+        var packData = new List<(int Pack, string Collection, string YmtPath, PedFile Ped, int Count, int Total)>();
+        for (int pack = 1; pack <= RomanPacks.Length; pack++)
+        {
+            string collection = GetCollectionName(gender, pack);
+            string ymtPath = Path.Combine(fullRoot, $"clothing_addon_{pack}", "stream", collection + ".ymt");
+            if (!File.Exists(ymtPath)) continue;
+            PedFile ped = LoadPedFile(ymtPath);
+            MCPedPropMetaData[] props = ped.VariationInfo?.PropInfo?.PropMetaData ?? [];
+            packData.Add((pack, collection, ymtPath, ped,
+                props.Count(item => item.Data.anchorId == component.Slot), props.Length));
+        }
+        if (packData.Count == 0)
+        {
+            throw new InvalidOperationException($"No {gender.ToString().ToLowerInvariant()} clothing addon YMT files were found.");
+        }
+
+        int lastUsedPack = packData.Where(item => item.Count > 0).Select(item => item.Pack).DefaultIfEmpty(packData[0].Pack).Max();
+        var targets = packData.Where(item => item.Pack >= lastUsedPack && item.Count < MaxDrawablesPerType && item.Total < byte.MaxValue)
+            .OrderBy(item => item.Pack).ToArray();
+        if (targets.Length == 0)
+        {
+            throw new InvalidOperationException($"{gender} {component.Code.ToUpperInvariant()} has no available prop slots in the addon YMT files.");
+        }
+
+        CPedPropMetaData template = packData.SelectMany(item => item.Ped.VariationInfo?.PropInfo?.PropMetaData ?? [])
+            .Where(item => item.Data.anchorId == component.Slot)
+            .Select(item => item.Data)
+            .LastOrDefault();
+        if (template.audioId.Hash == 0) template.audioId = JenkHash.GenHash("none");
+        string[] sourceTextures = texturePaths.Select(Path.GetFullPath).OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+        var plans = new List<ClothingImportPlan>();
+        foreach (var target in targets)
+        {
+            int relativeIndex = target.Count;
+            string propCollection = target.Collection.Replace("_01_mp_", "_01_p_mp_", StringComparison.Ordinal);
+            string modelFileName = $"{propCollection}^{component.Code}_{relativeIndex:000}.ydd";
+            string[] textureFileNames = sourceTextures.Select((_, index) =>
+                $"{propCollection}^{component.Code}_diff_{relativeIndex:000}_{(char)('a' + index)}.ytd").ToArray();
+            string targetDirectory = Path.Combine(fullRoot, $"clothing_addon_{target.Pack}", "stream", propCollection, component.Code);
+            int priorCount = packData.Where(item => item.Pack < target.Pack).Sum(item => item.Count);
+            plans.Add(new ClothingImportPlan(
+                fullRoot, gender, component, Path.GetFullPath(modelPath), sourceTextures, false,
+                target.Pack, relativeIndex, component.DefaultOffset(gender) + priorCount + relativeIndex,
+                target.Count, target.Collection, target.YmtPath, targetDirectory, modelFileName,
+                textureFileNames, target.Ped, PropTemplate: template));
+        }
+        return plans;
+    }
+
     public static IReadOnlyList<ClothingImportPlan> CreateDuplicatePlans(
         string rootPath,
         ClothingEntry source,
@@ -229,23 +291,26 @@ internal static class ClothingImporter
     {
         string modelAssetName = GetAssetName(plan.ModelFileName);
         string[] textureAssetNames = plan.TextureFileNames.Select(GetAssetName).ToArray();
-        byte[] modelBytes = plan.CopyRawAssets
+        byte[] modelBytes = plan.CopyRawAssets || plan.Component.IsProp
             ? BuildDuplicateModel(plan.ModelPath, plan.Component, modelAssetName, textureAssetNames[0])
             : BuildModel(plan);
         byte[][] textureBytes = plan.TexturePaths
-            .Select((path, index) => plan.CopyRawAssets
+            .Select((path, index) => plan.CopyRawAssets || plan.Component.IsProp
                 ? BuildDuplicateTexture(path, textureAssetNames[index])
                 : BuildTexture(path))
             .ToArray();
-        byte[] ymtBytes = AppendComponentDrawable(
-            plan.PedFile,
-            plan.CollectionName,
-            Path.Combine(Path.GetDirectoryName(plan.YmtPath)!, plan.CollectionName),
-            plan.Component.Slot,
-            plan.HasSkin,
-            plan.TexturePaths,
-            plan.DrawableTemplate,
-            plan.ComponentInfoTemplate);
+        byte[] ymtBytes = plan.Component.IsProp
+            ? AppendPropDrawable(plan.PedFile, plan.CollectionName, Path.Combine(Path.GetDirectoryName(plan.YmtPath)!, plan.CollectionName),
+                plan.Component.Slot, plan.PackDrawableIndex, plan.TexturePaths.Count, plan.PropTemplate ?? new CPedPropMetaData())
+            : AppendComponentDrawable(
+                plan.PedFile,
+                plan.CollectionName,
+                Path.Combine(Path.GetDirectoryName(plan.YmtPath)!, plan.CollectionName),
+                plan.Component.Slot,
+                plan.HasSkin,
+                plan.TexturePaths,
+                plan.DrawableTemplate,
+                plan.ComponentInfoTemplate);
         (string Path, byte[] Bytes)? creatureMetadata = plan.Component.Code.Equals("feet", StringComparison.OrdinalIgnoreCase)
             ? BuildCreatureMetadata(plan.RootPath, plan.Gender, plan.Pack)
             : null;
@@ -1074,6 +1139,42 @@ internal static class ClothingImporter
             propTextures[^1].texId == propTextureCount &&
             propTextures[^1].distribution == 255;
 
+        string propSourceTexture = Path.Combine(
+            Path.GetDirectoryName(propModel)!, $"{propCollection}^{propComponent.Code}_diff_000_a.ytd");
+        ClothingImportPlan propPlan = CreatePlan(
+            fixtureRoot, plan.Gender, propComponent, propModel, [propSourceTexture], false);
+        int propCountBeforeImport = LoadPedFile(propPlan.YmtPath).VariationInfo?.PropInfo?.PropMetaData?.Length ?? 0;
+        Import(propPlan);
+        PedFile propImportPed = LoadPedFile(propPlan.YmtPath);
+        MCPedPropMetaData? importedProp = propImportPed.VariationInfo?.PropInfo?.PropMetaData?
+            .FirstOrDefault(item => item.Data.anchorId == propComponent.Slot && item.Data.propId == propPlan.PackDrawableIndex);
+        MCAnchorProps? importedAnchor = propImportPed.VariationInfo?.PropInfo?.Anchors?
+            .FirstOrDefault(item => (int)item.Data.anchor == propComponent.Slot);
+        string propModelTarget = Path.Combine(propPlan.TargetDirectory, propPlan.ModelFileName);
+        string propTextureTarget = Path.Combine(propPlan.TargetDirectory, propPlan.TextureFileNames[0]);
+        Drawable? importedPropDrawable = LoadYdd(propModelTarget).DrawableDict?.Drawables?.data_items?.SingleOrDefault();
+        Texture? importedPropTexture = LoadYtd(propTextureTarget).TextureDict?.Textures?.data_items?.SingleOrDefault();
+        string propModelName = GetAssetName(propPlan.ModelFileName);
+        string propTextureName = GetAssetName(propPlan.TextureFileNames[0]);
+        bool propImportValid =
+            (propImportPed.VariationInfo?.PropInfo?.PropMetaData?.Length ?? 0) == propCountBeforeImport + 1 &&
+            propImportPed.VariationInfo?.PropInfo?.Data.numAvailProps == propCountBeforeImport + 1 &&
+            importedProp?.TexData is [{ texId: 0 }] &&
+            importedAnchor?.Props?.LastOrDefault() == 1 &&
+            importedPropDrawable?.Name.Equals(propModelName, StringComparison.OrdinalIgnoreCase) == true &&
+            importedPropDrawable != null && GetDiffuseTextures(importedPropDrawable)
+                .Any(texture => texture.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase)) &&
+            importedPropTexture?.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase) == true;
+        if (!propImportValid)
+        {
+            throw new InvalidDataException(
+                $"Prop import verification failed: count {(propImportPed.VariationInfo?.PropInfo?.PropMetaData?.Length ?? 0)}/{propCountBeforeImport + 1}, " +
+                $"available {propImportPed.VariationInfo?.PropInfo?.Data.numAvailProps}/{propCountBeforeImport + 1}, " +
+                $"metadata {importedProp != null}, anchor tail {importedAnchor?.Props?.LastOrDefault()}, " +
+                $"drawable '{importedPropDrawable?.Name}', texture '{importedPropTexture?.Name}', " +
+                $"diffuse '{string.Join("|", importedPropDrawable == null ? [] : GetDiffuseTextures(importedPropDrawable).Select(texture => texture.Name))}' expected '{propTextureName}'.");
+        }
+
         return countAfter == countBefore + 1 &&
                countAfterRawImport == countAfter + 1 &&
                selectorPlansValid &&
@@ -1085,6 +1186,7 @@ internal static class ClothingImporter
                duplicateValid &&
                replacementValid &&
                propTextureImportValid &&
+               propImportValid &&
                componentCountsAfter.Where((count, slot) => slot != component.Slot)
                    .SequenceEqual(componentCountsBefore.Where((count, slot) => slot != component.Slot)) &&
                (updatedPed.VariationInfo?.SelectionSets?.Length ?? 0) == selectionCountBefore &&
@@ -1642,6 +1744,34 @@ internal static class ClothingImporter
             anchorId,
             propId);
 
+    private static byte[] AppendPropDrawable(
+        PedFile ped,
+        string collectionName,
+        string collectionDirectory,
+        int anchorId,
+        int propId,
+        int textureCount,
+        CPedPropMetaData template) => RebuildComponent(
+            ped,
+            collectionName,
+            collectionDirectory,
+            0,
+            false,
+            [],
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            anchorId,
+            propId,
+            textureCount,
+            template);
+
     private static byte[] UpdateComponentHeelHeight(
         PedFile ped,
         string collectionName,
@@ -1678,14 +1808,20 @@ internal static class ClothingImporter
         int? componentInfoTargetIndex,
         float? heelHeight,
         int? propAnchorId = null,
-        int? propTargetIndex = null)
+        int? propTargetIndex = null,
+        int? propAppendAnchorId = null,
+        int? propAppendId = null,
+        int propTextureCount = 0,
+        CPedPropMetaData? propTemplate = null)
     {
         MCPedVariationInfo source = ped.VariationInfo ?? throw new InvalidDataException("The target YMT has no ped variation data.");
         MCPVComponentData[] sourceComponents = source.ComponentData3 ?? [];
         byte[] componentIndices = source.ComponentIndices?.ToArray() ?? Enumerable.Repeat((byte)255, 12).ToArray();
         bool updatePropTexture = propAnchorId != null && propTargetIndex != null;
-        int targetComponentIndex = updatePropTexture ? -1 : componentIndices[componentId];
-        bool createComponent = !updatePropTexture && targetComponentIndex == 255;
+        bool appendProp = propAppendAnchorId != null && propAppendId != null;
+        bool changeProp = updatePropTexture || appendProp;
+        int targetComponentIndex = changeProp ? -1 : componentIndices[componentId];
+        bool createComponent = !changeProp && targetComponentIndex == 255;
         if (createComponent)
         {
             targetComponentIndex = sourceComponents.Length;
@@ -1732,7 +1868,7 @@ internal static class ClothingImporter
                 }
             }
 
-            if (!updatePropTexture && componentIndex == targetComponentIndex && textureTargetIndex == null &&
+            if (!changeProp && componentIndex == targetComponentIndex && textureTargetIndex == null &&
                 replacementTargetIndex == null && componentInfoTargetIndex == null)
             {
                 CPVTextureData[] textureData = CreateTextureData(texturePaths, hasSkin);
@@ -1793,7 +1929,7 @@ internal static class ClothingImporter
             componentInfos.RemoveAll(info =>
                 info.pedXml_compIdx == componentId && info.pedXml_drawblIdx == replacementTargetIndex);
         }
-        if (!updatePropTexture && textureTargetIndex == null && componentInfoTargetIndex == null)
+        if (!changeProp && textureTargetIndex == null && componentInfoTargetIndex == null)
         {
             CComponentInfo componentInfo = componentInfoTemplate?.Data ?? new CComponentInfo
             {
@@ -1824,14 +1960,38 @@ internal static class ClothingImporter
             data.texData = mb.AddItemArrayPtr(MetaName.CPedPropTexData, textures.ToArray());
             props.Add(data);
         }
+        if (appendProp)
+        {
+            CPedPropMetaData data = propTemplate ?? new CPedPropMetaData();
+            data.anchorId = checked((byte)propAppendAnchorId!.Value);
+            data.propId = checked((byte)propAppendId!.Value);
+            data.texData = mb.AddItemArrayPtr(MetaName.CPedPropTexData, Enumerable.Range(0, propTextureCount)
+                .Select(index => new CPedPropTexData { texId = checked((byte)index), distribution = 255 })
+                .ToArray());
+            props.Add(data);
+        }
+        propInfo.numAvailProps = checked((byte)props.Count);
         propInfo.aPropMetaData = mb.AddItemArrayPtr(MetaName.CPedPropMetaData, props.ToArray());
 
         var anchors = new List<CAnchorProps>();
         foreach (MCAnchorProps wrapper in source.PropInfo?.Anchors ?? [])
         {
             CAnchorProps data = wrapper.Data;
-            data.props = mb.AddByteArrayPtr(wrapper.Props ?? []);
+            byte[] values = wrapper.Props ?? [];
+            if (appendProp && (int)data.anchor == propAppendAnchorId)
+            {
+                values = [.. values, checked((byte)propTextureCount)];
+            }
+            data.props = mb.AddByteArrayPtr(values);
             anchors.Add(data);
+        }
+        if (appendProp && !anchors.Any(item => (int)item.anchor == propAppendAnchorId))
+        {
+            anchors.Add(new CAnchorProps
+            {
+                anchor = (eAnchorPoints)propAppendAnchorId!.Value,
+                props = mb.AddByteArrayPtr([checked((byte)propTextureCount)])
+            });
         }
         propInfo.aAnchors = mb.AddItemArrayPtr(MetaName.CAnchorProps, anchors.ToArray());
         root.propInfo = propInfo;

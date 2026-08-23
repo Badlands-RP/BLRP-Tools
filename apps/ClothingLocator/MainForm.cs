@@ -611,12 +611,6 @@ internal sealed class MainForm : Form
             ShowError("Select a clothing component first.");
             return;
         }
-        if (component.IsProp)
-        {
-            ShowError("Prop import is not supported yet. Select a component model.");
-            return;
-        }
-
         using var modelDialog = new OpenFileDialog
         {
             Title = $"Select the new {SelectedGender.ToString().ToLowerInvariant()} {component.Code.ToUpperInvariant()} model",
@@ -631,7 +625,9 @@ internal sealed class MainForm : Form
 
         using var textureDialog = new OpenFileDialog
         {
-            Title = "Select every YTD texture for this model (race/variant names are detected automatically)",
+            Title = component.IsProp
+                ? "Select every YTD texture for this prop"
+                : "Select every YTD texture for this model (race/variant names are detected automatically)",
             Filter = "Texture dictionaries (*.ytd)|*.ytd",
             CheckFileExists = true,
             Multiselect = true,
@@ -642,7 +638,7 @@ internal sealed class MainForm : Form
             return;
         }
 
-        bool? hasSkinChoice = ChooseHasSkin(modelDialog.FileName);
+        bool? hasSkinChoice = component.IsProp ? false : ChooseHasSkin(modelDialog.FileName);
         if (hasSkinChoice == null) return;
         bool hasSkin = hasSkinChoice.Value;
 
@@ -675,7 +671,7 @@ internal sealed class MainForm : Form
                 plan.Component.DefaultOffset(plan.Gender));
             ShowResults(imported == null ? [] : [imported]);
             SetStatus(
-                $"IMPORTED CLOTHING #{plan.GlobalIndex} / ADDON {plan.Pack} / {plan.RemainingSlots} YMT SLOTS REMAIN" +
+                $"IMPORTED {(component.IsProp ? "PROP" : "CLOTHING")} #{plan.GlobalIndex} / ADDON {plan.Pack} / {plan.RemainingSlots} YMT SLOTS REMAIN" +
                 BlacklistStatus(business, blacklistError),
                 plan.CountAfterImport >= 120 || blacklistError != null);
             ShowBlacklistWarning(blacklistError);
