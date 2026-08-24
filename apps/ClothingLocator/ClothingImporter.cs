@@ -323,6 +323,7 @@ internal static class ClothingImporter
                 plan.TexturePaths,
                 plan.DrawableTemplate,
                 plan.ComponentInfoTemplate);
+        ValidateAppendPreservesExisting(plan.PedFile, ymtBytes, plan);
         (string Path, byte[] Bytes)? creatureMetadata = plan.Component.Code.Equals("feet", StringComparison.OrdinalIgnoreCase)
             ? BuildCreatureMetadata(plan.RootPath, plan.Gender, plan.Pack)
             : null;
@@ -638,6 +639,8 @@ internal static class ClothingImporter
         IReadOnlyList<string> sourceTexturePaths,
         bool optimizeCompression = false)
     {
+        foreach (string sourceTexturePath in sourceTexturePaths)
+            _ = BuildDuplicateTexture(sourceTexturePath, "blrp_preflight", optimizeCompression, out _);
         var results = new List<ClothingTextureImportResult>(sourceTexturePaths.Count);
         foreach (string sourceTexturePath in sourceTexturePaths)
         {
@@ -1615,7 +1618,12 @@ internal static class ClothingImporter
             throw new InvalidDataException($"Each clothing YTD must contain exactly one texture; {Path.GetFileName(sourcePath)} contains {textures.Length}.");
         }
 
-        Texture texture = optimizeCompression ? OptimizeTexture(textures[0]) : textures[0];
+        Texture texture = textures[0];
+        if (optimizeCompression)
+        {
+            try { texture = OptimizeTexture(texture); }
+            catch (NotSupportedException) { /* Preserve uncommon formats instead of failing the import. */ }
+        }
         texture.Name = targetName;
         texture.NameHash = JenkHash.GenHash(targetName.ToLowerInvariant());
         textures[0] = texture;
@@ -2088,6 +2096,63 @@ internal static class ClothingImporter
     {
         byte[] bytes = File.ReadAllBytes(path);
         return RpfFile.GetResourceFile<PedFile>(bytes) ?? throw new InvalidDataException("Unable to read YMT: " + path);
+    }
+
+    private static void ValidateAppendPreservesExisting(PedFile before, byte[] candidateBytes, ClothingImportPlan plan)
+    {
+        PedFile after = RpfFile.GetResourceFile<PedFile>(candidateBytes)
+            ?? throw new InvalidDataException("The generated YMT could not be read back. No files were changed.");
+        for (int slot = 0; slot < 12; slot++)
+        {
+            MCPVDrawblData[] oldDrawables = GetDrawables(before, slot) ?? [];
+            MCPVDrawblData[] newDrawables = GetDrawables(after, slot) ?? [];
+            int expected = oldDrawables.Length + (!plan.Component.IsProp && slot == plan.Component.Slot ? 1 : 0);
+            if (newDrawables.Length != expected)
+                throw new InvalidDataException($"YMT validation failed for component slot {slot}: expected {expected} drawables, found {newDrawables.Length}. No files were changed.");
+            for (int index = 0; index < oldDrawables.Length; index++)
+                if (DrawableFingerprint(oldDrawables[index]) != DrawableFingerprint(newDrawables[index]))
+                    throw new InvalidDataException($"YMT validation detected a change to existing component slot {slot}, drawable {index:000}. No files were changed.");
+        }
+
+        MCPedPropMetaData[] oldProps = before.VariationInfo?.PropInfo?.PropMetaData ?? [];
+        MCPedPropMetaData[] newProps = after.VariationInfo?.PropInfo?.PropMetaData ?? [];
+        int expectedProps = oldProps.Length + (plan.Component.IsProp ? 1 : 0);
+        if (newProps.Length != expectedProps)
+            throw new InvalidDataException($"YMT validation failed for props: expected {expectedProps}, found {newProps.Length}. No files were changed.");
+        foreach (MCPedPropMetaData oldProp in oldProps)
+        {
+            MCPedPropMetaData? newProp = newProps.FirstOrDefault(item =>
+                item.Data.anchorId == oldProp.Data.anchorId && item.Data.propId == oldProp.Data.propId);
+            if (newProp == null || PropFingerprint(oldProp) != PropFingerprint(newProp))
+                throw new InvalidDataException($"YMT validation detected a change to existing prop anchor {oldProp.Data.anchorId}, drawable {oldProp.Data.propId:000}. No files were changed.");
+        }
+
+        foreach (MCAnchorProps oldAnchor in before.VariationInfo?.PropInfo?.Anchors ?? [])
+        {
+            MCAnchorProps? newAnchor = (after.VariationInfo?.PropInfo?.Anchors ?? [])
+                .FirstOrDefault(item => item.Data.anchor == oldAnchor.Data.anchor);
+            if (newAnchor == null || !(oldAnchor.Props ?? []).SequenceEqual((newAnchor.Props ?? []).Take(oldAnchor.Props?.Length ?? 0)))
+                throw new InvalidDataException($"YMT validation detected a change to existing prop anchor {(int)oldAnchor.Data.anchor}. No files were changed.");
+        }
+    }
+
+    private static string DrawableFingerprint(MCPVDrawblData item)
+    {
+        CPVDrawblData data = item.Data;
+        CPVDrawblData__CPVClothComponentData cloth = data.clothData;
+        string textures = string.Join(',', (item.TexData ?? []).Select(texture =>
+            $"{texture.texId}:{texture.distribution}:{texture.Unused0}"));
+        return $"{data.propMask}:{data.numAlternatives}:{data.Unused0}:{data.Unused1}:" +
+            $"{cloth.ownsCloth}:{cloth.Unused0}:{cloth.Unused1}:{cloth.Unused2}:{cloth.Unused3}:{cloth.Unused4}:{cloth.Unused5}:{cloth.Unused6}:{textures}";
+    }
+
+    private static string PropFingerprint(MCPedPropMetaData item)
+    {
+        CPedPropMetaData data = item.Data;
+        string textures = string.Join(',', (item.TexData ?? []).Select(texture =>
+            $"{texture.inclusions}:{texture.exclusions}:{texture.texId}:{texture.inclusionId}:{texture.exclusionId}:{texture.distribution}"));
+        return $"{data.audioId.Hash}:{data.expressionMods}:{(int)data.renderFlags}:{data.propFlags}:{data.flags}:" +
+            $"{data.anchorId}:{data.propId}:{data.Unused5}:{data.Unused6}:{textures}";
     }
 
     internal static ClothingModelQuality InspectModel(string path, int textureCount)

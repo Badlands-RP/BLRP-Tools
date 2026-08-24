@@ -73,7 +73,9 @@ internal static class ClothingLodGenerator
         string candidatePath = Path.Combine(Path.GetTempPath(), $"{Path.GetFileNameWithoutExtension(sourcePath)}-lod-review-{Guid.NewGuid():N}.ydd");
         File.WriteAllBytes(candidatePath, candidate.Save());
         YddFile savedCandidate = Load(candidatePath);
-        ValidateHigh(Load(sourcePath), savedCandidate, highRatio.HasValue);
+        YddFile savedSource = Load(sourcePath);
+        ValidateHigh(savedSource, savedCandidate, highRatio.HasValue);
+        ValidateMaterialBindings(savedSource, savedCandidate);
         ValidateIndices(savedCandidate);
         ClothingLodStats after = Analyze(savedCandidate);
         if (highRatio.HasValue && after.High >= before.High)
@@ -92,6 +94,7 @@ internal static class ClothingLodGenerator
         YddFile source = Load(sourcePath);
         YddFile candidate = Load(candidatePath);
         ValidateHigh(source, candidate, allowHighChanges);
+        ValidateMaterialBindings(source, candidate);
         ValidateIndices(candidate);
         string backupDirectory = Path.Combine(rootPath, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"), "lod-generation");
         Directory.CreateDirectory(backupDirectory);
@@ -101,6 +104,49 @@ internal static class ClothingLodGenerator
         File.Copy(candidatePath, temporary, true);
         File.Move(temporary, sourcePath, true);
         return backupPath;
+    }
+
+    public static IReadOnlyList<string> Export(string sourcePath, string candidatePath, string outputPath, bool allowHighChanges = false)
+    {
+        YddFile source = Load(sourcePath);
+        YddFile candidate = Load(candidatePath);
+        ValidateHigh(source, candidate, allowHighChanges);
+        ValidateMaterialBindings(source, candidate);
+        ValidateIndices(candidate);
+
+        outputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        string temporary = outputPath + ".blrp-exporting";
+        File.Copy(candidatePath, temporary, true);
+        File.Move(temporary, outputPath, true);
+
+        var written = new List<string> { outputPath };
+        foreach (string texture in FindSiblingTextures(sourcePath))
+        {
+            string target = Path.Combine(Path.GetDirectoryName(outputPath)!, Path.GetFileName(texture));
+            File.Copy(texture, target, true);
+            written.Add(target);
+        }
+        return written;
+    }
+
+    public static IReadOnlyList<string> FindSiblingTextures(string sourcePath)
+    {
+        string directory = Path.GetDirectoryName(sourcePath)!;
+        string modelName = Path.GetFileNameWithoutExtension(sourcePath);
+        int separator = modelName.LastIndexOf('^');
+        string collection = separator >= 0 ? modelName[..(separator + 1)] : string.Empty;
+        string drawable = separator >= 0 ? modelName[(separator + 1)..] : modelName;
+        int suffix = drawable.LastIndexOf('_');
+        if (suffix > 0) drawable = drawable[..suffix];
+        int indexSeparator = drawable.LastIndexOf('_');
+        string texturePrefix = indexSeparator > 0
+            ? collection + drawable[..indexSeparator] + "_diff_" + drawable[(indexSeparator + 1)..] + "_"
+            : string.Empty;
+        return texturePrefix.Length == 0 ? [] : Directory.EnumerateFiles(directory, "*.ytd")
+            .Where(path => Path.GetFileNameWithoutExtension(path).StartsWith(texturePrefix, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     internal static bool SelfTest(string rootPath)
@@ -121,9 +167,15 @@ internal static class ClothingLodGenerator
         ClothingLodResult result = Generate(path, 0.5f, 0.2f, true);
         ClothingLodResult conservative = Generate(path, 0.5f, 0.2f);
         ClothingLodResult high = Generate(path, 0.5f, 0.2f, false, 0.8f);
+        string exportDirectory = Path.Combine(Path.GetTempPath(), "blrp-lod-export-" + Guid.NewGuid().ToString("N"));
+        string exportPath = Path.Combine(exportDirectory, Path.GetFileName(path));
         try
         {
-            return result.After.High == before.High &&
+            IReadOnlyList<string> exported = Export(path, high.CandidatePath, exportPath, true);
+            ClothingLodStats exportedStats = Analyze(exportPath);
+            int expectedTextures = FindSiblingTextures(path).Count;
+            return exported.Count == expectedTextures + 1 && exportedStats == high.After &&
+                result.After.High == before.High &&
                 (before.HasMedium || result.After.Medium is > 0 && result.After.Medium < before.High) &&
                 (before.HasLow || result.After.Low is > 0 && result.After.Low <= result.After.Medium) &&
                 conservative.After.High == before.High &&
@@ -136,6 +188,7 @@ internal static class ClothingLodGenerator
             if (File.Exists(result.CandidatePath)) File.Delete(result.CandidatePath);
             if (File.Exists(conservative.CandidatePath)) File.Delete(conservative.CandidatePath);
             if (File.Exists(high.CandidatePath)) File.Delete(high.CandidatePath);
+            if (Directory.Exists(exportDirectory)) Directory.Delete(exportDirectory, true);
         }
     }
 
@@ -223,6 +276,10 @@ internal static class ClothingLodGenerator
         buffer.Data2 = second;
         geometry.VertexData = first ?? second ?? throw new InvalidDataException("A geometry has no vertex stream.");
         geometry.IndexBuffer.Indices = indices;
+        geometry.IndexBuffer.IndicesCount = checked((uint)indices.Length);
+        geometry.IndicesCount = checked((uint)indices.Length);
+        geometry.TrianglesCount = checked((uint)(indices.Length / 3));
+        geometry.VerticesCount = checked((ushort)geometry.VertexData.VertexCount);
     }
 
     private static VertexData CompactVertices(VertexData source, IReadOnlyList<int> oldVertices)
@@ -245,7 +302,7 @@ internal static class ClothingLodGenerator
         Drawable[] drawables = file.DrawableDict?.Drawables?.data_items ?? [];
         long Count(Func<DrawableModelsBlock, DrawableModel[]?> select) => drawables.Sum(drawable =>
             (select(drawable.DrawableModels ?? new DrawableModelsBlock()) ?? []).Sum(model =>
-                (model.Geometries ?? []).Sum(geometry => (long)(geometry.IndexBuffer?.Indices?.Length ?? 0) / 3)));
+                (model.Geometries ?? []).Sum(geometry => (long)geometry.TrianglesCount)));
         return new ClothingLodStats(Count(models => models.High), Count(models => models.Med), Count(models => models.Low));
     }
 
@@ -288,10 +345,40 @@ internal static class ClothingLodGenerator
         foreach (DrawableGeometry geometry in model.Geometries ?? [])
         {
             int vertexCount = geometry.VertexData?.VertexCount ?? 0;
-            if ((geometry.IndexBuffer?.Indices ?? []).Any(index => index >= vertexCount))
+            ushort[] indices = geometry.IndexBuffer?.Indices ?? [];
+            if (indices.Any(index => index >= vertexCount))
                 throw new InvalidDataException("A generated LOD contains an invalid vertex index.");
+            if (indices.Length % 3 != 0 ||
+                geometry.IndexBuffer?.IndicesCount != indices.Length ||
+                geometry.IndicesCount != indices.Length ||
+                geometry.TrianglesCount != indices.Length / 3)
+                throw new InvalidDataException("A generated LOD contains inconsistent serialized polygon counts.");
         }
     }
+
+    private static void ValidateMaterialBindings(YddFile source, YddFile candidate)
+    {
+        string[] before = MaterialBindings(source);
+        string[] after = MaterialBindings(candidate);
+        if (!before.SequenceEqual(after, StringComparer.Ordinal))
+            throw new InvalidDataException("The candidate changed shader or texture bindings. The original YDD was not modified.");
+    }
+
+    private static string[] MaterialBindings(YddFile file) =>
+        (file.DrawableDict?.Drawables?.data_items ?? []).SelectMany((drawable, drawableIndex) =>
+            (drawable.ShaderGroup?.Shaders?.data_items ?? []).Select((shader, shaderIndex) =>
+            {
+                ShaderParametersBlock? parameters = shader.ParametersList;
+                string values = parameters == null ? string.Empty : string.Join(';',
+                    Enumerable.Range(0, Math.Min(parameters.Hashes?.Length ?? 0, parameters.Parameters?.Length ?? 0))
+                        .Select(index =>
+                        {
+                            ShaderParameter parameter = parameters.Parameters![index];
+                            string data = parameter.Data is TextureBase texture ? texture.Name ?? string.Empty : parameter.DataType.ToString();
+                            return $"{(uint)parameters.Hashes![index]}:{parameter.DataType}:{data}";
+                        }));
+                return $"{drawableIndex}:{shaderIndex}:{shader.Name.Hash}:{shader.FileName.Hash}:{values}";
+            })).ToArray();
 
     private static YddFile Load(string path)
     {

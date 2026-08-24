@@ -50,6 +50,7 @@ internal sealed class MainForm : Form
     private readonly Button _scanQuality;
     private readonly Button _exportQuality;
     private readonly Button _generateLods;
+    private readonly Button _optimizeExternal;
     private readonly ListBox _outfitItems = new();
     private readonly List<ClothingEntry> _outfit = new();
 
@@ -96,6 +97,7 @@ internal sealed class MainForm : Form
         _exportQuality = CreateButton("EXPORT QC CSV", ExportQualityCsv);
         _exportQuality.Enabled = false;
         _generateLods = CreateButton("OPTIMISE / LODS...", async (_, _) => await GenerateLodsAsync());
+        _optimizeExternal = CreateButton("EXTERNAL YDD...", async (_, _) => await OptimizeExternalAsync());
         _generateLods.Enabled = false;
 
         foreach (ComponentDefinition component in ClothingComponents.All)
@@ -381,21 +383,23 @@ internal sealed class MainForm : Form
 
     private Control BuildStatusBar()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 5, RowCount = 1 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 6, RowCount = 1 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
         _status.Dock = DockStyle.Fill;
         _status.TextAlign = ContentAlignment.MiddleLeft;
         layout.Controls.Add(_scanQuality, 1, 0);
         layout.Controls.Add(_exportQuality, 2, 0);
         layout.Controls.Add(_generateLods, 3, 0);
+        layout.Controls.Add(_optimizeExternal, 4, 0);
         _progress.Dock = DockStyle.Fill;
         _progress.Margin = new Padding(0, 11, 0, 11);
         layout.Controls.Add(_status, 0, 0);
-        layout.Controls.Add(_progress, 4, 0);
+        layout.Controls.Add(_progress, 5, 0);
         return layout;
     }
 
@@ -609,6 +613,29 @@ internal sealed class MainForm : Form
             SetStatus($"REVIEWED OPTIMISATION APPLIED / BACKUP: {dialog.BackupPath}", false);
         }
         finally { SetBusy(false); }
+    }
+
+    private async Task OptimizeExternalAsync()
+    {
+        using var modelDialog = new OpenFileDialog
+        {
+            Title = "Select a clothing YDD to optimise before import",
+            Filter = "Drawable dictionary (*.ydd)|*.ydd",
+            CheckFileExists = true,
+            InitialDirectory = Directory.Exists(_rootPath.Text.Trim()) ? _rootPath.Text.Trim() : @"D:\"
+        };
+        if (modelDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        string? texture = ClothingLodGenerator.FindSiblingTextures(modelDialog.FileName).FirstOrDefault();
+        using var dialog = new LodReviewDialog(
+            modelDialog.FileName,
+            Path.GetDirectoryName(modelDialog.FileName)!,
+            false,
+            texture,
+            exportMode: true);
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+            SetStatus(dialog.BackupPath ?? "EXTERNAL OPTIMISATION EXPORTED", false);
+        await Task.CompletedTask;
     }
 
     private IReadOnlyList<string> BuildBlacklistOptions(IEnumerable<string> panelBusinesses) =>

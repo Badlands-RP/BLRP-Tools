@@ -51,6 +51,7 @@ internal sealed class LodReviewDialog : Form
     private readonly string _rootPath;
     private readonly string? _texturePath;
     private readonly string? _gitHistory;
+    private readonly bool _exportMode;
     private readonly LodMeshPreview _before = new() { Dock = DockStyle.Fill };
     private readonly LodMeshPreview _after = new() { Dock = DockStyle.Fill };
     private readonly NumericUpDown _medium = new() { Minimum = 10, Maximum = 90, Value = 50, Width = 70 };
@@ -73,11 +74,12 @@ internal sealed class LodReviewDialog : Form
 
     public string? BackupPath { get; private set; }
 
-    public LodReviewDialog(string sourcePath, string rootPath, bool ownsCloth, string? texturePath)
+    public LodReviewDialog(string sourcePath, string rootPath, bool ownsCloth, string? texturePath, bool exportMode = false)
     {
         _sourcePath = sourcePath;
         _rootPath = rootPath;
         _texturePath = texturePath;
+        _exportMode = exportMode;
         _gitHistory = GitFileHistory.Describe(rootPath, sourcePath);
         _sourceStats = ClothingLodGenerator.Analyze(sourcePath);
         Text = "BLRP Clothing LOD Review";
@@ -104,6 +106,7 @@ internal sealed class LodReviewDialog : Form
         _generate.Click += async (_, _) => await GenerateAsync();
         _apply.Click += (_, _) => Apply();
         _apply.Enabled = false;
+        if (_exportMode) _apply.Text = "EXPORT REVIEWED FILES";
 
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), ColumnCount = 2, RowCount = 3 };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -256,7 +259,23 @@ internal sealed class LodReviewDialog : Form
         if (_candidatePath == null) return;
         try
         {
-            BackupPath = ClothingLodGenerator.Apply(_sourcePath, _candidatePath, _rootPath, _candidateOptimizesHigh);
+            if (_exportMode)
+            {
+                using var save = new SaveFileDialog
+                {
+                    Title = "Export optimised YDD and matching YTDs",
+                    Filter = "Drawable dictionary (*.ydd)|*.ydd",
+                    FileName = Path.GetFileName(_sourcePath),
+                    InitialDirectory = Path.GetDirectoryName(_sourcePath),
+                    AddExtension = true,
+                    DefaultExt = "ydd"
+                };
+                if (save.ShowDialog(this) != DialogResult.OK) return;
+                IReadOnlyList<string> files = ClothingLodGenerator.Export(
+                    _sourcePath, _candidatePath, save.FileName, _candidateOptimizesHigh);
+                BackupPath = $"EXPORTED {files.Count} FILE{(files.Count == 1 ? string.Empty : "S")} TO {Path.GetDirectoryName(save.FileName)}";
+            }
+            else BackupPath = ClothingLodGenerator.Apply(_sourcePath, _candidatePath, _rootPath, _candidateOptimizesHigh);
             DialogResult = DialogResult.OK;
             Close();
         }

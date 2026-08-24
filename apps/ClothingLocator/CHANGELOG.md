@@ -2,6 +2,24 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.7.2 - 2026-08-24
+
+### Fixed
+
+- LOD generation now updates the serialized index, triangle, and vertex counts;
+  OpenIV and the utility therefore report the same reduced polygon totals.
+- Candidates are reloaded and rejected before apply/export if polygon metadata,
+  vertex indices, shader bindings, or texture references are inconsistent.
+- Model imports now verify that every existing drawable and prop YMT entry is
+  unchanged before writing the appended entry, preventing adjacent-slot damage.
+- Optional texture compression preserves unsupported source formats instead of
+  aborting a texture batch partway through.
+
+### Added
+
+- `EXTERNAL YDD...` opens the optimiser for clothing that is not in the active
+  repository and exports the reviewed YDD with all detected sibling YTDs.
+
 ## 1.5.4 - 2026-08-22
 
 ### Added
