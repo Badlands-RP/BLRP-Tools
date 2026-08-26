@@ -2,6 +2,15 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.7.3 - 2026-08-26
+
+### Fixed
+
+- The optimiser and repository QC now recover polygon totals from a model's
+  real index buffer when third-party YDDs incorrectly declare zero triangles.
+- These malformed-but-renderable models can now generate reviewed LODs instead
+  of reporting `HIGH 0` and failing the Medium reduction check.
+
 ## 1.7.2 - 2026-08-24
 
 ### Fixed

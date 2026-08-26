@@ -163,6 +163,11 @@ internal static class ClothingLodGenerator
 
     private static bool SelfTestFile(string path)
     {
+        if (CountTriangles(new DrawableGeometry
+            {
+                IndexBuffer = new IndexBuffer { Indices = [0, 1, 2] }
+            }) != 1)
+            throw new InvalidDataException("Zero-metadata polygon fallback failed.");
         ClothingLodStats before = Analyze(path);
         ClothingLodResult result = Generate(path, 0.5f, 0.2f, true);
         ClothingLodResult conservative = Generate(path, 0.5f, 0.2f);
@@ -302,8 +307,15 @@ internal static class ClothingLodGenerator
         Drawable[] drawables = file.DrawableDict?.Drawables?.data_items ?? [];
         long Count(Func<DrawableModelsBlock, DrawableModel[]?> select) => drawables.Sum(drawable =>
             (select(drawable.DrawableModels ?? new DrawableModelsBlock()) ?? []).Sum(model =>
-                (model.Geometries ?? []).Sum(geometry => (long)geometry.TrianglesCount)));
+                (model.Geometries ?? []).Sum(geometry => CountTriangles(geometry))));
         return new ClothingLodStats(Count(models => models.High), Count(models => models.Med), Count(models => models.Low));
+    }
+
+    internal static long CountTriangles(DrawableGeometry geometry)
+    {
+        if (geometry.TrianglesCount > 0) return geometry.TrianglesCount;
+        if (geometry.IndicesCount > 0) return geometry.IndicesCount / 3;
+        return (geometry.IndexBuffer?.Indices?.Length ?? 0) / 3;
     }
 
     private static void ValidateHigh(YddFile source, YddFile candidate, bool allowChanges)

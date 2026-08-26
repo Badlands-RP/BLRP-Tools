@@ -2167,7 +2167,7 @@ internal static class ClothingImporter
 
             long Count(Func<DrawableModelsBlock, DrawableModel[]?> select) => drawables.Sum(drawable =>
                 (select(drawable.DrawableModels ?? new DrawableModelsBlock()) ?? []).Sum(model =>
-                    (model.Geometries ?? []).Sum(geometry => (long)geometry.IndicesCount / 3)));
+                    (model.Geometries ?? []).Sum(ClothingLodGenerator.CountTriangles)));
             long highPolygons = Count(models => models.High);
             long mediumPolygons = Count(models => models.Med);
             long lowPolygons = Count(models => models.Low);
