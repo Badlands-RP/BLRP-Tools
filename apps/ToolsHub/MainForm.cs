@@ -67,6 +67,7 @@ internal sealed class MainForm : Form
         tools.Controls.Add(ToolCard("LIVERY TOOL", "Build and install vehicle liveries and metadata.", @"tools\LiveryTool\Badlands.LiveryTool.dll"), 0, 1);
         tools.Controls.Add(ToolCard("MAPPING DECONFLICTER", "Scan YMAP resources and identify mapping conflicts.", @"tools\MappingDeconflicter\YmapDeconflicter.dll"), 1, 1);
         tools.Controls.Add(ToolCard("GRZY CLOTH TOOL", "Build, inspect and preview GTA clothing packs.", @"tools\grzyClothTool-outfit\grzyClothTool.exe"), 0, 2);
+        tools.Controls.Add(ToolCard("BADWALKER", "View and edit GTA maps, archives, models and metadata.", @"tools\BadWalker\CodeWalker.exe"), 1, 2);
         page.Controls.Add(tools, 0, 1);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2 };
@@ -237,7 +238,8 @@ internal sealed class MainForm : Form
         return update is { TagName: "v1.0.4" } &&
             update.Notes.IndexOf("v1.0.2", StringComparison.Ordinal) < update.Notes.IndexOf("v1.0.4", StringComparison.Ordinal) &&
             IsManagedTool("tool.dll") &&
-            !IsManagedTool("grzyClothTool.exe");
+            !IsManagedTool("grzyClothTool.exe") &&
+            !IsManagedTool("CodeWalker.exe");
     }
 
     private sealed record ReleaseInfo(string TagName, string DownloadUrl, string Notes);

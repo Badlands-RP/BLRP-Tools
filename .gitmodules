@@ -1,3 +1,6 @@
 [submodule "external/grzyClothTool"]
 	path = external/grzyClothTool
 	url = https://github.com/Badlands-RP/grzyClothTool.git
+[submodule "external/BadWalker"]
+	path = external/BadWalker
+	url = https://github.com/Badlands-RP/CodeWalker.git

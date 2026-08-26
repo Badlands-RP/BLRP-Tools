@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.17')
+param([string]$Version = '1.0.18')
 
 $ErrorActionPreference = 'Stop'
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'release'))
@@ -49,6 +49,33 @@ Copy-Item -LiteralPath (Join-Path $grzyRoot 'LICENSE') -Destination (Join-Path $
 $grzyCommit = (git -C $grzyRoot rev-parse HEAD).Trim()
 @("grzyClothTool is distributed under GPL-3.0.", '', 'Source: https://github.com/Badlands-RP/grzyClothTool', "Commit: $grzyCommit") |
     Set-Content -LiteralPath (Join-Path $grzyOutput 'SOURCE.txt') -Encoding utf8
+
+$badWalkerRoot = Join-Path $PSScriptRoot 'external\BadWalker'
+if (-not (Test-Path -LiteralPath (Join-Path $badWalkerRoot 'CodeWalker.sln'))) {
+    throw 'BadWalker is missing. Run: git submodule update --init --recursive'
+}
+$badWalkerCommit = (git -C $badWalkerRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $badWalkerCommit.Length -lt 7) { throw 'Could not read the pinned BadWalker commit.' }
+$badWalkerRelease = 'master-' + $badWalkerCommit.Substring(0, 7)
+$badWalkerArchiveName = "CodeWalker-$badWalkerRelease-win-x64.zip"
+$badWalkerUrl = "https://github.com/Badlands-RP/CodeWalker/releases/download/$badWalkerRelease/$badWalkerArchiveName"
+$badWalkerArchive = Join-Path ([IO.Path]::GetTempPath()) ($badWalkerArchiveName + '.' + [Guid]::NewGuid().ToString('N') + '.zip')
+$badWalkerOutput = Join-Path $packageRoot 'tools\BadWalker'
+try {
+    Invoke-WebRequest -Uri $badWalkerUrl -OutFile $badWalkerArchive -UseBasicParsing
+    Expand-Archive -LiteralPath $badWalkerArchive -DestinationPath $badWalkerOutput -Force
+}
+finally {
+    if (Test-Path -LiteralPath $badWalkerArchive) { Remove-Item -LiteralPath $badWalkerArchive -Force }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $badWalkerOutput 'CodeWalker.exe'))) {
+    throw "The BadWalker release did not contain CodeWalker.exe: $badWalkerUrl"
+}
+foreach ($name in @('Notice.txt', 'Readme_Src.txt', 'README.md')) {
+    Copy-Item -LiteralPath (Join-Path $badWalkerRoot $name) -Destination $badWalkerOutput -Force
+}
+@('BadWalker is maintained in its own CodeWalker fork.', '', 'Source: https://github.com/Badlands-RP/CodeWalker', "Commit: $badWalkerCommit", "Packaged release: $badWalkerRelease") |
+    Set-Content -LiteralPath (Join-Path $badWalkerOutput 'SOURCE.txt') -Encoding utf8
 
 $sharedRoot = Join-Path $packageRoot 'shared'
 New-Item -ItemType Directory -Path $sharedRoot -Force | Out-Null
