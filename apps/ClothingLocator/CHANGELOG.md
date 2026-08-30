@@ -2,6 +2,15 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.7.4 - 2026-08-31
+
+### Fixed
+
+- Model imports preserve existing component texture metadata instead of
+  regenerating it while appending a new item.
+- Prop imports accept legacy YMT texture layouts without falsely reporting that
+  an existing prop changed.
+
 ## 1.7.3 - 2026-08-26
 
 ### Fixed

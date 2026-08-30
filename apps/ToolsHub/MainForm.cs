@@ -127,11 +127,7 @@ internal sealed class MainForm : Form
     private async Task UpdateClicked()
     {
         if (_release is null) { await CheckForUpdates(true); return; }
-        string prompt = $"You are on v{Application.ProductVersion.Split('+')[0]}. " +
-            $"Here is what you are missing in {_release.TagName}:\n\n{_release.Notes}\n\n" +
-            "Install now? The Hub will restart automatically.";
-        if (MessageBox.Show(this, prompt,
-            "Install update", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        if (!ConfirmUpdate(_release)) return;
         try
         {
             _updateButton.Enabled = false;
@@ -159,6 +155,63 @@ internal sealed class MainForm : Form
             _updateStatus.Text = "UPDATE FAILED";
             MessageBox.Show(this, exception.Message, "BLRP Tools", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private bool ConfirmUpdate(ReleaseInfo release)
+    {
+        using var dialog = new Form
+        {
+            Text = "Install update",
+            Icon = Icon,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.Sizable,
+            MinimizeBox = false,
+            MaximizeBox = false,
+            ShowInTaskbar = false,
+            MinimumSize = new Size(560, 360),
+            ClientSize = new Size(760, 520),
+            Font = Font
+        };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), ColumnCount = 1, RowCount = 3 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.Controls.Add(new Label
+        {
+            Text = $"You are on v{Application.ProductVersion.Split('+')[0]}. Here is what you are missing in {release.TagName}:",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
+        layout.Controls.Add(new TextBox
+        {
+            Text = release.Notes,
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ReadOnly = true,
+            ScrollBars = ScrollBars.Vertical,
+            WordWrap = true
+        }, 0, 1);
+
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
+        footer.Controls.Add(new Label
+        {
+            Text = "The Hub will restart automatically.",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var install = new Button { Text = "INSTALL", DialogResult = DialogResult.OK, Width = 110, Height = 34 };
+        var cancel = new Button { Text = "CANCEL", DialogResult = DialogResult.Cancel, Width = 110, Height = 34 };
+        buttons.Controls.Add(install);
+        buttons.Controls.Add(cancel);
+        footer.Controls.Add(buttons, 1, 0);
+        layout.Controls.Add(footer, 0, 2);
+        dialog.Controls.Add(layout);
+        dialog.AcceptButton = install;
+        dialog.CancelButton = cancel;
+        return dialog.ShowDialog(this) == DialogResult.OK;
     }
 
     private async Task CheckForUpdates(bool showCurrent)

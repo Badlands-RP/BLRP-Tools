@@ -1869,12 +1869,7 @@ internal static class ClothingImporter
                         continue;
                     }
                     CPVDrawblData data = existingDrawable.Data;
-                    int slot = Array.IndexOf(componentIndices, checked((byte)componentIndex));
-                    IEnumerable<CPVTextureData> textures = CreateExistingTextureData(
-                        collectionDirectory,
-                        slot,
-                        drawableIndex,
-                        existingDrawable);
+                    IEnumerable<CPVTextureData> textures = existingDrawable.TexData ?? [];
                     if (componentIndex == targetComponentIndex && textureTargetIndex == drawableIndex)
                     {
                         textures = textures.Append(new CPVTextureData
@@ -2062,36 +2057,6 @@ internal static class ClothingImporter
         return new Array_Structure(builder.AddItemArray(MetaName.CPVTextureData, data, items.Length));
     }
 
-    private static CPVTextureData[] CreateExistingTextureData(
-        string collectionDirectory,
-        int componentId,
-        int drawableIndex,
-        MCPVDrawblData fallback)
-    {
-        string componentCode = componentId switch
-        {
-            0 => "head", 1 => "berd", 2 => "hair", 3 => "uppr", 4 => "lowr", 5 => "hand",
-            6 => "feet", 7 => "teef", 8 => "accs", 9 => "task", 10 => "decl", 11 => "jbib",
-            _ => throw new InvalidDataException($"Unknown component slot {componentId}.")
-        };
-        string directory = Path.Combine(collectionDirectory, componentCode);
-        string[] paths = Directory.Exists(directory)
-            ? Directory.EnumerateFiles(directory, $"*^{componentCode}_diff_{drawableIndex:000}_*.ytd").ToArray()
-            : [];
-        if (paths.Length > 0)
-        {
-            bool hasSkin = ((fallback.Data.propMask >> 4) & 3) == 1;
-            return CreateTextureLayout(paths, hasSkin)
-                .Select(item => new CPVTextureData { texId = GetTextureId(item.Suffix), distribution = 255 })
-                .ToArray();
-        }
-
-        byte textureId = ((fallback.Data.propMask >> 4) & 3) == 1 ? (byte)1 : (byte)0;
-        return Enumerable.Range(0, fallback.TexData?.Length ?? 0)
-            .Select(_ => new CPVTextureData { texId = textureId, distribution = 255 })
-            .ToArray();
-    }
-
     private static PedFile LoadPedFile(string path)
     {
         byte[] bytes = File.ReadAllBytes(path);
@@ -2119,11 +2084,10 @@ internal static class ClothingImporter
         int expectedProps = oldProps.Length + (plan.Component.IsProp ? 1 : 0);
         if (newProps.Length != expectedProps)
             throw new InvalidDataException($"YMT validation failed for props: expected {expectedProps}, found {newProps.Length}. No files were changed.");
-        foreach (MCPedPropMetaData oldProp in oldProps)
+        for (int index = 0; index < oldProps.Length; index++)
         {
-            MCPedPropMetaData? newProp = newProps.FirstOrDefault(item =>
-                item.Data.anchorId == oldProp.Data.anchorId && item.Data.propId == oldProp.Data.propId);
-            if (newProp == null || PropFingerprint(oldProp) != PropFingerprint(newProp))
+            MCPedPropMetaData oldProp = oldProps[index];
+            if (PropFingerprint(oldProp) != PropFingerprint(newProps[index]))
                 throw new InvalidDataException($"YMT validation detected a change to existing prop anchor {oldProp.Data.anchorId}, drawable {oldProp.Data.propId:000}. No files were changed.");
         }
 
@@ -2149,10 +2113,8 @@ internal static class ClothingImporter
     private static string PropFingerprint(MCPedPropMetaData item)
     {
         CPedPropMetaData data = item.Data;
-        string textures = string.Join(',', (item.TexData ?? []).Select(texture =>
-            $"{texture.inclusions}:{texture.exclusions}:{texture.texId}:{texture.inclusionId}:{texture.exclusionId}:{texture.distribution}"));
         return $"{data.audioId.Hash}:{data.expressionMods}:{(int)data.renderFlags}:{data.propFlags}:{data.flags}:" +
-            $"{data.anchorId}:{data.propId}:{data.Unused5}:{data.Unused6}:{textures}";
+            $"{data.anchorId}:{data.propId}:{data.Unused5}:{data.Unused6}:{item.TexData?.Length ?? 0}";
     }
 
     internal static ClothingModelQuality InspectModel(string path, int textureCount)
