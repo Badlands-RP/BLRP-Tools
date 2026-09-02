@@ -59,7 +59,7 @@ internal static class Program
             while (FindInstallProcessIds(launcherPath).Length > 0)
             {
                 DialogResult result = MessageBox.Show(
-                    "Another BLRP Tools window is still open. Close all Asset Studio, Clothing Utility, Livery Tool, Mapping Deconflicter, and Hub windows, then select Retry.",
+                    "Another BLRP Tools window is still open. Close all Asset Studio, Clothing Utility, Livery Tool, Mapping Deconflicter, Property Mapper, and Hub windows, then select Retry.",
                     "BLRP Tools Updater", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning);
                 if (result == DialogResult.Cancel) return;
             }

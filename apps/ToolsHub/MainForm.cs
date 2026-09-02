@@ -56,18 +56,17 @@ internal sealed class MainForm : Form
         header.Controls.Add(Label("BADLANDSRP  /  SELECT A TOOL", 9, AccentLight, FontStyle.Bold), 1, 1);
         page.Controls.Add(header, 0, 0);
 
-        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 3 };
+        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 4 };
         tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        tools.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
+        for (int row = 0; row < 4; row++) tools.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
         tools.Controls.Add(ToolCard("ASSET STUDIO", "Weapon skins, cups, model previews and inventory images.", @"tools\AssetStudio\BLRP.AssetStudio.dll"), 0, 0);
         tools.Controls.Add(ToolCard("CLOTHING LOCATOR", "Find, preview and manage BadlandsRP clothing assets.", @"tools\ClothingLocator\BLRP.ClothingUtility.dll"), 1, 0);
         tools.Controls.Add(ToolCard("LIVERY TOOL", "Build and install vehicle liveries and metadata.", @"tools\LiveryTool\Badlands.LiveryTool.dll"), 0, 1);
         tools.Controls.Add(ToolCard("MAPPING DECONFLICTER", "Scan YMAP resources and identify mapping conflicts.", @"tools\MappingDeconflicter\YmapDeconflicter.dll"), 1, 1);
-        tools.Controls.Add(ToolCard("GRZY CLOTH TOOL", "Build, inspect and preview GTA clothing packs.", @"tools\grzyClothTool-outfit\grzyClothTool.exe"), 0, 2);
-        tools.Controls.Add(ToolCard("BADWALKER", "View and edit GTA maps, archives, models and metadata.", @"tools\BadWalker\CodeWalker.exe"), 1, 2);
+        tools.Controls.Add(ToolCard("PROPERTY MAPPER", "Review property XML in GTA 3D, then export deployable YMAP files.", @"tools\PropertyMapper\BLRP.PropertyMapper.dll"), 0, 2);
+        tools.Controls.Add(ToolCard("GRZY CLOTH TOOL", "Build, inspect and preview GTA clothing packs.", @"tools\grzyClothTool-outfit\grzyClothTool.exe"), 1, 2);
+        tools.Controls.Add(ToolCard("BADWALKER", "View and edit GTA maps, archives, models and metadata.", @"tools\BadWalker\CodeWalker.exe"), 0, 3);
         page.Controls.Add(tools, 0, 1);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2 };

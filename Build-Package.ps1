@@ -20,7 +20,8 @@ $projects = @(
     @{ Project = 'apps\AssetStudio\BLRP.AssetStudio.csproj'; Output = 'tools\AssetStudio'; SelfContained = $false },
     @{ Project = 'apps\ClothingLocator\BLRP.ClothingLocator.csproj'; Output = 'tools\ClothingLocator'; SelfContained = $false },
     @{ Project = 'apps\LiveryTool\Badlands.LiveryTool.csproj'; Output = 'tools\LiveryTool'; SelfContained = $false },
-    @{ Project = 'apps\MappingDeconflicter\YmapDeconflicter.csproj'; Output = 'tools\MappingDeconflicter'; SelfContained = $false }
+    @{ Project = 'apps\MappingDeconflicter\YmapDeconflicter.csproj'; Output = 'tools\MappingDeconflicter'; SelfContained = $false },
+    @{ Project = 'apps\PropertyMapper\BLRP.PropertyMapper.csproj'; Output = 'tools\PropertyMapper'; SelfContained = $false }
 )
 
 foreach ($item in $projects) {
@@ -71,6 +72,9 @@ finally {
 if (-not (Test-Path -LiteralPath (Join-Path $badWalkerOutput 'CodeWalker.exe'))) {
     throw "The BadWalker release did not contain CodeWalker.exe: $badWalkerUrl"
 }
+$previewProject = Join-Path $PSScriptRoot 'apps\PropertyMapPreview\BLRP.PropertyMapPreview.csproj'
+dotnet build $previewProject -c Release -o $badWalkerOutput
+if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed for the Property Mapper 3D preview helper.' }
 foreach ($name in @('Notice.txt', 'Readme_Src.txt', 'README.md')) {
     Copy-Item -LiteralPath (Join-Path $badWalkerRoot $name) -Destination $badWalkerOutput -Force
 }
@@ -81,12 +85,12 @@ $sharedRoot = Join-Path $packageRoot 'shared'
 New-Item -ItemType Directory -Path $sharedRoot -Force | Out-Null
 foreach ($name in @('CodeWalker.Core.dll', 'SharpDX.dll', 'SharpDX.Mathematics.dll')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "shared\lib\$name") -Destination $sharedRoot
-    foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool')) {
+    foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool', 'PropertyMapper')) {
         $duplicate = Join-Path $packageRoot "tools\$tool\$name"
         if (Test-Path -LiteralPath $duplicate) { Remove-Item -LiteralPath $duplicate -Force }
     }
 }
-foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool', 'MappingDeconflicter')) {
+foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool', 'MappingDeconflicter', 'PropertyMapper')) {
     $duplicateLogo = Join-Path $packageRoot "tools\$tool\BLRP_Logo.png"
     if (Test-Path -LiteralPath $duplicateLogo) { Remove-Item -LiteralPath $duplicateLogo -Force }
 }

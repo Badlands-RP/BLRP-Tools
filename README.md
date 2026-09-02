@@ -8,11 +8,12 @@ One Windows launcher and updater for BadlandsRP's internal desktop utilities.
 - **BLRP Clothing Utility** — clothing search, preview, import, metadata, and blacklist workflows.
 - **BLRP Livery Tool** — vehicle livery conversion, sign batch building, scanning, metadata, and installation.
 - **BLRP Mapping Deconflicter** — scans mapping resources and reports duplicate assets.
+- **BLRP Property Mapper** — reviews panel mapping XML, opens it in CodeWalker's GTA renderer, and exports deployable YMAP/manifest files.
 - **grzyClothTool** — builds, inspects, and previews GTA clothing packs.
 - **BadWalker** — the BadlandsRP CodeWalker fork for GTA maps, archives, models, and metadata.
 
 The Hub launches each utility in its own hosted process, so a crash or long-running job
-in one tool does not take down the others. The four native utilities share the Hub's
+in one tool does not take down the others. The five native utilities share the Hub's
 runtime and CodeWalker dependencies. The larger third-party-derived tools remain in
 their own repositories as pinned submodules; release packaging adds grzyClothTool and
 the matching prebuilt BadWalker release without vendoring their source. Updates are distributed as one GitHub
@@ -28,6 +29,8 @@ apps/
   ClothingLocator/
   LiveryTool/
   MappingDeconflicter/
+  PropertyMapper/
+  PropertyMapPreview/
 branding/
 shared/
 external/grzyClothTool/  (git submodule)
