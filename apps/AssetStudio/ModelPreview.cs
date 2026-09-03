@@ -15,6 +15,7 @@ internal sealed class ModelPreview : Control
     private float _tilt;
     private float _defaultTilt;
     private float _zoom = 1f;
+    private readonly HashSet<int> _hiddenGeometries = [];
     public string EmptyMessage { get; set; } = "SELECT A YDR + YTD, THEN LOAD PREVIEW";
 
     public ModelPreview()
@@ -51,6 +52,7 @@ internal sealed class ModelPreview : Control
         _frame = null;
         Invalidate();
         _scene = await Task.Run(() => PreviewScene.Load(modelPath, texturePath, replacementImage, replacementTop, replacementLod));
+        _hiddenGeometries.Clear();
         _yaw = -0.65f;
         _pitch = 0.35f;
         _defaultTilt = _tilt = initialTilt;
@@ -61,7 +63,7 @@ internal sealed class ModelPreview : Control
     public void SaveInventoryImage(string outputPath, int size = 256)
     {
         if (_scene is null) throw new InvalidOperationException("Load and pose a model before saving its inventory image.");
-        using Bitmap model = _scene.Render(size, size, _yaw, _pitch, _zoom, true, _tilt);
+        using Bitmap model = _scene.Render(size, size, _yaw, _pitch, _zoom, true, _tilt, _hiddenGeometries);
         InventoryImageExporter.SaveWebp(model, outputPath);
     }
 
@@ -71,6 +73,21 @@ internal sealed class ModelPreview : Control
         _pitch = 0.35f;
         _tilt = _defaultTilt;
         _zoom = 1f;
+        Render();
+    }
+
+    public void Rotate(float yawDelta = 0f, float pitchDelta = 0f)
+    {
+        _yaw += yawDelta;
+        _pitch = Math.Clamp(_pitch + pitchDelta, -1.5f, 1.5f);
+        Render();
+    }
+
+    public int GeometryCount => _scene?.GeometryCount ?? 0;
+
+    public void SetGeometryVisible(int index, bool visible)
+    {
+        if (visible) _hiddenGeometries.Remove(index); else _hiddenGeometries.Add(index);
         Render();
     }
 
@@ -90,7 +107,7 @@ internal sealed class ModelPreview : Control
     private void Render()
     {
         if (_scene is null || ClientSize.Width < 8 || ClientSize.Height < 8) return;
-        Bitmap next = _scene.Render(ClientSize.Width, ClientSize.Height, _yaw, _pitch, _zoom, false, _tilt);
+        Bitmap next = _scene.Render(ClientSize.Width, ClientSize.Height, _yaw, _pitch, _zoom, false, _tilt, _hiddenGeometries);
         Bitmap? old = _frame;
         _frame = next;
         old?.Dispose();
@@ -99,7 +116,7 @@ internal sealed class ModelPreview : Control
 }
 
 internal sealed record PreviewVertex(Vector3 Position, Vector2 UV);
-internal sealed record PreviewTriangle(PreviewVertex A, PreviewVertex B, PreviewVertex C, PreviewTexture Texture);
+internal sealed record PreviewTriangle(PreviewVertex A, PreviewVertex B, PreviewVertex C, PreviewTexture Texture, int GeometryIndex);
 
 internal sealed class PreviewTexture
 {
@@ -124,12 +141,14 @@ internal sealed class PreviewScene
     private readonly PreviewTriangle[] _triangles;
     private readonly Vector3 _center;
     private readonly float _radius;
+    public int GeometryCount { get; }
 
-    private PreviewScene(PreviewTriangle[] triangles, Vector3 center, float radius)
+    private PreviewScene(PreviewTriangle[] triangles, Vector3 center, float radius, int geometryCount)
     {
         _triangles = triangles;
         _center = center;
         _radius = radius;
+        GeometryCount = geometryCount;
     }
 
     public static PreviewScene Load(string modelPath, string? texturePath, string? replacementImage = null, string? replacementTop = null, string? replacementLod = null)
@@ -172,6 +191,7 @@ internal sealed class PreviewScene
             ?? textures.Values.First();
         var triangles = new List<PreviewTriangle>();
         Vector3 min = new(float.MaxValue), max = new(float.MinValue);
+        int geometryIndex = 0;
 
         foreach (DrawableModel model in drawable.DrawableModels?.High ?? [])
         foreach (DrawableGeometry geometry in model.Geometries ?? [])
@@ -186,14 +206,41 @@ internal sealed class PreviewScene
                 PreviewVertex c = ReadVertex(data, indices[offset + 2]);
                 min = Vector3.Min(min, Vector3.Min(a.Position, Vector3.Min(b.Position, c.Position)));
                 max = Vector3.Max(max, Vector3.Max(a.Position, Vector3.Max(b.Position, c.Position)));
-                triangles.Add(new PreviewTriangle(a, b, c, texture));
+                triangles.Add(new PreviewTriangle(a, b, c, texture, geometryIndex));
             }
+            geometryIndex++;
         }
         if (triangles.Count == 0) throw new InvalidDataException("The model has no high-detail triangles to preview.");
         Vector3 center = (min + max) * 0.5f;
         float radius = triangles.SelectMany(triangle => new[] { triangle.A, triangle.B, triangle.C })
             .Max(vertex => Vector3.Distance(center, vertex.Position));
-        return new PreviewScene(triangles.ToArray(), center, Math.Max(0.001f, radius));
+        return new PreviewScene(triangles.ToArray(), center, Math.Max(0.001f, radius), geometryIndex);
+    }
+
+    internal static bool VisibilitySelfTest()
+    {
+        PreviewScene scene = Load(BundledAssets.BatTemplate(".ydr"), BundledAssets.BatTemplate(".ytd"));
+        if (scene.GeometryCount == 0) return false;
+        using Bitmap visible = scene.Render(128, 128, -0.65f, 0.35f, 1f, true);
+        using Bitmap hidden = scene.Render(
+            128,
+            128,
+            -0.65f,
+            0.35f,
+            1f,
+            true,
+            hiddenGeometries: Enumerable.Range(0, scene.GeometryCount).ToHashSet());
+        return HasVisiblePixel(visible) && !HasVisiblePixel(hidden);
+    }
+
+    private static bool HasVisiblePixel(Bitmap bitmap)
+    {
+        for (int y = 0; y < bitmap.Height; y++)
+        for (int x = 0; x < bitmap.Width; x++)
+        {
+            if (bitmap.GetPixel(x, y).A >= 16) return true;
+        }
+        return false;
     }
 
     private static DrawableBase LoadDrawable(string path, byte[] data)
@@ -235,7 +282,7 @@ internal sealed class PreviewScene
             ?? throw new InvalidDataException("The YFT has no drawable.");
     }
 
-    public Bitmap Render(int width, int height, float yaw, float pitch, float zoom, bool transparent = false, float tilt = 0f)
+    public Bitmap Render(int width, int height, float yaw, float pitch, float zoom, bool transparent = false, float tilt = 0f, IReadOnlySet<int>? hiddenGeometries = null)
     {
         int[] pixels = Enumerable.Repeat(transparent ? 0 : Color.FromArgb(14, 14, 30).ToArgb(), width * height).ToArray();
         float[] depth = Enumerable.Repeat(float.PositiveInfinity, width * height).ToArray();
@@ -243,6 +290,7 @@ internal sealed class PreviewScene
         var projected = new List<(PreviewTriangle Triangle, ScreenVertex A, ScreenVertex B, ScreenVertex C)>(_triangles.Length);
         foreach (PreviewTriangle triangle in _triangles)
         {
+            if (hiddenGeometries?.Contains(triangle.GeometryIndex) == true) continue;
             Vector3 a = Vector3.Transform(triangle.A.Position - _center, rotation);
             Vector3 b = Vector3.Transform(triangle.B.Position - _center, rotation);
             Vector3 c = Vector3.Transform(triangle.C.Position - _center, rotation);

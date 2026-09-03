@@ -41,6 +41,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _inventoryReplacement = CreateTextBox();
     private readonly Label _status = CreateLabel("READY", 9, AccentLight, FontStyle.Bold);
     private readonly ModelPreview _preview = new() { Dock = DockStyle.Fill };
+    private readonly ContextMenuStrip _partsMenu = new();
     private readonly ComboBox _mode = CreateComboBox();
     private readonly Button _importButton;
     private readonly Button _cupCreateButton;
@@ -79,6 +80,7 @@ internal sealed class MainForm : Form
         _cupLod.PlaceholderText = "OPTIONAL - KEEPS SOURCE WHEN BLANK";
         _inventoryTexture.SelectionChangeCommitted += (_, _) => _ = LoadPreviewAsync();
         BuildInterface();
+        RefreshGeometryMenu();
         SetBatDefaults();
         _mode.Items.AddRange(["STAFF PREVIEW", "DEVELOPER IMPORT", "CUP CREATOR", "INVENTORY PHOTO"]);
         _mode.SelectedIndexChanged += (_, _) => ApplyMode();
@@ -323,13 +325,26 @@ internal sealed class MainForm : Form
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(14) };
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 3 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         layout.Controls.Add(CreateLabel("3D MODEL PREVIEW", 11, AccentLight, FontStyle.Bold), 0, 0);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, BackColor = Color.Transparent, WrapContents = false };
-        buttons.Controls.Add(CreateButton("RESET POSE", (_, _) => _preview.ResetView()));
+        const float step = MathF.PI / 36f;
+        Button reset = CreateButton("RESET", (_, _) => _preview.ResetView()); reset.Width = 54;
+        Button down = CreateButton("DOWN", (_, _) => _preview.Rotate(pitchDelta: step)); down.Width = 42;
+        Button up = CreateButton("UP", (_, _) => _preview.Rotate(pitchDelta: -step)); up.Width = 30;
+        Button right = CreateButton("RIGHT", (_, _) => _preview.Rotate(yawDelta: step)); right.Width = 44;
+        Button left = CreateButton("LEFT", (_, _) => _preview.Rotate(yawDelta: -step)); left.Width = 40;
+        Button parts = CreateButton("PARTS", (_, _) => { }); parts.Width = 50;
+        parts.Click += (_, _) => _partsMenu.Show(parts, new Point(0, parts.Height));
+        buttons.Controls.Add(reset);
+        buttons.Controls.Add(down);
+        buttons.Controls.Add(up);
+        buttons.Controls.Add(right);
+        buttons.Controls.Add(left);
+        buttons.Controls.Add(parts);
         layout.Controls.Add(buttons, 1, 0);
         layout.Controls.Add(_preview, 0, 1);
         layout.SetColumnSpan(_preview, 2);
@@ -462,6 +477,7 @@ internal sealed class MainForm : Form
             bool diagonalBatPose = IsStaff || Path.GetFileNameWithoutExtension(modelPath).Contains("bat", StringComparison.OrdinalIgnoreCase);
             await _preview.LoadAsync(modelPath, texturePath, imagePath, topPath, lodPath,
                 diagonalBatPose ? -MathF.PI / 4f : 0f);
+            RefreshGeometryMenu();
             _loadedModel = Path.GetFullPath(modelPath);
             _loadedReplacement = imagePath is null ? null : Path.GetFullPath(imagePath);
             _loadedCupTop = topPath is null ? null : Path.GetFullPath(topPath);
@@ -474,7 +490,11 @@ internal sealed class MainForm : Form
                 ? "PREVIEW READY  /  DDS APPLIED DIRECTLY  /  DRAG TO ROTATE"
                 : "PREVIEW READY  /  PNG APPLIED AS DXT5  /  DRAG TO ROTATE");
         }
-        catch (Exception exception) { ShowError("Preview failed: " + exception.Message); }
+        catch (Exception exception)
+        {
+            RefreshGeometryMenu();
+            ShowError("Preview failed: " + exception.Message);
+        }
     }
 
     private async Task ImportAsync()
@@ -654,6 +674,23 @@ internal sealed class MainForm : Form
             (target == _sourcePng && File.Exists(_sourceModel.Text) && File.Exists(_sourceTexture.Text)) ||
             ((target == _inventoryTexture || target == _inventoryReplacement) && File.Exists(_inventoryModel.Text)))
             _ = LoadPreviewAsync();
+    }
+
+    private void RefreshGeometryMenu()
+    {
+        _partsMenu.Items.Clear();
+        if (_preview.GeometryCount == 0)
+        {
+            _partsMenu.Items.Add("LOAD A MODEL FIRST").Enabled = false;
+            return;
+        }
+        for (int index = 0; index < _preview.GeometryCount; index++)
+        {
+            int geometryIndex = index;
+            var item = new ToolStripMenuItem($"MESH {index + 1}") { Checked = true, CheckOnClick = true };
+            item.CheckedChanged += (_, _) => _preview.SetGeometryVisible(geometryIndex, item.Checked);
+            _partsMenu.Items.Add(item);
+        }
     }
 
     private void SetDetectedInventoryTextures(string modelPath)

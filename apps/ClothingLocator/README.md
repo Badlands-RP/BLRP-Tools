@@ -54,6 +54,16 @@ already restricted, per-texture choices are disabled because the drawable rule
 takes precedence. `REFRESH BUSINESSES` downloads the current custom-business
 names from the Panel's public endpoint and caches them for offline use.
 
+Use `BLACKLIST EXPORT...` after scanning the EUP directory to collect a group's
+custom clothing for bulk editing. Choosing a group lists every matching model;
+a whole-drawable rule includes all of its textures, while a per-texture rule
+includes only the YTD indices assigned to that group. Extract selected rows to
+an editable folder or save every result as one ZIP. Exports preserve the files'
+repository-relative paths and include `blrp-clothing-export.json`. Use
+`REIMPORT...` with an edited ZIP, or select that manifest inside an extracted
+folder, to replace every listed YDD/YTD under its original name. The originals
+are backed up under `.clothing-locator-backups` before replacement.
+
 Select any indexed custom component and use `DUPLICATE INTO CATEGORY` to copy it
 to another component category (for example, `BERD` masks to `HAND` bags). The
 tool assigns the destination filename/index automatically, retargets the model

@@ -15,8 +15,10 @@ transparent inventory images.
 
 ## Preview and inventory images
 
-Left-drag to rotate, right-drag horizontally to tilt a model diagonally, and
-use the wheel for a fixed, predictable zoom. `SAVE 256 WEBP`
+Left-drag or use the directional buttons to rotate, right-drag horizontally to
+tilt a model diagonally, and use the wheel for a fixed, predictable zoom. The
+`PARTS` menu can hide individual model meshes from the preview and final image.
+`SAVE 256 WEBP`
 captures the current pose from any loaded model with a transparent background
 and a soft drop shadow. When a BadlandsRP repository is selected, the save
 dialog starts in `resources\blrp_inventory\images`.

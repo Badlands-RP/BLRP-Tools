@@ -66,6 +66,7 @@ internal static class Program
             {
                 return BundledAssets.SelfTest() && WeaponSkinImporter.SelfTest() && WeaponTextureBuilder.SelfTest() &&
                     WeaponBoneExpander.SelfTest() && InventoryImageExporter.SelfTest() &&
+                    PreviewScene.VisibilitySelfTest() &&
                     MainForm.TextureMatchingSelfTest() ? 0 : 1;
             }
             catch (Exception exception)

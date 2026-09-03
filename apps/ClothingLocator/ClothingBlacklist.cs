@@ -44,7 +44,13 @@ internal static class ClothingBlacklist
             .Replace("\r\n", "\n", StringComparison.Ordinal)
             .Split('\n');
         string categoryKey = component.IsProp ? $"p{component.Slot}" : component.Slot.ToString();
-        int categoryStart = FindLine(lines, $@"^\s{{2}}\['{Regex.Escape(categoryKey)}'\]\s*=\s*\{{\s*$");
+        int tableStart = FindTableStart(lines);
+        int tableEnd = FindBlockEnd(lines, tableStart);
+        int categoryStart = FindLine(
+            lines,
+            $@"^\s{{2}}\['{Regex.Escape(categoryKey)}'\]\s*=\s*\{{\s*$",
+            tableStart + 1,
+            tableEnd);
         if (categoryStart < 0)
         {
             throw new InvalidDataException($"Blacklist category {categoryKey} was not found in {Path.GetFileName(path)}.");
@@ -107,7 +113,13 @@ internal static class ClothingBlacklist
         string newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
         string categoryKey = component.IsProp ? $"p{component.Slot}" : component.Slot.ToString();
-        int categoryStart = FindLine(lines, $@"^\s{{2}}\['{Regex.Escape(categoryKey)}'\]\s*=\s*\{{\s*$");
+        int tableStart = FindTableStart(lines);
+        int tableEnd = FindBlockEnd(lines, tableStart);
+        int categoryStart = FindLine(
+            lines,
+            $@"^\s{{2}}\['{Regex.Escape(categoryKey)}'\]\s*=\s*\{{\s*$",
+            tableStart + 1,
+            tableEnd);
         if (categoryStart < 0)
         {
             throw new InvalidDataException($"Blacklist category {categoryKey} was not found in {fileName}.");
@@ -201,7 +213,19 @@ internal static class ClothingBlacklist
         return -1;
     }
 
-    private static int FindBlockEnd(IReadOnlyList<string> lines, int start)
+    internal static int FindTableStart(IReadOnlyList<string> lines)
+    {
+        for (int index = lines.Count - 1; index >= 0; index--)
+        {
+            if (Regex.IsMatch(lines[index], @"^blacklists\[.+\]\s*=\s*\{\s*$", RegexOptions.CultureInvariant))
+            {
+                return index;
+            }
+        }
+        throw new InvalidDataException("The live blacklist table was not found.");
+    }
+
+    internal static int FindBlockEnd(IReadOnlyList<string> lines, int start)
     {
         int depth = 0;
         for (int index = start; index < lines.Count; index++)
@@ -221,12 +245,16 @@ internal static class ClothingBlacklist
         .Replace("\\", "\\\\", StringComparison.Ordinal)
         .Replace("'", "\\'", StringComparison.Ordinal);
 
+    internal static string UnescapeLua(string value) => value
+        .Replace("\\'", "'", StringComparison.Ordinal)
+        .Replace("\\\\", "\\", StringComparison.Ordinal);
+
     private static bool HasBusiness(string line, string escapedBusiness) => Regex.IsMatch(
         line,
         $@"=\s*'{Regex.Escape(escapedBusiness)}'\s*,?\s*(?:--.*)?$",
         RegexOptions.CultureInvariant);
 
-    private static string GetPath(string rootPath, Gender gender)
+    internal static string GetPath(string rootPath, Gender gender)
     {
         string fileName = gender == Gender.Male ? "mp_m_freemode_01.lua" : "mp_f_freemode_01.lua";
         string path = Path.Combine(
@@ -244,7 +272,7 @@ internal static class ClothingBlacklist
         string root = Path.Combine(Path.GetTempPath(), "BLRP-Clothing-Blacklist-Test-" + Guid.NewGuid());
         string directory = Path.Combine(root, "blrp_clothingstore", "blacklists");
         Directory.CreateDirectory(directory);
-        const string fixture = "blacklists[`mp_m_freemode_01`] = {\r\n  sex = 'male',\r\n  ['4'] = {\r\n  },\r\n}\r\n";
+        const string fixture = "--[[\r\nblacklists[`mp_m_freemode_01`] = {\r\n  ['4'] = {\r\n  },\r\n}\r\n]]\r\nblacklists[`mp_m_freemode_01`] = {\r\n  sex = 'male',\r\n  ['4'] = {\r\n  },\r\n}\r\n";
         File.WriteAllText(Path.Combine(directory, "mp_m_freemode_01.lua"), fixture);
         File.WriteAllText(
             Path.Combine(directory, "existing.lua"),

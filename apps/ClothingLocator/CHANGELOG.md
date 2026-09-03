@@ -2,6 +2,22 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.0 - 2026-09-04
+
+### Added
+
+- `BLACKLIST EXPORT...` lists every custom model and applicable texture assigned
+  to a selected business/group. Selected rows can be extracted to an editable
+  folder, or the complete group can be exported as one ZIP.
+- Exported bundles include their original repository paths and a manifest.
+  Edited ZIPs or extracted folders can be reimported in bulk; every replaced
+  YDD/YTD is backed up first.
+
+### Fixed
+
+- Blacklist lookups and automatic updates now skip the commented Lua example
+  and target the live freemode blacklist table.
+
 ## 1.7.6 - 2026-09-04
 
 ### Fixed

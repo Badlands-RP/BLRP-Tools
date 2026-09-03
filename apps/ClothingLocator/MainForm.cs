@@ -47,6 +47,7 @@ internal sealed class MainForm : Form
     private readonly Button _clearOutfit;
     private readonly Button _refreshBusinesses;
     private readonly Button _combineBlacklist;
+    private readonly Button _blacklistExport;
     private readonly Button _scanQuality;
     private readonly Button _exportQuality;
     private readonly Button _generateLods;
@@ -93,6 +94,7 @@ internal sealed class MainForm : Form
         _clearOutfit.Enabled = false;
         _refreshBusinesses = CreateButton("REFRESH OPTIONS", async (_, _) => await RefreshBusinessesAsync(true), true);
         _combineBlacklist = CreateButton("COMBINE...", (_, _) => CombineBlacklistGroups(), true);
+        _blacklistExport = CreateButton("BLACKLIST EXPORT...", async (_, _) => await OpenBlacklistExportAsync(), true);
         _scanQuality = CreateButton("SCAN REPO QC", async (_, _) => await ScanQualityAsync(), true);
         _exportQuality = CreateButton("EXPORT QC CSV", ExportQualityCsv);
         _exportQuality.Enabled = false;
@@ -215,8 +217,9 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(businessLabel, 5);
         _business.Dock = DockStyle.Fill;
         layout.Controls.Add(_business, 0, 3);
-        layout.SetColumnSpan(_business, 3);
-        layout.Controls.Add(_combineBlacklist, 3, 3);
+        layout.SetColumnSpan(_business, 2);
+        layout.Controls.Add(_combineBlacklist, 2, 3);
+        layout.Controls.Add(_blacklistExport, 3, 3);
         layout.Controls.Add(_refreshBusinesses, 4, 3);
         card.Controls.Add(layout);
         return card;
@@ -655,6 +658,21 @@ internal sealed class MainForm : Form
         }
         int index = _business.FindStringExact(combined);
         _business.SelectedIndex = index >= 0 ? index : _business.Items.Add(combined);
+    }
+
+    private async Task OpenBlacklistExportAsync()
+    {
+        if (!EnsureCatalog()) return;
+        using var dialog = new BlacklistBundleDialog(
+            _rootPath.Text.Trim(),
+            _catalog!,
+            _business.Items.Cast<string>().Skip(1),
+            SelectedBusiness);
+        dialog.ShowDialog(this);
+        if (dialog.Imported)
+        {
+            await ScanAsync();
+        }
     }
 
     private void PopulateBusinesses(IReadOnlyList<string> names)
@@ -1742,6 +1760,7 @@ internal sealed class MainForm : Form
                form._scanQuality.Text == "SCAN REPO QC" &&
                form._exportQuality.Text == "EXPORT QC CSV" &&
                form._generateLods.Text == "OPTIMISE / LODS..." &&
+               form._blacklistExport.Text == "BLACKLIST EXPORT..." &&
                form._results.Columns[7].ValueType == typeof(long) &&
                polygonSortsNumerically &&
                CsvCell("a,\"b") == "\"a,\"\"b\"" &&

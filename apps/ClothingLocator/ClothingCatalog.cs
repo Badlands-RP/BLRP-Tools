@@ -167,12 +167,19 @@ internal sealed class ClothingCatalog
 
     public string? FindPreviewTexture(ClothingEntry entry)
     {
-        string key = GetModelTextureKey(entry);
-        return Directory.EnumerateFiles(Path.GetDirectoryName(entry.FilePath)!, "*.ytd")
-            .Where(path => string.Equals(GetTextureKey(path), key, StringComparison.OrdinalIgnoreCase))
+        return FindTextures(entry)
             .OrderByDescending(path => Path.GetFileNameWithoutExtension(path).EndsWith("_a_uni", StringComparison.OrdinalIgnoreCase))
             .ThenBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
+    }
+
+    public IReadOnlyList<string> FindTextures(ClothingEntry entry)
+    {
+        string key = GetModelTextureKey(entry);
+        return Directory.EnumerateFiles(Path.GetDirectoryName(entry.FilePath)!, "*.ytd")
+            .Where(path => string.Equals(GetTextureKey(path), key, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public Task<IReadOnlyList<(ClothingEntry Entry, ClothingModelQuality Quality)>> CreateQualityReportAsync(
