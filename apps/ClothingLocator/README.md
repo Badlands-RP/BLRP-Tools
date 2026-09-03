@@ -73,8 +73,9 @@ existing clothing ID and blacklist. The replacement assets and YMT texture
 metadata are retargeted to the selected slot. The previous YDD, YTDs, and YMT
 are backed up before the files are swapped.
 
-Select an indexed `FEET` model and use `YMT SETTINGS...` to enable or adjust its
-heel height from 0 to 3. Saving updates `pedXml_expressionMods.f4`, backs up the
+Select an indexed `FEET` model and use `YMT SETTINGS...` to choose its shoe sound
+and enable or adjust its heel height from 0 to 3. Saving updates `pedXml_audioID`
+and `pedXml_expressionMods.f4`, then backs up the
 component YMT, and repairs or creates the creature-metadata YMT named by the
 addon's SHOP_PED_APPAREL metadata. Both files are required for GTA to apply the
 offset. Prop hair scaling/cutting is not exposed until prop import is supported.

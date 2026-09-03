@@ -2,6 +2,16 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.7.5 - 2026-09-02
+
+### Added
+
+- FEET YMT settings now include a shoe-sound dropdown alongside heel height.
+
+### Fixed
+
+- Preserve untouched YMT component metadata when importing clothing, preventing FEET imports from altering LOWR settings.
+
 ## 1.7.4 - 2026-08-31
 
 ### Fixed

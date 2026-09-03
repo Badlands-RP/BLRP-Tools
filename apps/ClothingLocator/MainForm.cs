@@ -1031,10 +1031,10 @@ internal sealed class MainForm : Form
             return;
         }
 
-        float currentHeight;
+        ShoeSettings currentSettings;
         try
         {
-            currentHeight = await Task.Run(() => ClothingImporter.GetHeelHeight(_catalog.RootPath, target));
+            currentSettings = await Task.Run(() => ClothingImporter.GetShoeSettings(_catalog.RootPath, target));
         }
         catch (Exception exception)
         {
@@ -1050,16 +1050,17 @@ internal sealed class MainForm : Form
             MaximizeBox = false,
             MinimizeBox = false,
             ShowInTaskbar = false,
-            ClientSize = new Size(520, 230),
+            ClientSize = new Size(620, 285),
             BackColor = BackgroundTop,
             ForeColor = TextPrimary,
             Font = PickMonoFont(9F),
             Padding = new Padding(20)
         };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 5 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -1070,7 +1071,7 @@ internal sealed class MainForm : Form
         var enabled = new CheckBox
         {
             Text = "ENABLE HEEL HEIGHT",
-            Checked = currentHeight != 0,
+            Checked = currentSettings.HeelHeight != 0,
             ForeColor = TextPrimary,
             Dock = DockStyle.Fill,
             FlatStyle = FlatStyle.Flat
@@ -1082,18 +1083,28 @@ internal sealed class MainForm : Form
             Increment = 0.1M,
             Minimum = 0,
             Maximum = 3,
-            Value = currentHeight == 0 ? 1 : Math.Clamp((decimal)currentHeight, 0, 3),
+            Value = currentSettings.HeelHeight == 0 ? 1 : Math.Clamp((decimal)currentSettings.HeelHeight, 0, 3),
             Enabled = enabled.Checked,
             BackColor = InputBackground,
             ForeColor = TextPrimary,
             Dock = DockStyle.Fill
         };
         layout.Controls.Add(height, 1, 1);
+        layout.Controls.Add(CreateLabel("SHOE SOUND", 9, TextPrimary, FontStyle.Bold), 0, 2);
+        ComboBox sound = CreateComboBox();
+        sound.Dock = DockStyle.Fill;
+        sound.Items.AddRange(ClothingImporter.ShoeSounds.Cast<object>().ToArray());
+        if (!sound.Items.Cast<string>().Contains(currentSettings.ShoeSound, StringComparer.OrdinalIgnoreCase))
+        {
+            sound.Items.Insert(0, currentSettings.ShoeSound);
+        }
+        sound.SelectedItem = currentSettings.ShoeSound;
+        layout.Controls.Add(sound, 1, 2);
         var hint = CreateLabel(
-            "Saving updates the clothing YMT and repairs the addon creature-metadata reference required by GTA.",
+            "Saving updates shoe audio in the clothing YMT and repairs the heel-height creature metadata required by GTA.",
             8,
             TextMuted);
-        layout.Controls.Add(hint, 0, 2);
+        layout.Controls.Add(hint, 0, 3);
         layout.SetColumnSpan(hint, 2);
         enabled.CheckedChanged += (_, _) => height.Enabled = enabled.Checked;
 
@@ -1104,7 +1115,7 @@ internal sealed class MainForm : Form
         cancel.Width = 120;
         buttons.Controls.Add(save);
         buttons.Controls.Add(cancel);
-        layout.Controls.Add(buttons, 0, 4);
+        layout.Controls.Add(buttons, 0, 5);
         layout.SetColumnSpan(buttons, 2);
         dialog.Controls.Add(layout);
         dialog.AcceptButton = save;
@@ -1114,12 +1125,14 @@ internal sealed class MainForm : Form
         int globalIndex = _catalog.GetGlobalIndex(target, target.Component.DefaultOffset(target.Gender));
         try
         {
-            SetBusy(true, $"UPDATING HEEL METADATA FOR FEET #{globalIndex}...");
+            SetBusy(true, $"UPDATING SHOE METADATA FOR FEET #{globalIndex}...");
             float newHeight = enabled.Checked ? (float)height.Value : 0;
-            ClothingMetadataUpdateResult result = await Task.Run(() => ClothingImporter.SetHeelHeight(
+            string newSound = (string)sound.SelectedItem!;
+            ClothingMetadataUpdateResult result = await Task.Run(() => ClothingImporter.SetShoeSettings(
                 _catalog.RootPath,
                 target,
-                newHeight));
+                newHeight,
+                newSound));
             _catalog = await ClothingCatalog.LoadAsync(_catalog.RootPath);
             ClothingEntry? refreshed = _catalog.FindByGlobalIndex(
                 target.Gender,
@@ -1128,7 +1141,7 @@ internal sealed class MainForm : Form
                 target.Component.DefaultOffset(target.Gender));
             ShowResults(refreshed == null ? [] : [refreshed]);
             SetStatus(
-                $"UPDATED FEET #{globalIndex} / HEEL HEIGHT {newHeight:0.##} / {Path.GetFileName(result.CreatureMetadataPath)}",
+                $"UPDATED FEET #{globalIndex} / {newSound} / HEEL HEIGHT {newHeight:0.##} / {Path.GetFileName(result.CreatureMetadataPath)}",
                 false);
         }
         catch (Exception exception)

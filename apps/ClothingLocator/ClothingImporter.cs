@@ -38,6 +38,7 @@ internal sealed record ClothingImportPlan(
 
 internal sealed record ClothingTextureImportResult(string TexturePath, int TextureCount, string Compression);
 internal sealed record ClothingMetadataUpdateResult(string BackupDirectory, string CreatureMetadataPath);
+internal sealed record ShoeSettings(float HeelHeight, string ShoeSound);
 internal sealed record ClothingModelQuality(
     string Summary,
     string Details,
@@ -48,6 +49,27 @@ internal sealed record ClothingModelQuality(
 internal static class ClothingImporter
 {
     public const int MaxDrawablesPerType = 128;
+    public static IReadOnlyList<string> ShoeSounds { get; } = Array.AsReadOnly(new[]
+    {
+        "none",
+        "footsteps_generic",
+        "shoe_barefoot",
+        "shoe_heels",
+        "shoe_normal_heels",
+        "shoe_high_heels",
+        "shoe_heavy_boots",
+        "shoe_rubber_boots",
+        "shoe_rubber",
+        "shoe_flip_flops",
+        "shoe_dress_shoes",
+        "shoe_golf_shoes",
+        "shoe_trainers",
+        "shoe_scuba_flippers",
+        "shoe_cowboy_boots",
+        "shoe_clown_shoes",
+        "shoe_gold_shoes",
+        "shoe_silent"
+    });
 
     internal static string DumpYmtXml(string path) => MetaXml.GetXml(LoadPedFile(path).Meta);
 
@@ -522,7 +544,7 @@ internal static class ClothingImporter
         }
     }
 
-    public static float GetHeelHeight(string rootPath, ClothingEntry target)
+    public static ShoeSettings GetShoeSettings(string rootPath, ClothingEntry target)
     {
         if (!target.Component.Code.Equals("feet", StringComparison.OrdinalIgnoreCase))
         {
@@ -532,13 +554,18 @@ internal static class ClothingImporter
         MCComponentInfo? info = ped.VariationInfo?.CompInfos?.FirstOrDefault(item =>
             item.Data.pedXml_compIdx == target.Component.Slot &&
             item.Data.pedXml_drawblIdx == target.RelativeIndex);
-        return info?.Data.pedXml_expressionMods.f4 ?? 0;
+        if (info is null) return new ShoeSettings(0, "none");
+        uint soundHash = info.Data.pedXml_audioID;
+        string sound = ShoeSounds.FirstOrDefault(name => JenkHash.GenHash(name) == soundHash)
+            ?? $"0x{soundHash:X8}";
+        return new ShoeSettings(info.Data.pedXml_expressionMods.f4, sound);
     }
 
-    public static ClothingMetadataUpdateResult SetHeelHeight(
+    public static ClothingMetadataUpdateResult SetShoeSettings(
         string rootPath,
         ClothingEntry target,
-        float heelHeight)
+        float heelHeight,
+        string shoeSound)
     {
         if (!target.Component.Code.Equals("feet", StringComparison.OrdinalIgnoreCase))
         {
@@ -548,19 +575,26 @@ internal static class ClothingImporter
         {
             throw new ArgumentOutOfRangeException(nameof(heelHeight), "Heel height must be between 0 and 3.");
         }
+        uint shoeSoundHash = ShoeSounds.Contains(shoeSound, StringComparer.OrdinalIgnoreCase)
+            ? JenkHash.GenHash(shoeSound.ToLowerInvariant())
+            : shoeSound.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+              uint.TryParse(shoeSound[2..], System.Globalization.NumberStyles.HexNumber, null, out uint existingHash)
+                ? existingHash
+                : throw new ArgumentException("Select a valid shoe sound.", nameof(shoeSound));
 
         string fullRoot = Path.GetFullPath(rootPath);
         string ymtPath = GetYmtPath(fullRoot, target);
         PedFile ped = LoadPedFile(ymtPath);
         _ = GetDrawables(ped, target.Component.Slot)?.ElementAtOrDefault(target.RelativeIndex)
             ?? throw new InvalidDataException("The selected model has no matching YMT drawable entry.");
-        byte[] ymtBytes = UpdateComponentHeelHeight(
+        byte[] ymtBytes = UpdateComponentShoeSettings(
             ped,
             GetCollectionName(target.Gender, target.Pack),
             Path.Combine(Path.GetDirectoryName(ymtPath)!, GetCollectionName(target.Gender, target.Pack)),
             target.Component.Slot,
             target.RelativeIndex,
-            heelHeight);
+            heelHeight,
+            shoeSoundHash);
         (string creaturePath, byte[] creatureBytes) = BuildCreatureMetadata(
             fullRoot,
             target.Gender,
@@ -927,11 +961,13 @@ internal static class ClothingImporter
             racePlan.Pack,
             racePlan.PackDrawableIndex,
             racePlan.TextureFileNames.Count);
-        ClothingMetadataUpdateResult heelUpdate = SetHeelHeight(fixtureRoot, raceEntry, 0.9f);
+        ClothingMetadataUpdateResult heelUpdate = SetShoeSettings(fixtureRoot, raceEntry, 0.9f, "shoe_high_heels");
         var creatureMetadata = new RbfFile();
         creatureMetadata.Load(File.ReadAllBytes(heelUpdate.CreatureMetadataPath));
         XDocument creatureXml = XDocument.Parse(RbfXml.GetXml(creatureMetadata));
-        bool heelMetadataValid = Math.Abs(GetHeelHeight(fixtureRoot, raceEntry) - 0.9f) < 0.0001f &&
+        ShoeSettings savedShoeSettings = GetShoeSettings(fixtureRoot, raceEntry);
+        bool heelMetadataValid = Math.Abs(savedShoeSettings.HeelHeight - 0.9f) < 0.0001f &&
+            savedShoeSettings.ShoeSound == "shoe_high_heels" &&
             !heelUpdate.CreatureMetadataPath.Equals(raceCreatureTarget, StringComparison.OrdinalIgnoreCase) &&
             creatureXml.Descendants("Item").Any(item =>
                 item.Element("pedCompID")?.Attribute("value")?.Value == "0x6" &&
@@ -1792,13 +1828,14 @@ internal static class ClothingImporter
             textureCount,
             template);
 
-    private static byte[] UpdateComponentHeelHeight(
+    private static byte[] UpdateComponentShoeSettings(
         PedFile ped,
         string collectionName,
         string collectionDirectory,
         int componentId,
         int drawableIndex,
-        float heelHeight) => RebuildComponent(
+        float heelHeight,
+        uint shoeSoundHash) => RebuildComponent(
             ped,
             collectionName,
             collectionDirectory,
@@ -1811,7 +1848,8 @@ internal static class ClothingImporter
             null,
             null,
             drawableIndex,
-            heelHeight);
+            heelHeight,
+            shoeSoundHash: shoeSoundHash);
 
     private static byte[] RebuildComponent(
         PedFile ped,
@@ -1832,7 +1870,8 @@ internal static class ClothingImporter
         int? propAppendAnchorId = null,
         int? propAppendId = null,
         int propTextureCount = 0,
-        CPedPropMetaData? propTemplate = null)
+        CPedPropMetaData? propTemplate = null,
+        uint? shoeSoundHash = null)
     {
         MCPedVariationInfo source = ped.VariationInfo ?? throw new InvalidDataException("The target YMT has no ped variation data.");
         MCPVComponentData[] sourceComponents = source.ComponentData3 ?? [];
@@ -1896,7 +1935,10 @@ internal static class ClothingImporter
             }
 
             CPVComponentData componentData = existingComponent?.Data ?? new CPVComponentData();
-            componentData.numAvailTex = unchecked((byte)drawables.Sum(drawable => GetArrayLength(drawable.aTexData)));
+            bool changesComponentData = !changeProp && componentIndex == targetComponentIndex && componentInfoTargetIndex == null;
+            componentData.numAvailTex = changesComponentData
+                ? unchecked((byte)drawables.Sum(drawable => GetArrayLength(drawable.aTexData)))
+                : existingComponent?.Data.numAvailTex ?? unchecked((byte)drawables.Sum(drawable => GetArrayLength(drawable.aTexData)));
             componentData.aDrawblData3 = mb.AddItemArrayPtr(MetaName.CPVDrawblData, drawables.ToArray());
             rebuiltComponents.Add(componentData);
         }
@@ -1936,6 +1978,7 @@ internal static class ClothingImporter
             ArrayOfFloats5 expressionMods = info.pedXml_expressionMods;
             expressionMods.f4 = heelHeight ?? 0;
             info.pedXml_expressionMods = expressionMods;
+            if (shoeSoundHash is not null) info.pedXml_audioID = shoeSoundHash.Value;
             if (infoIndex >= 0) componentInfos[infoIndex] = info;
             else componentInfos.Add(info);
         }
@@ -2077,6 +2120,10 @@ internal static class ClothingImporter
             for (int index = 0; index < oldDrawables.Length; index++)
                 if (DrawableFingerprint(oldDrawables[index]) != DrawableFingerprint(newDrawables[index]))
                     throw new InvalidDataException($"YMT validation detected a change to existing component slot {slot}, drawable {index:000}. No files were changed.");
+
+            if (slot != plan.Component.Slot &&
+                ComponentFingerprint(GetComponentData(before, slot)) != ComponentFingerprint(GetComponentData(after, slot)))
+                throw new InvalidDataException($"YMT validation detected a metadata change to untouched component slot {slot}. No files were changed.");
         }
 
         MCPedPropMetaData[] oldProps = before.VariationInfo?.PropInfo?.PropMetaData ?? [];
@@ -2109,6 +2156,19 @@ internal static class ClothingImporter
         return $"{data.propMask}:{data.numAlternatives}:{data.Unused0}:{data.Unused1}:" +
             $"{cloth.ownsCloth}:{cloth.Unused0}:{cloth.Unused1}:{cloth.Unused2}:{cloth.Unused3}:{cloth.Unused4}:{cloth.Unused5}:{cloth.Unused6}:{textures}";
     }
+
+    private static MCPVComponentData? GetComponentData(PedFile ped, int slot)
+    {
+        MCPedVariationInfo? variation = ped.VariationInfo;
+        int index = variation?.ComponentIndices?[slot] ?? 255;
+        return index == 255 || variation?.ComponentData3 == null || index >= variation.ComponentData3.Length
+            ? null
+            : variation.ComponentData3[index];
+    }
+
+    private static string ComponentFingerprint(MCPVComponentData? item) => item is null
+        ? string.Empty
+        : $"{item.Data.numAvailTex}:{item.Data.Unused0}:{item.Data.Unused1}:{item.Data.Unused2}";
 
     private static string PropFingerprint(MCPedPropMetaData item)
     {
