@@ -2,6 +2,13 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.7.6 - 2026-09-04
+
+### Fixed
+
+- FEET imports and heel/sound edits preserve every existing YMT texture array,
+  preventing LOWR (and other clothing categories) from being altered.
+
 ## 1.7.5 - 2026-09-02
 
 ### Added
