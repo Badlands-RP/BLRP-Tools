@@ -15,6 +15,7 @@ internal sealed class BlacklistBundleDialog : Form
     private readonly ComboBox _group = new();
     private readonly DataGridView _grid = new();
     private readonly Label _summary = new();
+    private readonly Button _previewSelected;
     private readonly Button _extractSelected;
     private readonly Button _zipAll;
     private readonly Button _reimport;
@@ -37,6 +38,7 @@ internal sealed class BlacklistBundleDialog : Form
         ForeColor = Color.White;
         Font = new Font("Cascadia Mono", 9F);
 
+        _previewSelected = CreateButton("PREVIEW SELECTED", (_, _) => PreviewSelected(), true);
         _extractSelected = CreateButton("EXTRACT SELECTED...", async (_, _) => await ExtractSelectedAsync(), true);
         _zipAll = CreateButton("ZIP ALL...", async (_, _) => await ZipAllAsync(), true);
         _reimport = CreateButton("REIMPORT...", async (_, _) => await ReimportAsync());
@@ -48,7 +50,8 @@ internal sealed class BlacklistBundleDialog : Form
         int selectedIndex = selectedGroup == null ? -1 : _group.FindStringExact(selectedGroup);
         _group.SelectedIndex = selectedIndex >= 0 ? selectedIndex : (_group.Items.Count > 0 ? 0 : -1);
         _group.SelectedIndexChanged += (_, _) => RefreshItems();
-        _grid.SelectionChanged += (_, _) => _extractSelected.Enabled = _grid.SelectedRows.Count > 0;
+        _grid.SelectionChanged += (_, _) => UpdateSelectionActions();
+        _grid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0) PreviewSelected(); };
         RefreshItems();
     }
 
@@ -102,19 +105,21 @@ internal sealed class BlacklistBundleDialog : Form
         {
             Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
-            ColumnCount = 5,
+            ColumnCount = 6,
             RowCount = 1,
             Padding = new Padding(0, 8, 0, 0)
         };
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-        actions.Controls.Add(_reimport, 1, 0);
-        actions.Controls.Add(_extractSelected, 2, 0);
-        actions.Controls.Add(_zipAll, 3, 0);
-        actions.Controls.Add(CreateButton("CLOSE", (_, _) => Close()), 4, 0);
+        actions.Controls.Add(_previewSelected, 1, 0);
+        actions.Controls.Add(_reimport, 2, 0);
+        actions.Controls.Add(_extractSelected, 3, 0);
+        actions.Controls.Add(_zipAll, 4, 0);
+        actions.Controls.Add(CreateButton("CLOSE", (_, _) => Close()), 5, 0);
         page.Controls.Add(actions, 0, 4);
 
         Controls.Add(page);
@@ -206,8 +211,22 @@ internal sealed class BlacklistBundleDialog : Form
             ? string.Empty
             : $"  /  {_result.MissingTextures} MISSING YTD{(_result.MissingTextures == 1 ? string.Empty : "S")}";
         _summary.Text = $"{_result.Items.Count} MODEL{(_result.Items.Count == 1 ? string.Empty : "S")}  /  {fileCount} FILE{(fileCount == 1 ? string.Empty : "S")}{unresolved}{missing}";
-        _extractSelected.Enabled = _grid.SelectedRows.Count > 0;
+        UpdateSelectionActions();
         _zipAll.Enabled = _result.Items.Count > 0;
+    }
+
+    private void PreviewSelected()
+    {
+        if (_grid.SelectedRows.Count != 1 || _grid.SelectedRows[0].Tag is not BlacklistAssetItem item) return;
+        string? texturePath = item.Files.Skip(1).FirstOrDefault() ?? _catalog.FindPreviewTexture(item.Entry);
+        using var dialog = new ClothingPreviewDialog(item.Entry.FilePath, texturePath);
+        dialog.ShowDialog(this);
+    }
+
+    private void UpdateSelectionActions()
+    {
+        _previewSelected.Enabled = _grid.SelectedRows.Count == 1;
+        _extractSelected.Enabled = _grid.SelectedRows.Count > 0;
     }
 
     private async Task ExtractSelectedAsync()
@@ -326,6 +345,7 @@ internal sealed class BlacklistBundleDialog : Form
         UseWaitCursor = busy;
         _group.Enabled = !busy;
         _grid.Enabled = !busy;
+        _previewSelected.Enabled = !busy && _grid.SelectedRows.Count == 1;
         _extractSelected.Enabled = !busy && _grid.SelectedRows.Count > 0;
         _zipAll.Enabled = !busy && _result.Items.Count > 0;
         _reimport.Enabled = !busy;

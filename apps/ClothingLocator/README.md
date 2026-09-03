@@ -62,7 +62,9 @@ an editable folder or save every result as one ZIP. Exports preserve the files'
 repository-relative paths and include `blrp-clothing-export.json`. Use
 `REIMPORT...` with an edited ZIP, or select that manifest inside an extracted
 folder, to replace every listed YDD/YTD under its original name. The originals
-are backed up under `.clothing-locator-backups` before replacement.
+are backed up under `.clothing-locator-backups` before replacement. Double-click
+an export result or use `PREVIEW SELECTED` to inspect it in the normal clothing
+viewer; texture-level results prefer the matching restricted YTD.
 
 Select any indexed custom component and use `DUPLICATE INTO CATEGORY` to copy it
 to another component category (for example, `BERD` masks to `HAND` bags). The

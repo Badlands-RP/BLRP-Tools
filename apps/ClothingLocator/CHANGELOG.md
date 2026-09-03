@@ -2,6 +2,14 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.1 - 2026-09-04
+
+### Added
+
+- Blacklist export results can be previewed in the existing clothing model
+  viewer by double-clicking a row or choosing `PREVIEW SELECTED`. Texture-level
+  rules open the exact matching restricted texture when it is available.
+
 ## 1.8.0 - 2026-09-04
 
 ### Added
