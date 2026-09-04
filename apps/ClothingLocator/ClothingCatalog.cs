@@ -36,7 +36,7 @@ internal static class ClothingComponents
         new ComponentDefinition(8, false, "accs", "UNDERSHIRTS (ACCS)", 207, 253),
         new ComponentDefinition(9, false, "task", "ARMOUR (TASK)", 62, 62),
         new ComponentDefinition(10, false, "decl", "DECALS (DECL)", 193, 209),
-        new ComponentDefinition(11, false, "jbib", "TOPS (JBIB)", 524, 565),
+        new ComponentDefinition(11, false, "jbib", "TOPS (JBIB)", 523, 565),
         new ComponentDefinition(0, true, "p_head", "HATS", 214, 213),
         new ComponentDefinition(1, true, "p_eyes", "GLASSES", 56, 58),
         new ComponentDefinition(2, true, "p_ears", "EARS", 42, 23),
@@ -325,8 +325,10 @@ internal sealed class ClothingCatalog
         }
 
         var catalog = new ClothingCatalog("test", new List<ClothingEntry> { male });
+        ComponentDefinition jbib = ClothingComponents.ByCode["jbib"];
         bool basicResult = catalog.GetGlobalIndex(male, 178) == 291 &&
-                           ReferenceEquals(catalog.FindByGlobalIndex(Gender.Male, male.Component, 291, 178), male);
+                           ReferenceEquals(catalog.FindByGlobalIndex(Gender.Male, male.Component, 291, 178), male) &&
+                           jbib.DefaultOffset(Gender.Male) == 523;
         if (!basicResult || string.IsNullOrWhiteSpace(rootPath))
         {
             return basicResult;
@@ -337,6 +339,21 @@ internal sealed class ClothingCatalog
         if (texturedEntry == null || realCatalog.FindPreviewTexture(texturedEntry) == null)
         {
             return false;
+        }
+
+        foreach ((int global, int pack, int relative) in new[]
+        {
+            (751, 2, 100),
+            (867, 3, 88),
+            (1032, 4, 125),
+            (1054, 5, 19)
+        })
+        {
+            ClothingEntry? item = realCatalog.FindByGlobalIndex(Gender.Male, jbib, global, jbib.DefaultOffset(Gender.Male));
+            if (item is null || item.Pack != pack || item.RelativeIndex != relative)
+            {
+                return false;
+            }
         }
 
         ComponentDefinition teef = ClothingComponents.ByCode["teef"];

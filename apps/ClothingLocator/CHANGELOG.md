@@ -2,6 +2,13 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.2 - 2026-09-04
+
+### Fixed
+
+- Male JBIB clothing numbers now match the in-game clothing store instead of
+  resolving to the preceding model.
+
 ## 1.8.1 - 2026-09-04
 
 ### Added
