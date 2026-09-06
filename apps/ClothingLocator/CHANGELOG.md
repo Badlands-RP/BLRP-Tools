@@ -2,6 +2,21 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.4 - 2026-09-06
+
+### Added
+
+- `YMT SETTINGS...` is available for every custom component and prop, with the
+  audio choices and drawable/prop flags exposed by grzyClothTool.
+- Prop settings include alpha, decal, and cutout render modes. Head props also
+  include `CUT / SCALE HAIR`; saving it updates both the prop expression and
+  the addon's required creature-metadata YMT.
+
+### Fixed
+
+- Saving head-prop settings preserves the real prop ID (for example, `065`)
+  instead of rebuilding or renumbering the prop entry.
+
 ## 1.8.3 - 2026-09-06
 
 ### Added

@@ -1,10 +1,7 @@
 # BLRP Clothing Utility
 
-Version 1.8.3 remembers separate model and texture import folders across sessions.
-Use **Search blacklist...** to narrow the group choices without changing the
-current selection. **Combine** also supports search and retains checked groups.
-The blacklist export window can filter its clothing list; **ZIP ALL** still
-exports the entire selected group.
+Version 1.8.4 exposes the relevant grzyClothTool YMT properties for custom
+components and props, including Cut/Scale Hair for head props.
 
 Clean local rebuild of the BadlandsRP clothing collection locator.
 
@@ -35,8 +32,8 @@ target selector lists each safe addon pack, its next relative slot, remaining
 capacity, and the resulting in-game clothing number. The
 tool warns as a component approaches the 128-drawable YMT limit and refuses to
 create a new global addon pack automatically. Existing YMT files are backed up
-under `.clothing-locator-backups` before modification. Component import is
-supported; prop import is not yet supported.
+under `.clothing-locator-backups` before modification. Components and props are
+both supported.
 
 Both normal OpenIV-style `RSC7` assets and raw decompressed resources produced
 by older versions of the locator are accepted.
@@ -91,12 +88,13 @@ existing clothing ID and blacklist. The replacement assets and YMT texture
 metadata are retargeted to the selected slot. The previous YDD, YTDs, and YMT
 are backed up before the files are swapped.
 
-Select an indexed `FEET` model and use `YMT SETTINGS...` to choose its shoe sound
-and enable or adjust its heel height from 0 to 3. Saving updates `pedXml_audioID`
-and `pedXml_expressionMods.f4`, then backs up the
-component YMT, and repairs or creates the creature-metadata YMT named by the
-addon's SHOP_PED_APPAREL metadata. Both files are required for GTA to apply the
-offset. Prop hair scaling/cutting is not exposed until prop import is supported.
+Select any indexed custom item and use `YMT SETTINGS...` to edit the audio and
+drawable/prop flags supported by grzyClothTool. Props also expose their render
+mode. `FEET` can enable or adjust heel height from 0 to 3; `P_HEAD` can enable
+Cut/Scale Hair from 0 to 1. Saving backs up the component YMT and, for heels or
+head props, repairs or creates the creature-metadata YMT named by the addon's
+SHOP_PED_APPAREL metadata. Hair must be rigged to `MH_Hair_Scale` for the hat
+setting to affect it; 1.0 fully hides compatible hair.
 
 Select an indexed custom model and use `ADD TO OUTFIT`. The outfit keeps one
 item per GTA clothing/prop slot, so adding another item in the same slot replaces

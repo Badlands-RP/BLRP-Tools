@@ -39,6 +39,12 @@ internal sealed record ClothingImportPlan(
 internal sealed record ClothingTextureImportResult(string TexturePath, int TextureCount, string Compression);
 internal sealed record ClothingMetadataUpdateResult(string BackupDirectory, string CreatureMetadataPath);
 internal sealed record ShoeSettings(float HeelHeight, string ShoeSound);
+internal sealed record YmtSettings(string Audio, uint Flags, string RenderFlag, float HeelHeight, float HairScale);
+internal sealed record YmtSettingsUpdateResult(string BackupDirectory, string? CreatureMetadataPath);
+internal sealed record YmtFlagOption(uint Value, string Name)
+{
+    public override string ToString() => Name;
+}
 internal sealed record ClothingModelQuality(
     string Summary,
     string Details,
@@ -70,6 +76,17 @@ internal static class ClothingImporter
         "shoe_gold_shoes",
         "shoe_silent"
     });
+    public static IReadOnlyList<string> PropRenderFlags { get; } = ["PRF_ALPHA", "PRF_DECAL", "PRF_CUTOUT"];
+    public static IReadOnlyList<YmtFlagOption> DrawableFlags { get; } =
+    [
+        new(1, "BULKY"), new(2, "JOB"), new(4, "SUNNY"), new(8, "WET"), new(16, "COLD"),
+        new(32, "NOT IN CAR"), new(64, "BIKE ONLY"), new(128, "NOT INDOORS"),
+        new(256, "FIRE RETARDANT"), new(512, "ARMOURED"), new(1024, "LIGHTLY ARMOURED"),
+        new(2048, "HIGH DETAIL"), new(4096, "DEFAULT HELMET"), new(8192, "RANDOM HELMET"),
+        new(16384, "SCRIPT HELMET"), new(32768, "FLIGHT HELMET"), new(65536, "HIDE IN FIRST PERSON"),
+        new(131072, "USE PHYSICS HAT 2"), new(262144, "PILOT HELMET"),
+        new(524288, "WET MORE"), new(1048576, "WET LESS")
+    ];
 
     internal static string DumpYmtXml(string path) => MetaXml.GetXml(LoadPedFile(path).Meta);
 
@@ -550,15 +567,156 @@ internal static class ClothingImporter
         {
             throw new InvalidOperationException("Heel height is only available for the FEET component.");
         }
+        YmtSettings settings = GetYmtSettings(rootPath, target);
+        return new ShoeSettings(settings.HeelHeight, settings.Audio);
+    }
+
+    public static IReadOnlyList<string> GetAudioOptions(ComponentDefinition component) => component.IsProp
+        ? ["none"]
+        : component.Code switch
+        {
+            "berd" => ["none", "cloth_scuba"],
+            "uppr" =>
+            [
+                "none", "cloth_default", "cloth_upper_bare", "cloth_upper_sweater", "cloth_upper_shirt_tee",
+                "cloth_upper_shirt_cotton_lite", "cloth_upper_shirt_cotton_heavy", "cloth_upper_jacket_cotton",
+                "cloth_upper_jacket_puffy", "cloth_upper_jacket_leather", "cloth_upper_jacket_suit",
+                "cloth_upper_bikini_top", "cloth_upper_spacesuit", "cloth_upper_alien",
+                "cloth_upper_coat_scientist", "cloth_upper_cop_vest_helmet"
+            ],
+            "lowr" =>
+            [
+                "none", "cloth_default", "cloth_lower_cotton", "cloth_lower_leather", "cloth_lower_shorts",
+                "cloth_lower_pants_leather", "cloth_lower_pants_denim", "cloth_lower_pants_suit",
+                "cloth_lower_pants_tight", "cloth_lower_skirt_short", "cloth_lower_skirt_long",
+                "cloth_lower_waterproof", "cloth_lower_bare", "cloth_lower_ballistic_armour",
+                "cloth_lower_extreme", "cloth_lower_swat", "cloth_lower_fireman", "cloth_lower_fireman_lower"
+            ],
+            "hand" => ["none", "cloth_rappel_parachute", "cloth_heavy_bag"],
+            "feet" => ShoeSounds,
+            "accs" =>
+            [
+                "none", "cloth_default", "cloth_upper_shirt_tee", "cloth_upper_cotton",
+                "cloth_upper_shirt_cotton_lite", "cloth_upper_jacket_puffy", "cloth_upper_jacket_suit",
+                "cloth_upper_ballistic_armour", "cloth_upper_bikini_top", "cloth_upper_cop_vest",
+                "cloth_scuba", "cloth_cop_belt", "cloth_gas_mask"
+            ],
+            "task" => ["none", "cloth_ballistic", "cloth_backpack", "cloth_tool_belt"],
+            "jbib" =>
+            [
+                "none", "cloth_default", "cloth_upper_bare", "cloth_upper_leather", "cloth_upper_sweater",
+                "cloth_upper_cotton", "cloth_upper_shirt_tee", "cloth_upper_shirt_cotton_lite",
+                "cloth_upper_shirt_cotton_heavy", "cloth_upper_shirt_leather", "cloth_upper_jacket_cotton",
+                "cloth_upper_jacket_puffy", "cloth_upper_jacket_leather", "cloth_upper_jacket_suit",
+                "cloth_upper_bikini_top", "cloth_upper_waterproof", "cloth_upper_ballistic_armour",
+                "cloth_upper_spacesuit", "cloth_upper_swat", "cloth_upper_fireman", "cloth_upper_kifflom",
+                "cloth_upper_alien"
+            ],
+            _ => ["none"]
+        };
+
+    public static YmtSettings GetYmtSettings(string rootPath, ClothingEntry target)
+    {
         PedFile ped = LoadPedFile(GetYmtPath(rootPath, target));
+        if (target.Component.IsProp)
+        {
+            MCPedPropMetaData prop = ped.VariationInfo?.PropInfo?.PropMetaData?.FirstOrDefault(item =>
+                item.Data.anchorId == target.Component.Slot && item.Data.propId == target.RelativeIndex)
+                ?? throw new InvalidDataException("The selected prop has no matching YMT entry.");
+            uint audioHash = prop.Data.audioId;
+            return new YmtSettings(
+                ResolveAudio(audioHash, target.Component),
+                prop.Data.propFlags,
+                GetPropRenderFlag(ped, target.Component.Slot, target.RelativeIndex),
+                0,
+                target.Component.Code == "p_head" ? GetPropHairScale(ped, target.Component.Slot, target.RelativeIndex) : 0);
+        }
+
+        _ = GetDrawables(ped, target.Component.Slot)?.ElementAtOrDefault(target.RelativeIndex)
+            ?? throw new InvalidDataException("The selected component has no matching YMT drawable entry.");
         MCComponentInfo? info = ped.VariationInfo?.CompInfos?.FirstOrDefault(item =>
-            item.Data.pedXml_compIdx == target.Component.Slot &&
-            item.Data.pedXml_drawblIdx == target.RelativeIndex);
-        if (info is null) return new ShoeSettings(0, "none");
-        uint soundHash = info.Data.pedXml_audioID;
-        string sound = ShoeSounds.FirstOrDefault(name => JenkHash.GenHash(name) == soundHash)
-            ?? $"0x{soundHash:X8}";
-        return new ShoeSettings(info.Data.pedXml_expressionMods.f4, sound);
+            item.Data.pedXml_compIdx == target.Component.Slot && item.Data.pedXml_drawblIdx == target.RelativeIndex);
+        uint componentAudio = info?.Data.pedXml_audioID ?? 0;
+        return new YmtSettings(
+            ResolveAudio(componentAudio, target.Component),
+            info?.Data.flags ?? 0,
+            "PRF_ALPHA",
+            target.Component.Code == "feet" ? info?.Data.pedXml_expressionMods.f4 ?? 0 : 0,
+            0);
+    }
+
+    public static YmtSettingsUpdateResult SetYmtSettings(
+        string rootPath,
+        ClothingEntry target,
+        YmtSettings settings)
+    {
+        if (!float.IsFinite(settings.HeelHeight) || settings.HeelHeight < 0 || settings.HeelHeight > 3)
+            throw new ArgumentOutOfRangeException(nameof(settings), "Heel height must be between 0 and 3.");
+        if (!float.IsFinite(settings.HairScale) || settings.HairScale < 0 || settings.HairScale > 1)
+            throw new ArgumentOutOfRangeException(nameof(settings), "Hair scale must be between 0 and 1.");
+        if (target.Component.IsProp && !PropRenderFlags.Contains(settings.RenderFlag, StringComparer.Ordinal))
+            throw new ArgumentException("Select a valid prop render flag.", nameof(settings));
+
+        string fullRoot = Path.GetFullPath(rootPath);
+        string ymtPath = GetYmtPath(fullRoot, target);
+        PedFile ped = LoadPedFile(ymtPath);
+        uint audioHash = ParseAudio(settings.Audio);
+        byte[] ymtBytes = target.Component.IsProp
+            ? UpdatePropSettingsXml(ped, target.Component.Slot, target.RelativeIndex, audioHash, settings)
+            : UpdateComponentSettings(
+                ped,
+                GetCollectionName(target.Gender, target.Pack),
+                Path.Combine(Path.GetDirectoryName(ymtPath)!, GetCollectionName(target.Gender, target.Pack)),
+                target.Component.Slot,
+                target.RelativeIndex,
+                target.Component.Code == "feet" ? settings.HeelHeight : null,
+                audioHash,
+                settings.Flags);
+
+        (string Path, byte[] Bytes)? creatureMetadata = target.Component.Code is "feet" or "p_head"
+            ? BuildCreatureMetadata(
+                fullRoot,
+                target.Gender,
+                target.Pack,
+                ymtPath,
+                target.Component.Code == "feet" ? target.RelativeIndex : -1,
+                target.Component.Code == "feet" ? settings.HeelHeight : 0,
+                target.Component.Code == "p_head" ? target.RelativeIndex : -1,
+                target.Component.Code == "p_head" ? settings.HairScale : 0)
+            : null;
+
+        string backupRoot = Path.Combine(fullRoot, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
+        Directory.CreateDirectory(backupRoot);
+        string ymtBackup = Path.Combine(backupRoot, Path.GetFileName(ymtPath));
+        File.Copy(ymtPath, ymtBackup, false);
+        bool creatureExisted = creatureMetadata is { } creature && File.Exists(creature.Path);
+        string? creatureBackup = creatureMetadata is { } creatureToBackUp
+            ? Path.Combine(backupRoot, Path.GetFileName(creatureToBackUp.Path))
+            : null;
+        if (creatureExisted) File.Copy(creatureMetadata!.Value.Path, creatureBackup!, false);
+
+        string temporaryYmt = ymtPath + ".blrp-metadata";
+        string? temporaryCreature = creatureMetadata?.Path + ".blrp-metadata";
+        try
+        {
+            File.WriteAllBytes(temporaryYmt, ymtBytes);
+            if (creatureMetadata is { } updatedCreature) File.WriteAllBytes(temporaryCreature!, updatedCreature.Bytes);
+            File.Move(temporaryYmt, ymtPath, true);
+            if (creatureMetadata is { } writtenCreature) File.Move(temporaryCreature!, writtenCreature.Path, true);
+            return new YmtSettingsUpdateResult(backupRoot, creatureMetadata?.Path);
+        }
+        catch
+        {
+            if (File.Exists(temporaryYmt)) File.Delete(temporaryYmt);
+            if (temporaryCreature != null && File.Exists(temporaryCreature)) File.Delete(temporaryCreature);
+            File.Copy(ymtBackup, ymtPath, true);
+            if (creatureMetadata is { } failedCreature)
+            {
+                if (creatureExisted) File.Copy(creatureBackup!, failedCreature.Path, true);
+                else if (File.Exists(failedCreature.Path)) File.Delete(failedCreature.Path);
+            }
+            throw;
+        }
     }
 
     public static ClothingMetadataUpdateResult SetShoeSettings(
@@ -575,70 +733,12 @@ internal static class ClothingImporter
         {
             throw new ArgumentOutOfRangeException(nameof(heelHeight), "Heel height must be between 0 and 3.");
         }
-        uint shoeSoundHash = ShoeSounds.Contains(shoeSound, StringComparer.OrdinalIgnoreCase)
-            ? JenkHash.GenHash(shoeSound.ToLowerInvariant())
-            : shoeSound.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
-              uint.TryParse(shoeSound[2..], System.Globalization.NumberStyles.HexNumber, null, out uint existingHash)
-                ? existingHash
-                : throw new ArgumentException("Select a valid shoe sound.", nameof(shoeSound));
-
-        string fullRoot = Path.GetFullPath(rootPath);
-        string ymtPath = GetYmtPath(fullRoot, target);
-        PedFile ped = LoadPedFile(ymtPath);
-        _ = GetDrawables(ped, target.Component.Slot)?.ElementAtOrDefault(target.RelativeIndex)
-            ?? throw new InvalidDataException("The selected model has no matching YMT drawable entry.");
-        byte[] ymtBytes = UpdateComponentShoeSettings(
-            ped,
-            GetCollectionName(target.Gender, target.Pack),
-            Path.Combine(Path.GetDirectoryName(ymtPath)!, GetCollectionName(target.Gender, target.Pack)),
-            target.Component.Slot,
-            target.RelativeIndex,
-            heelHeight,
-            shoeSoundHash);
-        (string creaturePath, byte[] creatureBytes) = BuildCreatureMetadata(
-            fullRoot,
-            target.Gender,
-            target.Pack,
-            ymtPath,
-            target.RelativeIndex,
-            heelHeight);
-
-        string backupRoot = Path.Combine(fullRoot, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
-        Directory.CreateDirectory(backupRoot);
-        string ymtBackup = Path.Combine(backupRoot, Path.GetFileName(ymtPath));
-        File.Copy(ymtPath, ymtBackup, false);
-        bool creatureExisted = File.Exists(creaturePath);
-        string creatureBackup = Path.Combine(backupRoot, Path.GetFileName(creaturePath));
-        if (creatureExisted)
-        {
-            File.Copy(creaturePath, creatureBackup, false);
-        }
-
-        string temporaryYmt = ymtPath + ".blrp-metadata";
-        string temporaryCreature = creaturePath + ".blrp-metadata";
-        try
-        {
-            File.WriteAllBytes(temporaryYmt, ymtBytes);
-            File.WriteAllBytes(temporaryCreature, creatureBytes);
-            File.Move(temporaryYmt, ymtPath, true);
-            File.Move(temporaryCreature, creaturePath, true);
-            return new ClothingMetadataUpdateResult(backupRoot, creaturePath);
-        }
-        catch
-        {
-            if (File.Exists(temporaryYmt)) File.Delete(temporaryYmt);
-            if (File.Exists(temporaryCreature)) File.Delete(temporaryCreature);
-            File.Copy(ymtBackup, ymtPath, true);
-            if (creatureExisted)
-            {
-                File.Copy(creatureBackup, creaturePath, true);
-            }
-            else if (File.Exists(creaturePath))
-            {
-                File.Delete(creaturePath);
-            }
-            throw;
-        }
+        YmtSettings current = GetYmtSettings(rootPath, target);
+        YmtSettingsUpdateResult result = SetYmtSettings(
+            rootPath,
+            target,
+            current with { HeelHeight = heelHeight, Audio = shoeSound });
+        return new ClothingMetadataUpdateResult(result.BackupDirectory, result.CreatureMetadataPath!);
     }
 
     public static ClothingMetadataUpdateResult RepairHeelMetadata(string rootPath, Gender gender, int pack)
@@ -868,6 +968,21 @@ internal static class ClothingImporter
             importedTextures is [var importedTexture] &&
             importedTexture.Name.Equals(importedTextureName, StringComparison.OrdinalIgnoreCase) &&
             importedTexture.NameHash == JenkHash.GenHash(importedTextureName.ToLowerInvariant());
+
+        MCComponentInfo? componentSettingsInfoBefore = textureUpdatedPed.VariationInfo?.CompInfos?.FirstOrDefault(info =>
+            info.Data.pedXml_compIdx == component.Slot && info.Data.pedXml_drawblIdx == plan.PackDrawableIndex);
+        const uint expectedComponentFlags = 2048 | 65536;
+        SetYmtSettings(
+            fixtureRoot,
+            importedEntry,
+            new YmtSettings("cloth_upper_jacket_leather", expectedComponentFlags, "PRF_ALPHA", 0, 0));
+        YmtSettings savedComponentSettings = GetYmtSettings(fixtureRoot, importedEntry);
+        MCComponentInfo? componentSettingsInfoAfter = LoadPedFile(plan.YmtPath).VariationInfo?.CompInfos?.FirstOrDefault(info =>
+            info.Data.pedXml_compIdx == component.Slot && info.Data.pedXml_drawblIdx == plan.PackDrawableIndex);
+        bool componentSettingsValid = savedComponentSettings.Audio == "cloth_upper_jacket_leather" &&
+            savedComponentSettings.Flags == expectedComponentFlags &&
+            componentSettingsInfoAfter?.Data.pedXml_expressionMods.f4 ==
+                componentSettingsInfoBefore?.Data.pedXml_expressionMods.f4;
 
         string rawSourceDirectory = Path.Combine(fixtureRoot, "raw-source");
         Directory.CreateDirectory(rawSourceDirectory);
@@ -1228,18 +1343,73 @@ internal static class ClothingImporter
                 $"diffuse '{string.Join("|", importedPropDrawable == null ? [] : GetDiffuseTextures(importedPropDrawable).Select(texture => texture.Name))}' expected '{propTextureName}'.");
         }
 
+        var importedPropEntry = new ClothingEntry(
+            propModelTarget,
+            new FileInfo(propModelTarget).Length,
+            propPlan.Gender,
+            propComponent,
+            propPlan.Pack,
+            propPlan.PackDrawableIndex,
+            propPlan.TextureFileNames.Count);
+        string propShopMetaSource = Path.Combine(sourceRoot, "clothing_addon_1", propPedCollection + ".meta");
+        string propShopMetaTarget = Path.Combine(fixtureRoot, "clothing_addon_1", propPedCollection + ".meta");
+        File.Copy(propShopMetaSource, propShopMetaTarget, true);
+        string propCreatureName = ReadCreatureReference(propShopMetaSource) + ".ymt";
+        File.Copy(
+            Path.Combine(sourceRoot, "clothing_addon_1", "stream", propCreatureName),
+            Path.Combine(fixtureRoot, "clothing_addon_1", "stream", propCreatureName),
+            true);
+        string otherPropsBeforeSettings = PropMetadataXml(propImportPed, propComponent.Slot, propPlan.PackDrawableIndex);
+        const uint expectedPropFlags = 4096 | 65536;
+        YmtSettingsUpdateResult propSettingsUpdate = SetYmtSettings(
+            fixtureRoot,
+            importedPropEntry,
+            new YmtSettings("none", expectedPropFlags, "PRF_CUTOUT", 0, 0.75f));
+        PedFile propSettingsPed = LoadPedFile(propPlan.YmtPath);
+        YmtSettings savedPropSettings = GetYmtSettings(fixtureRoot, importedPropEntry);
+        MCPedPropMetaData? settingsProp = propSettingsPed.VariationInfo?.PropInfo?.PropMetaData?
+            .FirstOrDefault(item => item.Data.anchorId == propComponent.Slot && item.Data.propId == propPlan.PackDrawableIndex);
+        var propCreatureMetadata = new RbfFile();
+        propCreatureMetadata.Load(File.ReadAllBytes(propSettingsUpdate.CreatureMetadataPath!));
+        XElement[] propCreatureItems = XDocument.Parse(RbfXml.GetXml(propCreatureMetadata)).Root?
+            .Element("pedPropExpressions")?.Elements("Item").ToArray() ?? [];
+        bool propSettingsValid =
+            savedPropSettings.Audio == "none" &&
+            savedPropSettings.Flags == expectedPropFlags &&
+            savedPropSettings.RenderFlag == "PRF_CUTOUT" &&
+            Math.Abs(savedPropSettings.HairScale - 0.75f) < 0.0001f &&
+            settingsProp?.Data.propId == propPlan.PackDrawableIndex &&
+            PropMetadataXml(propSettingsPed, propComponent.Slot, propPlan.PackDrawableIndex) == otherPropsBeforeSettings &&
+            propCreatureItems.Any(item => ReadHexValue(item.Element("pedPropVarIndex")) == -1) &&
+            propCreatureItems.Any(item =>
+                ReadHexValue(item.Element("pedPropID")) == 0 &&
+                ReadHexValue(item.Element("pedPropVarIndex")) == propPlan.PackDrawableIndex &&
+                ReadHexValue(item.Element("pedPropExpressionIndex")) == 0) &&
+            File.Exists(Path.Combine(propSettingsUpdate.BackupDirectory, Path.GetFileName(propPlan.YmtPath)));
+        if (!propSettingsValid)
+        {
+            throw new InvalidDataException(
+                $"Prop settings verification failed: ID {settingsProp?.Data.propId}/{propPlan.PackDrawableIndex}, " +
+                $"audio '{savedPropSettings.Audio}', flags {savedPropSettings.Flags}/{expectedPropFlags}, " +
+                $"render '{savedPropSettings.RenderFlag}', hair {savedPropSettings.HairScale}, " +
+                $"other props preserved {PropMetadataXml(propSettingsPed, propComponent.Slot, propPlan.PackDrawableIndex) == otherPropsBeforeSettings}, " +
+                $"creature items {propCreatureItems.Length}.");
+        }
+
         return countAfter == countBefore + 1 &&
                countAfterRawImport == countAfter + 1 &&
                selectorPlansValid &&
                raceImportValid &&
                heelMetadataValid &&
                textureImportValid &&
+               componentSettingsValid &&
                existingTextureMetadataValid &&
                hairShaderConversionValid &&
                duplicateValid &&
                replacementValid &&
                propTextureImportValid &&
                propImportValid &&
+               propSettingsValid &&
                componentCountsAfter.Where((count, slot) => slot != component.Slot)
                    .SequenceEqual(componentCountsBefore.Where((count, slot) => slot != component.Slot)) &&
                (updatedPed.VariationInfo?.SelectionSets?.Length ?? 0) == selectionCountBefore &&
@@ -1267,6 +1437,15 @@ internal static class ClothingImporter
         document.LoadXml(MetaXml.GetXml(ped.Meta));
         return (document.SelectSingleNode("/CPedVariationInfo/aComponentData3")?.OuterXml ?? string.Empty) +
             (document.SelectSingleNode("/CPedVariationInfo/compInfos")?.OuterXml ?? string.Empty);
+    }
+
+    private static string PropMetadataXml(PedFile ped, int excludedAnchorId, int excludedPropId)
+    {
+        XmlDocument document = new();
+        document.LoadXml(MetaXml.GetXml(ped.Meta));
+        XmlNode? excluded = FindPropXml(document, excludedAnchorId, excludedPropId);
+        excluded?.ParentNode?.RemoveChild(excluded);
+        return document.SelectSingleNode("/CPedVariationInfo/propInfo")?.OuterXml ?? string.Empty;
     }
 
     private static ClothingEntry FindDuplicateSelfTestSource(string sourceRoot)
@@ -1838,14 +2017,15 @@ internal static class ClothingImporter
             textureCount,
             template);
 
-    private static byte[] UpdateComponentShoeSettings(
+    private static byte[] UpdateComponentSettings(
         PedFile ped,
         string collectionName,
         string collectionDirectory,
         int componentId,
         int drawableIndex,
-        float heelHeight,
-        uint shoeSoundHash) => RebuildComponent(
+        float? heelHeight,
+        uint audioHash,
+        uint flags) => RebuildComponent(
             ped,
             collectionName,
             collectionDirectory,
@@ -1859,7 +2039,8 @@ internal static class ClothingImporter
             null,
             drawableIndex,
             heelHeight,
-            shoeSoundHash: shoeSoundHash);
+            componentAudioHash: audioHash,
+            componentFlags: flags);
 
     private static byte[] RebuildComponent(
         PedFile ped,
@@ -1881,7 +2062,8 @@ internal static class ClothingImporter
         int? propAppendId = null,
         int propTextureCount = 0,
         CPedPropMetaData? propTemplate = null,
-        uint? shoeSoundHash = null)
+        uint? componentAudioHash = null,
+        uint? componentFlags = null)
     {
         MCPedVariationInfo source = ped.VariationInfo ?? throw new InvalidDataException("The target YMT has no ped variation data.");
         MCPVComponentData[] sourceComponents = source.ComponentData3 ?? [];
@@ -1986,9 +2168,10 @@ internal static class ClothingImporter
                 pedXml_drawblIdx = checked((byte)componentInfoTargetIndex.Value)
             };
             ArrayOfFloats5 expressionMods = info.pedXml_expressionMods;
-            expressionMods.f4 = heelHeight ?? 0;
+            if (heelHeight is not null) expressionMods.f4 = heelHeight.Value;
             info.pedXml_expressionMods = expressionMods;
-            if (shoeSoundHash is not null) info.pedXml_audioID = shoeSoundHash.Value;
+            if (componentAudioHash is not null) info.pedXml_audioID = componentAudioHash.Value;
+            if (componentFlags is not null) info.flags = componentFlags.Value;
             if (infoIndex >= 0) componentInfos[infoIndex] = info;
             else componentInfos.Add(info);
         }
@@ -2178,6 +2361,79 @@ internal static class ClothingImporter
         }
 
         return XmlMeta.GetRSCData(sourceXml);
+    }
+
+    private static byte[] UpdatePropSettingsXml(
+        PedFile source,
+        int anchorId,
+        int propId,
+        uint audioHash,
+        YmtSettings settings)
+    {
+        XmlDocument document = new();
+        document.LoadXml(MetaXml.GetXml(source.Meta));
+        XmlNode prop = FindPropXml(document, anchorId, propId)
+            ?? throw new InvalidDataException("The selected prop has no matching YMT entry.");
+        XmlElement audio = prop.SelectSingleNode("audioId") as XmlElement
+            ?? throw new InvalidDataException("The prop audio field was not found.");
+        audio.InnerText = audioHash == 0 ? string.Empty : $"hash_{audioHash:X8}";
+        XmlElement expressions = prop.SelectSingleNode("expressionMods") as XmlElement
+            ?? throw new InvalidDataException("The prop expression field was not found.");
+        float hairScale = anchorId == 0 ? settings.HairScale : 0;
+        string[] expressionValues = expressions.InnerText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        string[] preservedExpressions = Enumerable.Range(0, 5)
+            .Select(index => expressionValues.ElementAtOrDefault(index) ?? "0")
+            .ToArray();
+        if (anchorId == 0)
+            preservedExpressions[0] = (-hairScale).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        expressions.InnerText = string.Join(' ', preservedExpressions);
+        XmlElement renderFlags = prop.SelectSingleNode("renderFlags") as XmlElement
+            ?? throw new InvalidDataException("The prop render flag field was not found.");
+        renderFlags.InnerText = settings.RenderFlag == "PRF_ALPHA" ? string.Empty : settings.RenderFlag;
+        XmlElement flags = prop.SelectSingleNode("propFlags") as XmlElement
+            ?? throw new InvalidDataException("The prop flag field was not found.");
+        flags.SetAttribute("value", settings.Flags.ToString());
+        return XmlMeta.GetRSCData(document);
+    }
+
+    private static XmlNode? FindPropXml(XmlDocument document, int anchorId, int propId) =>
+        document.SelectSingleNode(
+            $"/CPedVariationInfo/propInfo/aPropMetaData/Item[anchorId/@value='{anchorId}' and propId/@value='{propId}']");
+
+    private static float GetPropHairScale(PedFile ped, int anchorId, int propId)
+    {
+        XmlDocument document = new();
+        document.LoadXml(MetaXml.GetXml(ped.Meta));
+        XmlNode? prop = FindPropXml(document, anchorId, propId);
+        return prop == null ? 0 : Math.Abs(ReadFirstExpression(prop));
+    }
+
+    private static string GetPropRenderFlag(PedFile ped, int anchorId, int propId)
+    {
+        XmlDocument document = new();
+        document.LoadXml(MetaXml.GetXml(ped.Meta));
+        string value = FindPropXml(document, anchorId, propId)?.SelectSingleNode("renderFlags")?.InnerText.Trim()
+            ?? string.Empty;
+        return value.Length == 0 ? "PRF_ALPHA" : value;
+    }
+
+    private static uint ParseAudio(string audio)
+    {
+        string value = audio.Trim();
+        if (value.Equals("none", StringComparison.OrdinalIgnoreCase) || value.Length == 0) return 0;
+        string hex = value.StartsWith("hash_", StringComparison.OrdinalIgnoreCase) ? value[5..]
+            : value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? value[2..]
+            : string.Empty;
+        if (hex.Length > 0 && uint.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out uint hash))
+            return hash;
+        return JenkHash.GenHash(value.ToLowerInvariant());
+    }
+
+    private static string ResolveAudio(uint hash, ComponentDefinition component)
+    {
+        if (hash == 0) return "none";
+        string? known = GetAudioOptions(component).FirstOrDefault(name => JenkHash.GenHash(name) == hash);
+        return known ?? $"0x{hash:X8}";
     }
 
     private static byte[] MergeComponentXml(
@@ -2631,7 +2887,9 @@ internal static class ClothingImporter
         int pack,
         string? updatedYmtPath = null,
         int updatedRelativeIndex = -1,
-        float updatedHeelHeight = 0)
+        float updatedHeelHeight = 0,
+        int updatedPropIndex = -1,
+        float updatedHairScale = 0)
     {
         string addonRoot = Path.Combine(rootPath, $"clothing_addon_{pack}");
         string streamRoot = Path.Combine(addonRoot, "stream");
@@ -2645,6 +2903,8 @@ internal static class ClothingImporter
         string creatureReference = ReadCreatureReference(shopMetaPath);
         string creaturePath = Path.Combine(streamRoot, creatureReference + ".ymt");
         var heelIndices = new SortedSet<int>();
+        var hatIndices = new SortedSet<int>();
+        bool hasHairScale = false;
         foreach (string metaPath in Directory.EnumerateFiles(addonRoot, "*.meta", SearchOption.TopDirectoryOnly))
         {
             string reference;
@@ -2661,19 +2921,33 @@ internal static class ClothingImporter
             string ymtPath = Path.Combine(streamRoot, Path.GetFileNameWithoutExtension(metaPath) + ".ymt");
             if (!File.Exists(ymtPath)) continue;
             PedFile ped = LoadPedFile(ymtPath);
+            bool isUpdatedYmt = updatedYmtPath != null &&
+                Path.GetFullPath(ymtPath).Equals(Path.GetFullPath(updatedYmtPath), StringComparison.OrdinalIgnoreCase);
             foreach (MCComponentInfo info in ped.VariationInfo?.CompInfos ?? [])
             {
                 if (info.Data.pedXml_compIdx != 6) continue;
-                float height = updatedYmtPath != null &&
-                    Path.GetFullPath(ymtPath).Equals(Path.GetFullPath(updatedYmtPath), StringComparison.OrdinalIgnoreCase) &&
-                    info.Data.pedXml_drawblIdx == updatedRelativeIndex
+                float height = isUpdatedYmt && info.Data.pedXml_drawblIdx == updatedRelativeIndex
                         ? updatedHeelHeight
                         : info.Data.pedXml_expressionMods.f4;
                 if (height != 0) heelIndices.Add(info.Data.pedXml_drawblIdx);
             }
+
+            XmlDocument ymtXml = new();
+            ymtXml.LoadXml(MetaXml.GetXml(ped.Meta));
+            foreach (XmlNode prop in ymtXml.SelectNodes(
+                         "/CPedVariationInfo/propInfo/aPropMetaData/Item[anchorId/@value='0']")?.Cast<XmlNode>() ?? [])
+            {
+                if (!int.TryParse((prop.SelectSingleNode("propId") as XmlElement)?.GetAttribute("value"), out int propIndex))
+                    continue;
+                hatIndices.Add(propIndex);
+                float hairScale = isUpdatedYmt && propIndex == updatedPropIndex
+                    ? updatedHairScale
+                    : ReadFirstExpression(prop);
+                hasHairScale |= hairScale != 0;
+            }
         }
 
-        XElement? propExpressions = null;
+        XElement[] preservedPropExpressions = [];
         string? existingCreaturePath = File.Exists(creaturePath)
             ? creaturePath
             : Directory.EnumerateFiles(streamRoot, "*creaturemetadata*.ymt")
@@ -2684,7 +2958,11 @@ internal static class ClothingImporter
         {
             var existing = new RbfFile();
             existing.Load(File.ReadAllBytes(existingCreaturePath));
-            propExpressions = XDocument.Parse(RbfXml.GetXml(existing)).Root?.Element("pedPropExpressions");
+            preservedPropExpressions = XDocument.Parse(RbfXml.GetXml(existing)).Root?
+                .Element("pedPropExpressions")?.Elements("Item")
+                .Where(item => ReadHexValue(item.Element("pedPropID")) != 0)
+                .Select(item => new XElement(item))
+                .ToArray() ?? [];
         }
 
         var componentExpressions = new XElement("pedCompExpressions",
@@ -2696,9 +2974,15 @@ internal static class ClothingImporter
                 new XElement("ids", new XAttribute("content", "short_array"), 28462),
                 new XElement("types", new XAttribute("content", "char_array"), 2),
                 new XElement("components", new XAttribute("content", "char_array"), 1))));
-        var document = new XDocument(new XElement("CCreatureMetaData",
-            componentExpressions,
-            propExpressions == null ? new XElement("pedPropExpressions") : new XElement(propExpressions)));
+        var propExpressions = new XElement("pedPropExpressions");
+        if (hasHairScale)
+        {
+            propExpressions.Add(CreateCreaturePropExpression(-1));
+            foreach (int index in hatIndices) propExpressions.Add(CreateCreaturePropExpression(index));
+        }
+        propExpressions.Add(preservedPropExpressions);
+
+        var document = new XDocument(new XElement("CCreatureMetaData", componentExpressions, propExpressions));
         var xmlDocument = new XmlDocument();
         using (XmlReader reader = document.CreateReader())
         {
@@ -2706,6 +2990,38 @@ internal static class ClothingImporter
         }
         return (creaturePath, XmlRbf.GetRbf(xmlDocument).Save());
     }
+
+    private static float ReadFirstExpression(XmlNode prop)
+    {
+        string first = (prop.SelectSingleNode("expressionMods")?.InnerText ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault() ?? "0";
+        return float.TryParse(
+            first,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out float value)
+                ? value
+                : 0;
+    }
+
+    private static int ReadHexValue(XElement? element)
+    {
+        string value = element?.Attribute("value")?.Value ?? "0";
+        if (value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+            uint.TryParse(value[2..], System.Globalization.NumberStyles.HexNumber, null, out uint hex))
+            return unchecked((int)hex);
+        return int.TryParse(value, out int number) ? number : 0;
+    }
+
+    private static XElement CreateCreaturePropExpression(int index) => new("Item",
+        new XElement("pedPropID", new XAttribute("value", "0x0")),
+        new XElement("pedPropVarIndex", new XAttribute("value", $"0x{unchecked((uint)index):X}")),
+        new XElement("pedPropExpressionIndex", new XAttribute("value", index < 0 ? "0xFFFFFFFF" : "0x0")),
+        new XElement("tracks", new XAttribute("content", "char_array"), 33),
+        new XElement("ids", new XAttribute("content", "short_array"), 13201),
+        new XElement("types", new XAttribute("content", "char_array"), 2),
+        new XElement("components", new XAttribute("content", "char_array"), 1));
 
     private static string ReadCreatureReference(string shopMetaPath)
     {

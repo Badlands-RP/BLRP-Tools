@@ -1060,16 +1060,16 @@ internal sealed class MainForm : Form
     private async Task EditYmtSettingsAsync()
     {
         if (_catalog == null || _results.SelectedRows.Count != 1 ||
-            _results.SelectedRows[0].Tag is not ClothingEntry { Component.Code: "feet" } target)
+            _results.SelectedRows[0].Tag is not ClothingEntry target || !File.Exists(target.FilePath))
         {
-            ShowError("Select a custom FEET model first.");
+            ShowError("Select a custom clothing model first.");
             return;
         }
 
-        ShoeSettings currentSettings;
+        YmtSettings currentSettings;
         try
         {
-            currentSettings = await Task.Run(() => ClothingImporter.GetShoeSettings(_catalog.RootPath, target));
+            currentSettings = await Task.Run(() => ClothingImporter.GetYmtSettings(_catalog.RootPath, target));
         }
         catch (Exception exception)
         {
@@ -1085,63 +1085,129 @@ internal sealed class MainForm : Form
             MaximizeBox = false,
             MinimizeBox = false,
             ShowInTaskbar = false,
-            ClientSize = new Size(620, 285),
+            ClientSize = new Size(720, target.Component.Code is "feet" or "p_head" ? 610 : 520),
             BackColor = BackgroundTop,
             ForeColor = TextPrimary,
             Font = PickMonoFont(9F),
             Padding = new Padding(20)
         };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 245));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
-        var heading = CreateLabel("SHOE / HEEL SETTINGS", 13, TextPrimary, FontStyle.Bold);
-        layout.Controls.Add(heading, 0, 0);
+        int row = 0;
+
+        var heading = CreateLabel(
+            $"YMT SETTINGS / {target.Component.Code.ToUpperInvariant()}",
+            13,
+            TextPrimary,
+            FontStyle.Bold);
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+        layout.Controls.Add(heading, 0, row);
         layout.SetColumnSpan(heading, 2);
-        var enabled = new CheckBox
+        row++;
+
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.Controls.Add(CreateLabel("AUDIO", 9, TextPrimary, FontStyle.Bold), 0, row);
+        ComboBox audio = CreateComboBox();
+        audio.Dock = DockStyle.Fill;
+        audio.Items.AddRange(ClothingImporter.GetAudioOptions(target.Component).Cast<object>().ToArray());
+        if (!audio.Items.Cast<string>().Contains(currentSettings.Audio, StringComparer.OrdinalIgnoreCase))
         {
-            Text = "ENABLE HEEL HEIGHT",
-            Checked = currentSettings.HeelHeight != 0,
-            ForeColor = TextPrimary,
-            Dock = DockStyle.Fill,
-            FlatStyle = FlatStyle.Flat
-        };
-        layout.Controls.Add(enabled, 0, 1);
-        var height = new NumericUpDown
+            audio.Items.Insert(0, currentSettings.Audio);
+        }
+        audio.SelectedItem = currentSettings.Audio;
+        layout.Controls.Add(audio, 1, row);
+        row++;
+
+        ComboBox? renderFlag = null;
+        if (target.Component.IsProp)
         {
-            DecimalPlaces = 2,
-            Increment = 0.1M,
-            Minimum = 0,
-            Maximum = 3,
-            Value = currentSettings.HeelHeight == 0 ? 1 : Math.Clamp((decimal)currentSettings.HeelHeight, 0, 3),
-            Enabled = enabled.Checked,
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            layout.Controls.Add(CreateLabel("RENDER FLAG", 9, TextPrimary, FontStyle.Bold), 0, row);
+            renderFlag = CreateComboBox();
+            renderFlag.Dock = DockStyle.Fill;
+            renderFlag.Items.AddRange(ClothingImporter.PropRenderFlags.Cast<object>().ToArray());
+            renderFlag.SelectedItem = currentSettings.RenderFlag;
+            if (renderFlag.SelectedIndex < 0) renderFlag.SelectedIndex = 0;
+            layout.Controls.Add(renderFlag, 1, row);
+            row++;
+        }
+
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        layout.Controls.Add(CreateLabel(
+            target.Component.IsProp ? "PROP FLAGS" : "DRAWABLE FLAGS",
+            9,
+            TextPrimary,
+            FontStyle.Bold), 0, row);
+        layout.SetColumnSpan(layout.GetControlFromPosition(0, row)!, 2);
+        row++;
+
+        var flags = new CheckedListBox
+        {
             BackColor = InputBackground,
             ForeColor = TextPrimary,
-            Dock = DockStyle.Fill
+            BorderStyle = BorderStyle.FixedSingle,
+            CheckOnClick = true,
+            MultiColumn = true,
+            ColumnWidth = 215,
+            Dock = DockStyle.Fill,
+            Font = PickMonoFont(8.5F)
         };
-        layout.Controls.Add(height, 1, 1);
-        layout.Controls.Add(CreateLabel("SHOE SOUND", 9, TextPrimary, FontStyle.Bold), 0, 2);
-        ComboBox sound = CreateComboBox();
-        sound.Dock = DockStyle.Fill;
-        sound.Items.AddRange(ClothingImporter.ShoeSounds.Cast<object>().ToArray());
-        if (!sound.Items.Cast<string>().Contains(currentSettings.ShoeSound, StringComparer.OrdinalIgnoreCase))
+        foreach (YmtFlagOption option in ClothingImporter.DrawableFlags)
         {
-            sound.Items.Insert(0, currentSettings.ShoeSound);
+            flags.Items.Add(option, (currentSettings.Flags & option.Value) != 0);
         }
-        sound.SelectedItem = currentSettings.ShoeSound;
-        layout.Controls.Add(sound, 1, 2);
-        var hint = CreateLabel(
-            "Saving updates shoe audio in the clothing YMT and repairs the heel-height creature metadata required by GTA.",
-            8,
-            TextMuted);
-        layout.Controls.Add(hint, 0, 3);
-        layout.SetColumnSpan(hint, 2);
-        enabled.CheckedChanged += (_, _) => height.Enabled = enabled.Checked;
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 185));
+        layout.Controls.Add(flags, 0, row);
+        layout.SetColumnSpan(flags, 2);
+        row++;
+
+        CheckBox? specialEnabled = null;
+        NumericUpDown? specialValue = null;
+        if (target.Component.Code is "feet" or "p_head")
+        {
+            bool isHeel = target.Component.Code == "feet";
+            float currentValue = isHeel ? currentSettings.HeelHeight : currentSettings.HairScale;
+            specialEnabled = new CheckBox
+            {
+                Text = isHeel ? "ENABLE HEEL HEIGHT" : "CUT / SCALE HAIR",
+                Checked = currentValue != 0,
+                ForeColor = TextPrimary,
+                Dock = DockStyle.Fill,
+                FlatStyle = FlatStyle.Flat
+            };
+            specialValue = new NumericUpDown
+            {
+                DecimalPlaces = 2,
+                Increment = isHeel ? 0.1M : 0.05M,
+                Minimum = 0,
+                Maximum = isHeel ? 3 : 1,
+                Value = currentValue == 0
+                    ? (isHeel ? 1 : 0.5M)
+                    : Math.Clamp((decimal)currentValue, 0, isHeel ? 3 : 1),
+                Enabled = specialEnabled.Checked,
+                BackColor = InputBackground,
+                ForeColor = TextPrimary,
+                Dock = DockStyle.Fill
+            };
+            specialEnabled.CheckedChanged += (_, _) => specialValue.Enabled = specialEnabled.Checked;
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            layout.Controls.Add(specialEnabled, 0, row);
+            layout.Controls.Add(specialValue, 1, row);
+            row++;
+
+            string hintText = isHeel
+                ? "Updates the shoe expression and the creature metadata GTA needs for heel height."
+                : "1.00 fully hides compatible hair. Hair must be rigged to MH_Hair_Scale; creature metadata is updated automatically.";
+            var hint = CreateLabel(hintText, 8, TextMuted);
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+            layout.Controls.Add(hint, 0, row);
+            layout.SetColumnSpan(hint, 2);
+            row++;
+        }
+
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        row++;
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         Button save = CreateButton("SAVE", (_, _) => dialog.DialogResult = DialogResult.OK, true);
@@ -1150,7 +1216,8 @@ internal sealed class MainForm : Form
         cancel.Width = 120;
         buttons.Controls.Add(save);
         buttons.Controls.Add(cancel);
-        layout.Controls.Add(buttons, 0, 5);
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.Controls.Add(buttons, 0, row);
         layout.SetColumnSpan(buttons, 2);
         dialog.Controls.Add(layout);
         dialog.AcceptButton = save;
@@ -1158,16 +1225,28 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         int globalIndex = _catalog.GetGlobalIndex(target, target.Component.DefaultOffset(target.Gender));
+        uint knownFlags = ClothingImporter.DrawableFlags.Aggregate(0U, (mask, option) => mask | option.Value);
+        uint updatedFlags = currentSettings.Flags & ~knownFlags;
+        foreach (YmtFlagOption option in flags.CheckedItems.Cast<YmtFlagOption>()) updatedFlags |= option.Value;
+        float updatedHeelHeight = target.Component.Code == "feet" && specialEnabled!.Checked
+            ? (float)specialValue!.Value
+            : 0;
+        float updatedHairScale = target.Component.Code == "p_head" && specialEnabled!.Checked
+            ? (float)specialValue!.Value
+            : 0;
+        var updatedSettings = new YmtSettings(
+            (string)audio.SelectedItem!,
+            updatedFlags,
+            renderFlag?.SelectedItem as string ?? currentSettings.RenderFlag,
+            updatedHeelHeight,
+            updatedHairScale);
         try
         {
-            SetBusy(true, $"UPDATING SHOE METADATA FOR FEET #{globalIndex}...");
-            float newHeight = enabled.Checked ? (float)height.Value : 0;
-            string newSound = (string)sound.SelectedItem!;
-            ClothingMetadataUpdateResult result = await Task.Run(() => ClothingImporter.SetShoeSettings(
+            SetBusy(true, $"UPDATING YMT METADATA FOR {target.Component.Code.ToUpperInvariant()} #{globalIndex}...");
+            YmtSettingsUpdateResult result = await Task.Run(() => ClothingImporter.SetYmtSettings(
                 _catalog.RootPath,
                 target,
-                newHeight,
-                newSound));
+                updatedSettings));
             _catalog = await ClothingCatalog.LoadAsync(_catalog.RootPath);
             ClothingEntry? refreshed = _catalog.FindByGlobalIndex(
                 target.Gender,
@@ -1176,7 +1255,8 @@ internal sealed class MainForm : Form
                 target.Component.DefaultOffset(target.Gender));
             ShowResults(refreshed == null ? [] : [refreshed]);
             SetStatus(
-                $"UPDATED FEET #{globalIndex} / {newSound} / HEEL HEIGHT {newHeight:0.##} / {Path.GetFileName(result.CreatureMetadataPath)}",
+                $"UPDATED {target.Component.Code.ToUpperInvariant()} #{globalIndex} / BACKUP: {Path.GetFileName(result.BackupDirectory)}" +
+                (result.CreatureMetadataPath == null ? string.Empty : $" / {Path.GetFileName(result.CreatureMetadataPath)}"),
                 false);
         }
         catch (Exception exception)
@@ -1435,7 +1515,7 @@ internal sealed class MainForm : Form
         _copyResultPath.Enabled = entry != null && File.Exists(entry.FilePath);
         _openResultPath.Enabled = entry != null && File.Exists(entry.FilePath);
         _replaceDrawable.Enabled = entry is { Component.IsProp: false } && File.Exists(entry.FilePath);
-        _editYmtSettings.Enabled = entry is { Component.Code: "feet" } && File.Exists(entry.FilePath);
+        _editYmtSettings.Enabled = entry != null && File.Exists(entry.FilePath);
         _duplicateIntoCategory.Enabled = entry is { Component.IsProp: false };
         _generateLods.Enabled = entry != null &&
             File.Exists(entry.FilePath) &&
