@@ -1,5 +1,11 @@
 # BLRP Clothing Utility
 
+Version 1.8.3 remembers separate model and texture import folders across sessions.
+Use **Search blacklist...** to narrow the group choices without changing the
+current selection. **Combine** also supports search and retains checked groups.
+The blacklist export window can filter its clothing list; **ZIP ALL** still
+exports the entire selected group.
+
 Clean local rebuild of the BadlandsRP clothing collection locator.
 
 See [CHANGELOG.md](CHANGELOG.md) for release history since version 1.4.2.

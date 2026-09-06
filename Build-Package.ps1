@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.19')
+param([string]$Version = '1.0.26')
 
 $ErrorActionPreference = 'Stop'
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'release'))
@@ -41,8 +41,10 @@ if (-not (Test-Path -LiteralPath $grzyProject)) {
 }
 $grzyPackages = Join-Path $grzyRoot 'packages'
 New-Item -ItemType Directory -Path $grzyPackages -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'shared\grzy\CodeWalker.dll') -Destination $grzyPackages -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'shared\grzy\CodeWalker.Core.dll') -Destination $grzyPackages -Force
+$grzyViewerProject = Join-Path $grzyRoot 'CodeWalker\CodeWalker\CodeWalker.csproj'
+dotnet build $grzyViewerProject -c Release
+if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed for the grzy clothing preview viewer.' }
+# CodeWalker's AfterBuild target moves the viewer DLLs into packages, where grzy references them.
 $grzyOutput = Join-Path $packageRoot 'tools\grzyClothTool-outfit'
 dotnet publish $grzyProject -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=false -o $grzyOutput
 if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed for grzyClothTool.' }

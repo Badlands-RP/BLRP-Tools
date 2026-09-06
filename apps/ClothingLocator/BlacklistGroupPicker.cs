@@ -41,8 +41,30 @@ internal static class BlacklistGroupPicker
             list.SetItemChecked(index, selected.Contains(options[index], StringComparer.OrdinalIgnoreCase));
         }
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
+        var chosen = new HashSet<string>(selected, StringComparer.OrdinalIgnoreCase);
+        var search = new TextBox { Dock = DockStyle.Fill, PlaceholderText = "Search blacklist groups...", AccessibleName = "Search blacklist groups" };
+        bool filtering = false;
+        list.ItemCheck += (_, e) =>
+        {
+            if (filtering) return;
+            string group = (string)list.Items[e.Index];
+            if (e.NewValue == CheckState.Checked) chosen.Add(group); else chosen.Remove(group);
+        };
+        search.TextChanged += (_, _) =>
+        {
+            filtering = true;
+            list.BeginUpdate();
+            try
+            {
+                list.Items.Clear();
+                foreach (string group in Filter(options, search.Text, null))
+                    list.Items.Add(group, chosen.Contains(group));
+            }
+            finally { list.EndUpdate(); filtering = false; }
+        };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1 };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         layout.Controls.Add(new Label
@@ -52,7 +74,8 @@ internal static class BlacklistGroupPicker
             ForeColor = Color.FromArgb(135, 206, 235),
             Font = new Font("Cascadia Mono", 9F, FontStyle.Bold)
         }, 0, 0);
-        layout.Controls.Add(list, 0, 1);
+        layout.Controls.Add(search, 0, 1);
+        layout.Controls.Add(list, 0, 2);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var combine = CreateButton("COMBINE", Color.FromArgb(100, 149, 237));
@@ -60,18 +83,18 @@ internal static class BlacklistGroupPicker
         string? result = null;
         combine.Click += (_, _) =>
         {
-            if (list.CheckedItems.Count < 2)
+            if (chosen.Count < 2)
             {
                 MessageBox.Show(form, "Select at least two groups.", "BLRP Clothing Utility", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            result = Combine(list.CheckedItems.Cast<string>());
+            result = Combine(chosen);
             form.DialogResult = DialogResult.OK;
         };
         cancel.Click += (_, _) => form.DialogResult = DialogResult.Cancel;
         buttons.Controls.Add(combine);
         buttons.Controls.Add(cancel);
-        layout.Controls.Add(buttons, 0, 2);
+        layout.Controls.Add(buttons, 0, 3);
         form.Controls.Add(layout);
         form.AcceptButton = combine;
         form.CancelButton = cancel;
@@ -84,7 +107,16 @@ internal static class BlacklistGroupPicker
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .OrderBy(group => group, StringComparer.OrdinalIgnoreCase));
 
-    internal static bool SelfTest() => Combine(["LSFD", "LEO", "leo"]) == "LEO|LSFD";
+    internal static bool SelfTest() => Combine(["LSFD", "LEO", "leo"]) == "LEO|LSFD" &&
+        Filter(["Angels of Death", "LEO", "LSFD"], "of de", "LEO").SequenceEqual(["Angels of Death", "LEO"]) &&
+        Filter(["LEO", "LSFD"], "missing", null).Length == 0;
+
+    // Keep the active choice visible so searching never silently changes import restrictions.
+    internal static string[] Filter(IEnumerable<string> options, string query, string? selected) => options
+        .Append(selected ?? string.Empty)
+        .Where(value => value.Length > 0 && (value.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase) || value == selected))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray();
 
     private static Button CreateButton(string text, Color color) => new()
     {

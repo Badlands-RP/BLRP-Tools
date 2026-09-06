@@ -13,6 +13,7 @@ internal sealed class BlacklistBundleDialog : Form
     private readonly string _rootPath;
     private readonly ClothingCatalog _catalog;
     private readonly ComboBox _group = new();
+    private readonly TextBox _search = new();
     private readonly DataGridView _grid = new();
     private readonly Label _summary = new();
     private readonly Button _previewSelected;
@@ -90,7 +91,18 @@ internal sealed class BlacklistBundleDialog : Form
         _group.FlatStyle = FlatStyle.Flat;
         _group.BackColor = InputBackground;
         _group.ForeColor = Color.White;
-        picker.Controls.Add(_group, 0, 1);
+        var searchRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+        searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
+        _search.PlaceholderText = "Search listed clothing...";
+        _search.AccessibleName = "Search blacklisted clothing";
+        _search.Dock = DockStyle.Fill;
+        _search.BackColor = InputBackground;
+        _search.ForeColor = Color.White;
+        _search.TextChanged += (_, _) => ApplySearch();
+        searchRow.Controls.Add(_group, 0, 0);
+        searchRow.Controls.Add(_search, 1, 0);
+        picker.Controls.Add(searchRow, 0, 1);
         page.Controls.Add(picker, 0, 1);
 
         _summary.Dock = DockStyle.Fill;
@@ -198,6 +210,18 @@ internal sealed class BlacklistBundleDialog : Form
             _result = new([], 0, 0);
             MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+        ApplySearch();
+    }
+
+    private void ApplySearch()
+    {
+        _grid.CurrentCell = null;
+        foreach (DataGridViewRow row in _grid.Rows)
+        {
+            row.Visible = row.Cells.Cast<DataGridViewCell>().Any(cell =>
+                (cell.Value?.ToString() ?? "").Contains(_search.Text.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (!row.Visible) row.Selected = false;
+        }
         UpdateSummary();
     }
 
@@ -211,6 +235,7 @@ internal sealed class BlacklistBundleDialog : Form
             ? string.Empty
             : $"  /  {_result.MissingTextures} MISSING YTD{(_result.MissingTextures == 1 ? string.Empty : "S")}";
         _summary.Text = $"{_result.Items.Count} MODEL{(_result.Items.Count == 1 ? string.Empty : "S")}  /  {fileCount} FILE{(fileCount == 1 ? string.Empty : "S")}{unresolved}{missing}";
+        if (_search.Text.Trim().Length > 0) _summary.Text = $"{_grid.Rows.Cast<DataGridViewRow>().Count(row => row.Visible)} SHOWN / " + _summary.Text;
         UpdateSelectionActions();
         _zipAll.Enabled = _result.Items.Count > 0;
     }

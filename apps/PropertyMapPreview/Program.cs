@@ -34,15 +34,17 @@ internal static class Program
     private static void LoadPreviewWhenReady(Type worldFormType, Form world, string ymapPath, float x, float y, float z, float radius)
     {
         var timer = new System.Windows.Forms.Timer { Interval = 250 };
-        timer.Tick += (_, _) =>
+        timer.Tick += async (_, _) =>
         {
             try
             {
                 object cache = worldFormType.GetProperty("GameFileCache")!.GetValue(world)!;
                 bool isReady = (bool)cache.GetType().GetField("IsInited")!.GetValue(cache)!;
-                if (!isReady || world.IsDisposed) return;
+                bool worldReady = (bool)worldFormType.GetField("initialised", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!;
+                if (!isReady || !worldReady || world.IsDisposed) return;
 
                 timer.Stop();
+                await Task.Run(() => EnableNewestDlc(worldFormType, world, cache));
                 worldFormType.GetMethod("ShowProjectForm", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(world, null);
                 object project = worldFormType.GetField("ProjectForm", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(world)!;
                 project.GetType().GetMethod("OpenFiles")!.Invoke(project, new object[] { new[] { ymapPath } });
@@ -59,6 +61,22 @@ internal static class Program
             }
         };
         timer.Start();
+    }
+
+    private static void EnableNewestDlc(Type worldFormType, Form world, object cache)
+    {
+        var dlcNames = (IEnumerable<string>)cache.GetType().GetProperty("DlcNameList")!.GetValue(cache)!;
+        string? newestDlc = dlcNames.LastOrDefault();
+        if (string.IsNullOrWhiteSpace(newestDlc)) return;
+
+        object renderSyncRoot = worldFormType.GetProperty("RenderSyncRoot")!.GetValue(world)!;
+        lock (renderSyncRoot)
+        {
+            bool changed = (bool)cache.GetType().GetMethod("SetDlcLevel")!
+                .Invoke(cache, new object[] { newestDlc, true })!;
+            if (changed)
+                worldFormType.GetMethod("LoadWorld", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(world, null);
+        }
     }
 
     private static bool TryReadVector(string[] args, out float x, out float y, out float z, out float radius)

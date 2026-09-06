@@ -30,6 +30,8 @@ internal sealed class MainForm : Form
     private readonly NumericUpDown _clothingNumber = CreateNumberInput(0, 10000);
     private readonly TextBox _manualFile = CreateTextBox();
     private readonly ComboBox _business = CreateComboBox();
+    private readonly TextBox _businessSearch = CreateTextBox();
+    private IReadOnlyList<string> _businessOptions = [];
     private readonly DataGridView _results = new();
     private readonly Label _status = CreateLabel("READY", 9, AccentLight, FontStyle.Bold);
     private readonly Label _resultCount = CreateLabel("0 RESULTS", 9, TextMuted, FontStyle.Bold);
@@ -216,8 +218,17 @@ internal sealed class MainForm : Form
         layout.Controls.Add(businessLabel, 0, 2);
         layout.SetColumnSpan(businessLabel, 5);
         _business.Dock = DockStyle.Fill;
-        layout.Controls.Add(_business, 0, 3);
-        layout.SetColumnSpan(_business, 2);
+        var blacklistPicker = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        blacklistPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 38));
+        blacklistPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 62));
+        _businessSearch.PlaceholderText = "Search blacklist...";
+        _businessSearch.AccessibleName = "Search blacklist groups";
+        _businessSearch.Dock = DockStyle.Fill;
+        _businessSearch.TextChanged += (_, _) => FilterBusinesses();
+        blacklistPicker.Controls.Add(_businessSearch, 0, 0);
+        blacklistPicker.Controls.Add(_business, 1, 0);
+        layout.Controls.Add(blacklistPicker, 0, 3);
+        layout.SetColumnSpan(blacklistPicker, 2);
         layout.Controls.Add(_combineBlacklist, 2, 3);
         layout.Controls.Add(_blacklistExport, 3, 3);
         layout.Controls.Add(_refreshBusinesses, 4, 3);
@@ -627,7 +638,7 @@ internal sealed class MainForm : Form
             CheckFileExists = true,
             InitialDirectory = Directory.Exists(_rootPath.Text.Trim()) ? _rootPath.Text.Trim() : @"D:\"
         };
-        if (modelDialog.ShowDialog(this) != DialogResult.OK) return;
+        if (ImportDirectories.Show(modelDialog, this) != DialogResult.OK) return;
 
         string? texture = ClothingLodGenerator.FindSiblingTextures(modelDialog.FileName).FirstOrDefault();
         using var dialog = new LodReviewDialog(
@@ -677,11 +688,17 @@ internal sealed class MainForm : Form
 
     private void PopulateBusinesses(IReadOnlyList<string> names)
     {
+        _businessOptions = names;
+        FilterBusinesses();
+    }
+
+    private void FilterBusinesses()
+    {
         string? selected = SelectedBusiness;
         _business.BeginUpdate();
         _business.Items.Clear();
         _business.Items.Add(NoBlacklistBusiness);
-        _business.Items.AddRange(names.Cast<object>().ToArray());
+        _business.Items.AddRange(BlacklistGroupPicker.Filter(_businessOptions, _businessSearch.Text, selected).Cast<object>().ToArray());
         _business.SelectedIndex = selected == null ? 0 : _business.FindStringExact(selected);
         if (_business.SelectedIndex < 0)
         {
@@ -710,7 +727,7 @@ internal sealed class MainForm : Form
             CheckFileExists = true,
             InitialDirectory = Directory.Exists(root) ? root : @"D:\"
         };
-        if (modelDialog.ShowDialog(this) != DialogResult.OK)
+        if (ImportDirectories.Show(modelDialog, this) != DialogResult.OK)
         {
             return;
         }
@@ -725,7 +742,7 @@ internal sealed class MainForm : Form
             Multiselect = true,
             InitialDirectory = Path.GetDirectoryName(modelDialog.FileName)
         };
-        if (textureDialog.ShowDialog(this) != DialogResult.OK)
+        if (ImportDirectories.Show(textureDialog, this, texture: true) != DialogResult.OK)
         {
             return;
         }
@@ -821,7 +838,7 @@ internal sealed class MainForm : Form
             Multiselect = true,
             InitialDirectory = Path.GetDirectoryName(target.FilePath)
         };
-        if (textureDialog.ShowDialog(this) != DialogResult.OK)
+        if (ImportDirectories.Show(textureDialog, this, texture: true) != DialogResult.OK)
         {
             return;
         }
@@ -977,7 +994,7 @@ internal sealed class MainForm : Form
             CheckFileExists = true,
             InitialDirectory = Path.GetDirectoryName(target.FilePath)
         };
-        if (modelDialog.ShowDialog(this) != DialogResult.OK)
+        if (ImportDirectories.Show(modelDialog, this) != DialogResult.OK)
         {
             return;
         }
@@ -990,7 +1007,7 @@ internal sealed class MainForm : Form
             Multiselect = true,
             InitialDirectory = Path.GetDirectoryName(modelDialog.FileName)
         };
-        if (textureDialog.ShowDialog(this) != DialogResult.OK)
+        if (ImportDirectories.Show(textureDialog, this, texture: true) != DialogResult.OK)
         {
             return;
         }
@@ -1737,6 +1754,11 @@ internal sealed class MainForm : Form
     internal static bool SelfTest()
     {
         using var form = new MainForm();
+        form.PopulateBusinesses(["Angels of Death", "LEO", "LSFD"]);
+        form._business.SelectedItem = "LEO";
+        form._businessSearch.Text = "of de";
+        bool blacklistSearchWorks = form.SelectedBusiness == "LEO" && form._business.Items.Contains("Angels of Death") && !form._business.Items.Contains("LSFD");
+        form._businessSearch.Clear();
         form.SetBusy(true);
         form.SetBusy(false);
         var outfit = new List<ClothingEntry>();
@@ -1751,7 +1773,7 @@ internal sealed class MainForm : Form
         form._results.Rows.Add("", "", "", 0, 0, 0, 0, 956L, "", "", "");
         form._results.Sort(form._results.Columns[7], System.ComponentModel.ListSortDirection.Descending);
         bool polygonSortsNumerically = (long)form._results.Rows[0].Cells[7].Value == 956L;
-        return form._customStart.ReadOnly &&
+        return blacklistSearchWorks && form._customStart.ReadOnly &&
                form._customStart.Text == "178" &&
                form._duplicateIntoCategory.Text == "DUPLICATE INTO CATEGORY" &&
                form._openPreview.Text == "ADD TO OUTFIT" &&

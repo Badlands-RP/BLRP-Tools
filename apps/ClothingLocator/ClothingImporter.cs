@@ -1169,6 +1169,7 @@ internal static class ClothingImporter
         MCPedPropMetaData propMetadata = LoadPedFile(propYmtPath).VariationInfo?.PropInfo?.PropMetaData?
             .First(item => item.Data.anchorId == propComponent.Slot && item.Data.propId == 0)
             ?? throw new InvalidDataException("The prop texture self-test target is missing.");
+        string componentXmlBeforePropChanges = ComponentMetadataXml(LoadPedFile(propYmtPath));
         int propTextureCount = propMetadata.TexData?.Length ?? 0;
         var propEntry = new ClothingEntry(
             fixturePropModel, new FileInfo(fixturePropModel).Length, plan.Gender,
@@ -1215,7 +1216,8 @@ internal static class ClothingImporter
             importedPropDrawable?.Name.Equals(propModelName, StringComparison.OrdinalIgnoreCase) == true &&
             importedPropDrawable != null && GetDiffuseTextures(importedPropDrawable)
                 .Any(texture => texture.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase)) &&
-            importedPropTexture?.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase) == true;
+            importedPropTexture?.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase) == true &&
+            ComponentMetadataXml(propImportPed) == componentXmlBeforePropChanges;
         if (!propImportValid)
         {
             throw new InvalidDataException(
@@ -1257,6 +1259,14 @@ internal static class ClothingImporter
                    Path.Combine(fixtureRoot, ".clothing-locator-backups"),
                    "*.ymt",
                    SearchOption.AllDirectories).Any();
+    }
+
+    private static string ComponentMetadataXml(PedFile ped)
+    {
+        XmlDocument document = new();
+        document.LoadXml(MetaXml.GetXml(ped.Meta));
+        return (document.SelectSingleNode("/CPedVariationInfo/aComponentData3")?.OuterXml ?? string.Empty) +
+            (document.SelectSingleNode("/CPedVariationInfo/compInfos")?.OuterXml ?? string.Empty);
     }
 
     private static ClothingEntry FindDuplicateSelfTestSource(string sourceRoot)
@@ -2071,13 +2081,31 @@ internal static class ClothingImporter
         Meta meta = mb.GetMeta();
         meta.Name = string.IsNullOrWhiteSpace(ped.Meta?.Name) ? collectionName : ped.Meta.Name;
         byte[] bytes = ResourceBuilder.Build(meta, 2);
-        if (componentInfoTargetIndex != null)
+        if (changeProp)
+        {
+            bytes = MergePropXml(
+                ped,
+                bytes,
+                (propAppendAnchorId ?? propAnchorId)!.Value,
+                (propAppendId ?? propTargetIndex)!.Value,
+                appendProp);
+        }
+        else if (componentInfoTargetIndex != null)
         {
             bytes = MergeComponentInfoXml(ped, bytes, componentId, componentInfoTargetIndex.Value);
         }
-        else if (!changeProp && textureTargetIndex == null && replacementTargetIndex == null)
+        else if (!changeProp && componentInfoTargetIndex == null)
         {
-            bytes = MergeAppendedComponentXml(ped, bytes, componentId);
+            CPVTextureData[] expectedTextures = textureTargetIndex != null
+                ? [new CPVTextureData { texId = GetTextureId(textureSuffix!), distribution = 255 }]
+                : CreateTextureData(texturePaths, hasSkin);
+            bytes = MergeComponentXml(
+                ped,
+                bytes,
+                componentId,
+                textureTargetIndex,
+                replacementTargetIndex,
+                expectedTextures);
         }
         string verificationXml = MetaXml.GetXml(RpfFile.GetResourceFile<PedFile>(bytes)?.Meta);
         if (!verificationXml.Contains("<CPedVariationInfo", StringComparison.Ordinal))
@@ -2087,53 +2115,206 @@ internal static class ClothingImporter
         return bytes;
     }
 
-    private static byte[] MergeAppendedComponentXml(PedFile source, byte[] candidateBytes, int componentId)
+    private static byte[] MergePropXml(PedFile source, byte[] candidateBytes, int anchorId, int propId, bool append)
     {
         PedFile candidate = RpfFile.GetResourceFile<PedFile>(candidateBytes)
             ?? throw new InvalidDataException("Generated YMT could not be read back.");
-        int componentIndex = source.VariationInfo?.ComponentIndices?[componentId] ?? 255;
-        if (componentIndex == 255)
-        {
-            return candidateBytes;
-        }
-
         XmlDocument sourceXml = new();
         sourceXml.LoadXml(MetaXml.GetXml(source.Meta));
         XmlDocument candidateXml = new();
         candidateXml.LoadXml(MetaXml.GetXml(candidate.Meta));
-        XmlNode sourceComponent = sourceXml.SelectSingleNode($"/CPedVariationInfo/aComponentData3/Item[{componentIndex + 1}]")
-            ?? throw new InvalidDataException("The source YMT component was not found.");
-        XmlNode candidateComponent = candidateXml.SelectSingleNode($"/CPedVariationInfo/aComponentData3/Item[{componentIndex + 1}]")
+        XmlNode? sourcePropInfo = sourceXml.SelectSingleNode("/CPedVariationInfo/propInfo");
+        XmlNode candidatePropInfo = candidateXml.SelectSingleNode("/CPedVariationInfo/propInfo")
+            ?? throw new InvalidDataException("The generated YMT prop metadata was not found.");
+        if (sourcePropInfo == null)
+        {
+            if (!append) throw new InvalidDataException("The source YMT prop metadata was not found.");
+            XmlNode root = sourceXml.DocumentElement!;
+            root.InsertBefore(sourceXml.ImportNode(candidatePropInfo, true), root.SelectSingleNode("dlcName"));
+            return XmlMeta.GetRSCData(sourceXml);
+        }
+
+        string selector = $"aPropMetaData/Item[anchorId/@value='{anchorId}' and propId/@value='{propId}']";
+        XmlNode candidateProp = candidatePropInfo.SelectSingleNode(selector)
+            ?? throw new InvalidDataException("The generated YMT prop entry was not found.");
+        XmlNode sourceProps = sourcePropInfo.SelectSingleNode("aPropMetaData")
+            ?? throw new InvalidDataException("The source YMT prop array was not found.");
+        XmlNode? sourceProp = sourcePropInfo.SelectSingleNode(selector);
+        if (append)
+        {
+            if (sourceProp != null) throw new InvalidDataException("The generated prop ID already exists in the source YMT.");
+            sourceProps.AppendChild(sourceXml.ImportNode(candidateProp, true));
+        }
+        else
+        {
+            if (sourceProp == null) throw new InvalidDataException("The source YMT prop entry was not found.");
+            XmlNode sourceTextures = sourceProp.SelectSingleNode("texData")
+                ?? throw new InvalidDataException("The source YMT prop texture array was not found.");
+            XmlNodeList? candidateTextures = candidateProp.SelectNodes("texData/Item");
+            int existingCount = sourceTextures.SelectNodes("Item")?.Count ?? 0;
+            if (candidateTextures == null || candidateTextures.Count != existingCount + 1)
+                throw new InvalidDataException("The generated YMT prop texture count changed unexpectedly.");
+            sourceTextures.AppendChild(sourceXml.ImportNode(candidateTextures[existingCount]!, true));
+        }
+
+        if (append)
+        {
+            XmlElement sourceCount = sourcePropInfo.SelectSingleNode("numAvailProps") as XmlElement
+                ?? throw new InvalidDataException("The source YMT prop count was not found.");
+            XmlElement candidateCount = candidatePropInfo.SelectSingleNode("numAvailProps") as XmlElement
+                ?? throw new InvalidDataException("The generated YMT prop count was not found.");
+            sourceCount.SetAttribute("value", candidateCount.GetAttribute("value"));
+
+            string anchorName = ((eAnchorPoints)anchorId).ToString();
+            XmlNode candidateAnchor = candidatePropInfo.SelectNodes("aAnchors/Item")?.Cast<XmlNode>()
+                .FirstOrDefault(item => item.SelectSingleNode("anchor")?.InnerText == anchorName)
+                ?? throw new InvalidDataException("The generated YMT prop anchor was not found.");
+            XmlNode sourceAnchors = sourcePropInfo.SelectSingleNode("aAnchors")
+                ?? throw new InvalidDataException("The source YMT prop anchors were not found.");
+            XmlNode? sourceAnchor = sourceAnchors.SelectNodes("Item")?.Cast<XmlNode>()
+                .FirstOrDefault(item => item.SelectSingleNode("anchor")?.InnerText == anchorName);
+            if (sourceAnchor == null) sourceAnchors.AppendChild(sourceXml.ImportNode(candidateAnchor, true));
+            else sourceAnchors.ReplaceChild(sourceXml.ImportNode(candidateAnchor, true), sourceAnchor);
+        }
+
+        return XmlMeta.GetRSCData(sourceXml);
+    }
+
+    private static byte[] MergeComponentXml(
+        PedFile source,
+        byte[] candidateBytes,
+        int componentId,
+        int? textureTargetIndex,
+        int? replacementTargetIndex,
+        IReadOnlyList<CPVTextureData> expectedTextures)
+    {
+        PedFile candidate = RpfFile.GetResourceFile<PedFile>(candidateBytes)
+            ?? throw new InvalidDataException("Generated YMT could not be read back.");
+        XmlDocument sourceXml = new();
+        sourceXml.LoadXml(MetaXml.GetXml(source.Meta));
+        XmlDocument candidateXml = new();
+        candidateXml.LoadXml(MetaXml.GetXml(candidate.Meta));
+
+        int sourceComponentIndex = source.VariationInfo?.ComponentIndices?[componentId] ?? 255;
+        int candidateComponentIndex = candidate.VariationInfo?.ComponentIndices?[componentId] ?? 255;
+        if (candidateComponentIndex == 255)
+            throw new InvalidDataException("The generated YMT component index was not found.");
+        XmlNode candidateComponent = candidateXml.SelectSingleNode($"/CPedVariationInfo/aComponentData3/Item[{candidateComponentIndex + 1}]")
             ?? throw new InvalidDataException("The generated YMT component was not found.");
-        XmlNode sourceDrawables = sourceComponent.SelectSingleNode("aDrawblData3")
-            ?? throw new InvalidDataException("The source YMT drawable array was not found.");
         XmlNode candidateDrawables = candidateComponent.SelectSingleNode("aDrawblData3")
             ?? throw new InvalidDataException("The generated YMT drawable array was not found.");
+        XmlNodeList generatedItems = candidateDrawables.SelectNodes("Item")
+            ?? throw new InvalidDataException("The generated YMT drawables were not found.");
+
+        if (sourceComponentIndex == 255)
+        {
+            XmlNode generatedDrawable = generatedItems.Cast<XmlNode>().Single();
+            SetComponentTextureXml(candidateXml, generatedDrawable, expectedTextures);
+            XmlNode sourceComponents = sourceXml.SelectSingleNode("/CPedVariationInfo/aComponentData3")
+                ?? throw new InvalidDataException("The source YMT component array was not found.");
+            sourceComponents.AppendChild(sourceXml.ImportNode(candidateComponent, true));
+            XmlNode sourceAvailability = sourceXml.SelectSingleNode("/CPedVariationInfo/availComp")
+                ?? throw new InvalidDataException("The source YMT component availability was not found.");
+            string[] indices = sourceAvailability.InnerText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (indices.Length != 12) throw new InvalidDataException("The source YMT component availability is invalid.");
+            indices[componentId] = candidateComponentIndex.ToString();
+            sourceAvailability.InnerText = string.Join(' ', indices);
+            AppendGeneratedComponentInfo(sourceXml, candidateXml, componentId, 0);
+            return XmlMeta.GetRSCData(sourceXml);
+        }
+
+        XmlNode sourceComponent = sourceXml.SelectSingleNode($"/CPedVariationInfo/aComponentData3/Item[{sourceComponentIndex + 1}]")
+            ?? throw new InvalidDataException("The source YMT component was not found.");
+        XmlNode sourceDrawables = sourceComponent.SelectSingleNode("aDrawblData3")
+            ?? throw new InvalidDataException("The source YMT drawable array was not found.");
         int existingCount = sourceDrawables.SelectNodes("Item")?.Count ?? 0;
-        XmlNodeList? generatedItems = candidateDrawables.SelectNodes("Item");
-        if (generatedItems == null || generatedItems.Count != existingCount + 1)
+
+        if (textureTargetIndex != null)
+        {
+            XmlNode sourceDrawable = sourceDrawables.SelectSingleNode($"Item[{textureTargetIndex.Value + 1}]")
+                ?? throw new InvalidDataException("The source YMT drawable was not found.");
+            XmlNode sourceTextures = sourceDrawable.SelectSingleNode("aTexData")
+                ?? throw new InvalidDataException("The source YMT texture array was not found.");
+            sourceTextures.AppendChild(CreateComponentTextureXml(sourceXml, expectedTextures.Single()));
+            SetComponentTextureCount(sourceComponent, 1);
+            return XmlMeta.GetRSCData(sourceXml);
+        }
+
+        if (replacementTargetIndex != null)
+        {
+            XmlNode sourceDrawable = sourceDrawables.SelectSingleNode($"Item[{replacementTargetIndex.Value + 1}]")
+                ?? throw new InvalidDataException("The source YMT drawable was not found.");
+            XmlNode generatedDrawable = generatedItems[replacementTargetIndex.Value]
+                ?? throw new InvalidDataException("The generated replacement drawable was not found.");
+            int oldTextureCount = sourceDrawable.SelectNodes("aTexData/Item")?.Count ?? 0;
+            SetComponentTextureXml(candidateXml, generatedDrawable, expectedTextures);
+            sourceDrawables.ReplaceChild(sourceXml.ImportNode(generatedDrawable, true), sourceDrawable);
+            SetComponentTextureCount(sourceComponent, expectedTextures.Count - oldTextureCount);
+
+            string selector = $"/CPedVariationInfo/compInfos/Item[pedXml_compIdx/@value='{componentId}' and pedXml_drawblIdx/@value='{replacementTargetIndex.Value}']";
+            XmlNode? sourceInfo = sourceXml.SelectSingleNode(selector);
+            sourceInfo?.ParentNode?.RemoveChild(sourceInfo);
+            AppendGeneratedComponentInfo(sourceXml, candidateXml, componentId, replacementTargetIndex.Value);
+            return XmlMeta.GetRSCData(sourceXml);
+        }
+
+        if (generatedItems.Count != existingCount + 1)
         {
             throw new InvalidDataException("The generated YMT has an unexpected drawable count.");
         }
+        XmlNode appendedDrawable = generatedItems[existingCount]!;
+        SetComponentTextureXml(candidateXml, appendedDrawable, expectedTextures);
+        sourceDrawables.AppendChild(sourceXml.ImportNode(appendedDrawable, true));
+        SetComponentTextureCount(sourceComponent, expectedTextures.Count);
+        AppendGeneratedComponentInfo(sourceXml, candidateXml, componentId, existingCount);
+        return XmlMeta.GetRSCData(sourceXml);
+    }
 
-        sourceDrawables.AppendChild(sourceXml.ImportNode(generatedItems[existingCount]!, true));
-        XmlElement? sourceTextureCount = sourceComponent.SelectSingleNode("numAvailTex") as XmlElement;
-        XmlElement? generatedTextureCount = candidateComponent.SelectSingleNode("numAvailTex") as XmlElement;
-        if (sourceTextureCount == null || generatedTextureCount == null)
-        {
-            throw new InvalidDataException("The YMT component texture count was not found.");
-        }
-        sourceTextureCount.SetAttribute("value", generatedTextureCount.GetAttribute("value"));
+    private static void SetComponentTextureXml(
+        XmlDocument document,
+        XmlNode drawable,
+        IReadOnlyList<CPVTextureData> textures)
+    {
+        XmlElement textureArray = drawable.SelectSingleNode("aTexData") as XmlElement
+            ?? throw new InvalidDataException("The generated YMT texture array was not found.");
+        textureArray.RemoveAll();
+        textureArray.SetAttribute("itemType", "CPVTextureData");
+        foreach (CPVTextureData texture in textures)
+            textureArray.AppendChild(CreateComponentTextureXml(document, texture));
+    }
 
+    private static XmlElement CreateComponentTextureXml(XmlDocument document, CPVTextureData texture)
+    {
+        XmlElement item = document.CreateElement("Item");
+        XmlElement textureId = document.CreateElement("texId");
+        textureId.SetAttribute("value", texture.texId.ToString());
+        item.AppendChild(textureId);
+        XmlElement distribution = document.CreateElement("distribution");
+        distribution.SetAttribute("value", texture.distribution.ToString());
+        item.AppendChild(distribution);
+        return item;
+    }
+
+    private static void SetComponentTextureCount(XmlNode component, int delta)
+    {
+        XmlElement count = component.SelectSingleNode("numAvailTex") as XmlElement
+            ?? throw new InvalidDataException("The YMT component texture count was not found.");
+        int current = int.Parse(count.GetAttribute("value"));
+        count.SetAttribute("value", checked(current + delta).ToString());
+    }
+
+    private static void AppendGeneratedComponentInfo(
+        XmlDocument sourceXml,
+        XmlDocument candidateXml,
+        int componentId,
+        int drawableIndex)
+    {
         XmlNode? generatedInfo = candidateXml.SelectSingleNode(
-            $"/CPedVariationInfo/compInfos/Item[pedXml_compIdx/@value='{componentId}' and pedXml_drawblIdx/@value='{existingCount}']");
+            $"/CPedVariationInfo/compInfos/Item[pedXml_compIdx/@value='{componentId}' and pedXml_drawblIdx/@value='{drawableIndex}']");
         XmlNode? sourceInfos = sourceXml.SelectSingleNode("/CPedVariationInfo/compInfos");
         if (generatedInfo == null || sourceInfos == null)
-        {
             throw new InvalidDataException("The generated YMT component info was not found.");
-        }
         sourceInfos.AppendChild(sourceXml.ImportNode(generatedInfo, true));
-        return XmlMeta.GetRSCData(sourceXml);
     }
 
     private static byte[] MergeComponentInfoXml(PedFile source, byte[] candidateBytes, int componentId, int drawableIndex)
@@ -2177,20 +2358,9 @@ internal static class ClothingImporter
             ValidateComponentAppendXml(before, after, plan);
             return;
         }
-        for (int slot = 0; slot < 12; slot++)
+        if (ComponentMetadataXml(before) != ComponentMetadataXml(after))
         {
-            MCPVDrawblData[] oldDrawables = GetDrawables(before, slot) ?? [];
-            MCPVDrawblData[] newDrawables = GetDrawables(after, slot) ?? [];
-            int expected = oldDrawables.Length + (!plan.Component.IsProp && slot == plan.Component.Slot ? 1 : 0);
-            if (newDrawables.Length != expected)
-                throw new InvalidDataException($"YMT validation failed for component slot {slot}: expected {expected} drawables, found {newDrawables.Length}. No files were changed.");
-            for (int index = 0; index < oldDrawables.Length; index++)
-                if (DrawableFingerprint(oldDrawables[index]) != DrawableFingerprint(newDrawables[index]))
-                    throw new InvalidDataException($"YMT validation detected a change to existing component slot {slot}, drawable {index:000}. No files were changed.");
-
-            if (slot != plan.Component.Slot &&
-                ComponentFingerprint(GetComponentData(before, slot)) != ComponentFingerprint(GetComponentData(after, slot)))
-                throw new InvalidDataException($"YMT validation detected a metadata change to untouched component slot {slot}. No files were changed.");
+            throw new InvalidDataException("YMT validation detected a change to existing component metadata. No files were changed.");
         }
 
         MCPedPropMetaData[] oldProps = before.VariationInfo?.PropInfo?.PropMetaData ?? [];
@@ -2198,11 +2368,17 @@ internal static class ClothingImporter
         int expectedProps = oldProps.Length + (plan.Component.IsProp ? 1 : 0);
         if (newProps.Length != expectedProps)
             throw new InvalidDataException($"YMT validation failed for props: expected {expectedProps}, found {newProps.Length}. No files were changed.");
-        for (int index = 0; index < oldProps.Length; index++)
+
+        XmlDocument beforeXml = new();
+        beforeXml.LoadXml(MetaXml.GetXml(before.Meta));
+        XmlDocument afterXml = new();
+        afterXml.LoadXml(MetaXml.GetXml(after.Meta));
+        XmlNode[] oldPropNodes = beforeXml.SelectNodes("/CPedVariationInfo/propInfo/aPropMetaData/Item")?.Cast<XmlNode>().ToArray() ?? [];
+        XmlNode[] newPropNodes = afterXml.SelectNodes("/CPedVariationInfo/propInfo/aPropMetaData/Item")?.Cast<XmlNode>().ToArray() ?? [];
+        for (int index = 0; index < oldPropNodes.Length; index++)
         {
-            MCPedPropMetaData oldProp = oldProps[index];
-            if (PropFingerprint(oldProp) != PropFingerprint(newProps[index]))
-                throw new InvalidDataException($"YMT validation detected a change to existing prop anchor {oldProp.Data.anchorId}, drawable {oldProp.Data.propId:000}. No files were changed.");
+            if (oldPropNodes[index].OuterXml != newPropNodes[index].OuterXml)
+                throw new InvalidDataException($"YMT validation detected a change to existing prop {index:000}. No files were changed.");
         }
 
         foreach (MCAnchorProps oldAnchor in before.VariationInfo?.PropInfo?.Anchors ?? [])
@@ -2257,36 +2433,6 @@ internal static class ClothingImporter
         XmlNode? candidateProps = candidateXml.SelectSingleNode("/CPedVariationInfo/propInfo");
         if ((sourceProps?.OuterXml ?? string.Empty) != (candidateProps?.OuterXml ?? string.Empty))
             throw new InvalidDataException("YMT validation detected a change to props. No files were changed.");
-    }
-
-    private static string DrawableFingerprint(MCPVDrawblData item)
-    {
-        CPVDrawblData data = item.Data;
-        CPVDrawblData__CPVClothComponentData cloth = data.clothData;
-        string textures = string.Join(',', (item.TexData ?? []).Select(texture =>
-            $"{texture.texId}:{texture.distribution}:{texture.Unused0}"));
-        return $"{data.propMask}:{data.numAlternatives}:{data.Unused0}:{data.Unused1}:" +
-            $"{cloth.ownsCloth}:{cloth.Unused0}:{cloth.Unused1}:{cloth.Unused2}:{cloth.Unused3}:{cloth.Unused4}:{cloth.Unused5}:{cloth.Unused6}:{textures}";
-    }
-
-    private static MCPVComponentData? GetComponentData(PedFile ped, int slot)
-    {
-        MCPedVariationInfo? variation = ped.VariationInfo;
-        int index = variation?.ComponentIndices?[slot] ?? 255;
-        return index == 255 || variation?.ComponentData3 == null || index >= variation.ComponentData3.Length
-            ? null
-            : variation.ComponentData3[index];
-    }
-
-    private static string ComponentFingerprint(MCPVComponentData? item) => item is null
-        ? string.Empty
-        : $"{item.Data.numAvailTex}:{item.Data.Unused0}:{item.Data.Unused1}:{item.Data.Unused2}";
-
-    private static string PropFingerprint(MCPedPropMetaData item)
-    {
-        CPedPropMetaData data = item.Data;
-        return $"{data.audioId.Hash}:{data.expressionMods}:{(int)data.renderFlags}:{data.propFlags}:{data.flags}:" +
-            $"{data.anchorId}:{data.propId}:{data.Unused5}:{data.Unused6}:{item.TexData?.Length ?? 0}";
     }
 
     internal static ClothingModelQuality InspectModel(string path, int textureCount)

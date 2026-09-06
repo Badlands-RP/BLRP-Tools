@@ -2,6 +2,21 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.3 - 2026-09-06
+
+### Added
+
+- Blacklist group selectors and blacklist export results can be filtered by
+  partial text without losing the active or checked selections.
+- Model and texture file pickers remember separate folders between sessions.
+
+### Fixed
+
+- Prop model and texture imports now preserve every existing component and prop
+  entry in the target YMT, preventing unrelated clothing metadata changes.
+- Multi-texture component imports now read texture metadata from its exact
+  unaligned array offset instead of shifting texture IDs after the first entry.
+
 ## 1.8.2 - 2026-09-04
 
 ### Fixed

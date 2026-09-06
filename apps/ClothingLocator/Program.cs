@@ -135,7 +135,7 @@ internal static class Program
                 ClothingBlacklist.SelfTest() &&
                 BlacklistBundle.SelfTest() &&
                 ClothingImporter.QualitySelfTest(rootPath) &&
-                BlacklistGroupPicker.SelfTest() &&
+                BlacklistGroupPicker.SelfTest() && ImportDirectories.SelfTest() &&
                 BusinessDirectory.Normalize([" Zebra ", "alpha", "ALPHA"]).SequenceEqual(["alpha", "Zebra"]) &&
                 TextureBlacklistDialog.SelfTest() &&
                 MainForm.SelfTest() ? 0 : 1;
