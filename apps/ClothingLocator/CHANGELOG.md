@@ -2,6 +2,16 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.5 - 2026-09-06
+
+### Fixed
+
+- Texture imports and replacements now wrap the aggregate YMT texture count
+  within its byte field, preventing an overflow when crossing 255 textures.
+- Verified repeated texture imports against the repaired Plogtember2 addon 4
+  and 5 YMTs: new universal textures retain texId 0 and distribution 255, and
+  unrelated metadata remains unchanged.
+
 ## 1.8.4 - 2026-09-06
 
 ### Added

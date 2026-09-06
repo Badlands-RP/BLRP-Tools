@@ -877,6 +877,14 @@ internal static class ClothingImporter
 
     internal static bool SelfTest(string sourceRoot, string fixtureRoot)
     {
+        var countXml = new XmlDocument();
+        countXml.LoadXml("<Item><numAvailTex value='255'/></Item>");
+        SetComponentTextureCount(countXml.DocumentElement!, 1);
+        if (countXml.SelectSingleNode("/Item/numAvailTex/@value")!.Value != "0")
+            throw new InvalidDataException("Texture count must wrap at the YMT byte boundary.");
+        SetComponentTextureCount(countXml.DocumentElement!, -1);
+        if (countXml.SelectSingleNode("/Item/numAvailTex/@value")!.Value != "255")
+            throw new InvalidDataException("Texture count must wrap when removing textures across the byte boundary.");
         string componentCode = "jbib";
         ComponentDefinition component = ClothingComponents.ByCode[componentCode];
         for (int pack = 1; pack <= RomanPacks.Length; pack++)
@@ -2556,7 +2564,8 @@ internal static class ClothingImporter
         XmlElement count = component.SelectSingleNode("numAvailTex") as XmlElement
             ?? throw new InvalidDataException("The YMT component texture count was not found.");
         int current = int.Parse(count.GetAttribute("value"));
-        count.SetAttribute("value", checked(current + delta).ToString());
+        // GTA stores the aggregate texture count in a byte, even for collections exceeding 255 textures.
+        count.SetAttribute("value", unchecked((byte)(current + delta)).ToString());
     }
 
     private static void AppendGeneratedComponentInfo(
