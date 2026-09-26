@@ -67,6 +67,7 @@ internal sealed class MainForm : Form
         tools.Controls.Add(ToolCard("PROPERTY MAPPER", "Review property XML in GTA 3D, then export deployable YMAP files.", @"tools\PropertyMapper\BLRP.PropertyMapper.dll"), 0, 2);
         tools.Controls.Add(ToolCard("GRZY CLOTH TOOL", "Build, inspect and preview GTA clothing packs.", @"tools\grzyClothTool-outfit\grzyClothTool.exe"), 1, 2);
         tools.Controls.Add(ToolCard("BADWALKER", "View and edit GTA maps, archives, models and metadata.", @"tools\BadWalker\CodeWalker.exe"), 0, 3);
+        tools.Controls.Add(ToolCard("NAVMESH", "Generate pedestrian navigation for custom maps and inspect bake results.", @"tools\NavMesh\BLRP.NavMesh.dll"), 1, 3);
         page.Controls.Add(tools, 0, 1);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2 };

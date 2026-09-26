@@ -21,9 +21,9 @@ internal static class Program
             ApplyUpdate(int.Parse(args[1]), args[2], args[3], args[4]);
             return;
         }
-        if (args.Length == 2 && args[0] == "--run-tool")
+        if (args.Length >= 2 && args[0] == "--run-tool")
         {
-            RunTool(args[1]);
+            RunTool(args[1], args[2..]);
             return;
         }
 
@@ -31,7 +31,7 @@ internal static class Program
         Application.Run(new MainForm());
     }
 
-    private static void RunTool(string assemblyPath)
+    private static void RunTool(string assemblyPath, string[] toolArguments)
     {
         try
         {
@@ -39,8 +39,9 @@ internal static class Program
             var context = new ToolContext(fullAssemblyPath, Path.Combine(AppContext.BaseDirectory, "shared"));
             Assembly assembly = context.LoadFromAssemblyPath(fullAssemblyPath);
             MethodInfo entry = assembly.EntryPoint ?? throw new InvalidDataException("The selected tool has no entry point.");
-            object? result = entry.Invoke(null, entry.GetParameters().Length == 0 ? null : [Array.Empty<string>()]);
+            object? result = entry.Invoke(null, entry.GetParameters().Length == 0 ? null : [toolArguments]);
             if (result is Task task) task.GetAwaiter().GetResult();
+            if (result is int exitCode) Environment.ExitCode = exitCode;
         }
         catch (Exception exception)
         {
@@ -59,7 +60,7 @@ internal static class Program
             while (FindInstallProcessIds(launcherPath).Length > 0)
             {
                 DialogResult result = MessageBox.Show(
-                    "Another BLRP Tools window is still open. Close all Asset Studio, Clothing Utility, Livery Tool, Mapping Deconflicter, Property Mapper, and Hub windows, then select Retry.",
+                    "Another BLRP Tools window is still open. Close all Asset Studio, Clothing Utility, Livery Tool, Mapping Deconflicter, Property Mapper, NavMesh, and Hub windows, then select Retry.",
                     "BLRP Tools Updater", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning);
                 if (result == DialogResult.Cancel) return;
             }

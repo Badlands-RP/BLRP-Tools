@@ -21,7 +21,8 @@ $projects = @(
     @{ Project = 'apps\ClothingLocator\BLRP.ClothingLocator.csproj'; Output = 'tools\ClothingLocator'; SelfContained = $false },
     @{ Project = 'apps\LiveryTool\Badlands.LiveryTool.csproj'; Output = 'tools\LiveryTool'; SelfContained = $false },
     @{ Project = 'apps\MappingDeconflicter\YmapDeconflicter.csproj'; Output = 'tools\MappingDeconflicter'; SelfContained = $false },
-    @{ Project = 'apps\PropertyMapper\BLRP.PropertyMapper.csproj'; Output = 'tools\PropertyMapper'; SelfContained = $false }
+    @{ Project = 'apps\PropertyMapper\BLRP.PropertyMapper.csproj'; Output = 'tools\PropertyMapper'; SelfContained = $false },
+    @{ Project = 'apps\NavMesh\BLRP.NavMesh.csproj'; Output = 'tools\NavMesh'; SelfContained = $false }
 )
 
 foreach ($item in $projects) {
@@ -87,7 +88,7 @@ $sharedRoot = Join-Path $packageRoot 'shared'
 New-Item -ItemType Directory -Path $sharedRoot -Force | Out-Null
 foreach ($name in @('CodeWalker.Core.dll', 'SharpDX.dll', 'SharpDX.Mathematics.dll')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "shared\lib\$name") -Destination $sharedRoot
-    foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool', 'PropertyMapper')) {
+    foreach ($tool in @('AssetStudio', 'ClothingLocator', 'LiveryTool', 'PropertyMapper', 'NavMesh')) {
         $duplicate = Join-Path $packageRoot "tools\$tool\$name"
         if (Test-Path -LiteralPath $duplicate) { Remove-Item -LiteralPath $duplicate -Force }
     }

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>../../branding/BLRP.ico</ApplicationIcon>
+    <Company>BadlandsRP</Company>
+    <Product>BLRP NavMesh</Product>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <Deterministic>true</Deterministic>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="UserGuide.md" LogicalName="BLRP.NavMesh.UserGuide.md" />
+    <Compile Include="../../shared/BlrpTheme.cs" Link="BlrpTheme.cs" />
+    <None Update="DotRecast-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="README.md;examples/**/*.json;fivem/**/*" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="DotRecast.Recast" Version="2026.3.1" />
+    <Reference Include="CodeWalker.Core"><HintPath>../../shared/lib/CodeWalker.Core.dll</HintPath></Reference>
+    <Reference Include="SharpDX"><HintPath>../../shared/lib/SharpDX.dll</HintPath></Reference>
+    <Reference Include="SharpDX.Mathematics"><HintPath>../../shared/lib/SharpDX.Mathematics.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

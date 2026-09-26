@@ -1,0 +1,16 @@
+{
+  "gameBuild": 3095,
+  "resourceRoots": [
+    "../../../../BadlandsRP/resources/[custom_maps]/[escrowed]/[HNS_Jose_Cafe]/hns_josecafe_mirror_park",
+    "../../../../BadlandsRP/resources/[custom_maps]/[escrowed]/[HNS_Jose_Cafe]/hns_josecafe_base"
+  ],
+  "conflictScanRoots": [],
+  "ymaps": ["../../../../BadlandsRP/resources/[custom_maps]/[escrowed]/[HNS_Jose_Cafe]/hns_josecafe_mirror_park/stream/hns_josecafe_mrpark_milo_.ymap"],
+  "gameSourceFile": "",
+  "baselineDirectory": "",
+  "outputDirectory": "../../../tools/navmesh-investigation/coolbeans-example",
+  "min": [1216, -430, 66],
+  "max": [1247, -411, 72],
+  "interior": true,
+  "dependencies": ["hns_josecafe_mirror_park", "hns_josecafe_base"]
+}

@@ -11,9 +11,12 @@ One Windows launcher and updater for BadlandsRP's internal desktop utilities.
 - **BLRP Property Mapper** — reviews panel mapping XML, opens it in CodeWalker's GTA renderer, and exports deployable YMAP/manifest files.
 - **grzyClothTool** — builds, inspects, and previews GTA clothing packs.
 - **BadWalker** — the BadlandsRP CodeWalker fork for GTA maps, archives, models, and metadata.
+- **BLRP NavMesh** — generate pedestrian navigation for custom maps, inspect surfaces and review unresolved collision in a desktop workflow.
+
+The [NavMesh desktop tool](apps/NavMesh/README.md) is available from the Hub. Its pilot outputs still await collision review and FiveM validation.
 
 The Hub launches each utility in its own hosted process, so a crash or long-running job
-in one tool does not take down the others. The five native utilities share the Hub's
+in one tool does not take down the others. The native utilities share the Hub's
 runtime and CodeWalker dependencies. The larger third-party-derived tools remain in
 their own repositories as pinned submodules; release packaging adds grzyClothTool and
 the matching prebuilt BadWalker release without vendoring their source. Updates are distributed as one GitHub
@@ -31,6 +34,7 @@ apps/
   MappingDeconflicter/
   PropertyMapper/
   PropertyMapPreview/
+  NavMesh/
 branding/
 shared/
 external/grzyClothTool/  (git submodule)

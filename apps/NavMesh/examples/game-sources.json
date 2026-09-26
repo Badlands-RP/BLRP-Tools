@@ -1,0 +1,18 @@
+{
+  "gameBuild": 3095,
+  "source": "EXAMPLE ONLY: replace with an audited source selection and explain its build provenance",
+  "gameDirectory": "D:/PATH/TO/GTA-LEGACY",
+  "validatedForBuild": false,
+  "archives": [
+    {
+      "path": "D:/PATH/TO/GTA-LEGACY/x64f.rpf",
+      "logicalPath": "x64f.rpf",
+      "sha256": ""
+    },
+    {
+      "path": "D:/PATH/TO/BUILD-3095/update.rpf",
+      "logicalPath": "update/update.rpf",
+      "sha256": ""
+    }
+  ]
+}
