@@ -27,6 +27,8 @@ public sealed class CollisionScene
     {
         var data = File.ReadAllBytes(path);
         Inputs[path] = Convert.ToHexString(SHA256.HashData(data));
+        if (data.Length >= 4 && Encoding.ASCII.GetString(data, 0, 4) == "FXAP")
+            throw new InvalidDataException($"Escrow-protected {Path.GetFileName(path)}: readable collision from the map author is required; previews omit this geometry. ({path})");
         if (data.Length < 4 || Encoding.ASCII.GetString(data, 0, 4) != "RSC7")
             throw new InvalidDataException($"Unreadable native asset (possibly escrowed): {path}");
         return data;

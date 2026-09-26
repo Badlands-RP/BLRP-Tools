@@ -186,6 +186,8 @@ internal sealed class MainForm : Form
         var body = Tab("Game archives");
         Row(body, "", useGame, 34);
         Row(body, "GTA Legacy folder", FolderField(gameFolder), 36);
+        Row(body, "Quick setup", Button("LOAD BASE GAME", LoadBaseGame), 40);
+        Row(body, "", Caption("Finds the installed Legacy game and loads base archives for previews. Add build-matched DLC/update archives as needed."), 62);
         Row(body, "Archive build", archiveBuild, 34);
         Row(body, "Source notes", sourceNotes, 60);
         archives.AutoGenerateColumns = false;
@@ -255,9 +257,12 @@ internal sealed class MainForm : Form
 
     private async Task ReadMapDetails()
     {
-        string[] roots = resources.Items.Cast<string>().ToArray(), selected = maps.CheckedItems.Cast<string>().ToArray();
+        var value = new BakeSettings { GameBuild = (int)build.Value,
+            ResourceRoots = resources.Items.Cast<string>().ToArray(), Ymaps = maps.CheckedItems.Cast<string>().ToArray() };
+        archives.EndEdit();
+        var sources = useGame.Checked ? ReadGameSources() : null;
         MapDetails? details = null;
-        await RunOperation(() => { details = MapSelection.Read(roots, selected); }, () =>
+        await RunOperation(() => { details = MapSelection.Read(value, sources); }, () =>
         {
             if (details == null) return;
             for (int i = 0; i < 3; i++) { area[i].Value = (decimal)details.Min[i] - 0.5m; area[i + 3].Value = (decimal)details.Max[i] + 0.5m; }
@@ -266,9 +271,17 @@ internal sealed class MainForm : Form
                 entitySets.Items.Add(choice, previous.TryGetValue(choice.Placement, out var names) && names.Contains(choice.Name));
             settings.EntitySets = details.Sets.Select(s => s.Placement).Distinct().ToDictionary(key => key, _ => Array.Empty<string>());
             issues.Items.Clear(); issues.Items.AddRange(details.Unresolved);
-            status.Text = "Area fitted to custom archetype bounds. Review approaches and active entity sets before generating.";
+            preview.Clear();
+            summary.ForeColor = Color.LightSkyBlue;
+            var size = details.Max - details.Min + new SharpDX.Vector3(1);
+            summary.Text = $"MAP AREA READY — {size.X:N1} × {size.Y:N1} × {size.Z:N1} m\n" +
+                $"{details.CollisionBoundsCount} interior collision bounds · {details.MetadataBoundsCount} object bounds · {details.Unresolved.Length} notices\n" +
+                "Generate a preview to check floors, entrances and remaining collision issues.";
+            status.Text = "Interior area fitted to collision where available. Review approaches and active entity sets before generating.";
         });
     }
+
+    internal Task ReadMapDetailsForTest() => ReadMapDetails();
 
     private Dictionary<string, string[]> ReadEntitySets()
     {
@@ -352,6 +365,25 @@ internal sealed class MainForm : Form
         foreach (var archive in value.Archives)
             archiveItems.Add(new ArchiveInput { Path = Path.GetFullPath(archive.Path, folder), LogicalPath = archive.LogicalPath, Sha256 = archive.Sha256 });
         useGame.Checked = true;
+    }
+
+    private void LoadBaseGame()
+    {
+        if (archiveItems.Count != 0)
+            throw new InvalidDataException("Game archives are already selected. Use ADD to extend that source set, or remove its entries before loading a fresh base selection.");
+        string folder = gameFolder.Text.Trim();
+        if (folder.Length == 0) folder = GameSource.FindLegacyDirectory() ?? "";
+        if (folder.Length == 0)
+        {
+            using var picker = new FolderBrowserDialog { Description = "Choose your GTA V Legacy installation", UseDescriptionForTitle = true };
+            if (picker.ShowDialog(this) != DialogResult.OK) return;
+            folder = picker.SelectedPath;
+        }
+        var source = GameSource.BaseGameSelection(folder, (int)build.Value);
+        gameFolder.Text = source.GameDirectory; archiveBuild.Value = source.GameBuild; sourceNotes.Text = source.Source;
+        foreach (var archive in source.Archives) archiveItems.Add(archive);
+        useGame.Checked = true; validated.Checked = false;
+        status.Text = $"Loaded {source.Archives.Length} base archives for inspection. Read map bounds again; build compatibility still needs review.";
     }
 
     private void SaveSnapshot(BakeSettings value, string path)
@@ -467,9 +499,10 @@ internal sealed class MainForm : Form
         string result = root.GetProperty("status").GetString() ?? "unknown";
         if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String) issues.Items.Insert(0, error.GetString()!);
         int tiles = root.GetProperty("outputHashes").EnumerateObject().Count();
-        string label = result switch { "diagnostic-only" => "PREVIEW READY — inspection only", "awaiting-fivem-validation" => "RESOURCE BUILT — awaiting FiveM testing", "cancelled" => "CANCELLED", _ => "BUILD STOPPED" };
+        bool incomplete = result == "diagnostic-only" && issues.Items.Count > 0;
+        string label = result switch { "diagnostic-only" when incomplete => "PARTIAL PREVIEW — resource build blocked", "diagnostic-only" => "PREVIEW READY — inspection only", "awaiting-fivem-validation" => "RESOURCE BUILT — awaiting FiveM testing", "cancelled" => "CANCELLED", _ => "BUILD STOPPED" };
         summary.Text = $"{label}\n{root.GetProperty("collisionTriangleCount").GetInt32():N0} collision triangles · {tiles} native tiles · {issues.Items.Count} issues\nClient build: {root.GetProperty("gameBuild").GetInt32()} · movement in FiveM remains unverified";
-        summary.ForeColor = result == "failed" ? Color.Salmon : Color.LightSkyBlue;
+        summary.ForeColor = result == "failed" || incomplete ? Color.Salmon : Color.LightSkyBlue;
         status.Text = folder; LoadPreview(false);
     }
 

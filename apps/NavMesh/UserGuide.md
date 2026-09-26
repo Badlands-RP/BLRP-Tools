@@ -6,8 +6,8 @@ For your first attempt:
 
 1. In Map & area, add one mapping resource folder.
 2. Check the YMAP placement you want to work on. For an interior, start with its MLO placement rather than selecting every map in the resource.
-3. Click READ MAP BOUNDS & ENTITY SETS. Review the area and the active furnishings.
-4. Set Game build to the build used by your FiveM server. The initial value is 3095; change it when your server changes.
+3. Set Game build to the build used by your FiveM server. The initial value is 3095; change it when your server changes.
+4. For GTA props, open Game archives and click LOAD BASE GAME. Then click READ MAP BOUNDS & ENTITY SETS in Map & area. Review the area and the active furnishings.
 5. Choose a Results folder outside your mapping resources.
 6. Click GENERATE PREVIEW. Inspect the surfaces and read the Issues list.
 7. Save the project so you can return to the same inputs and settings.
@@ -25,9 +25,9 @@ Maps to include
 The map must describe the object in its placed world location. For Cool Beans, add both hns_josecafe_mirror_park and hns_josecafe_base, then select hns_josecafe_mrpark_milo_.ymap from the Mirror Park resource. For the Market pilot, start with gabz_vbm_store01_milo_.ymap. Other shop placements and different furnishings need their own checks.
 
 READ MAP BOUNDS & ENTITY SETS
-This fills the world-coordinate area from custom archetype bounds and lists available entity sets. It replaces the current area values, so review your crop after using it. It does not prove that every floor, obstacle or pavement approach has collision coverage.
+This fits interiors to their readable YBN collision in the placed world orientation and lists available entity sets. Other objects use their archetype bounds. Enabled game archives supply definitions as well as the selected resource folders. It replaces the current area values, so review your crop after using it. It does not prove that every floor, obstacle or pavement approach has collision coverage.
 
-The Mirror Park cafe's archetype bounds are much larger than its readable interior collision. Review the replacement box carefully; the bundled coolbeans.json example starts near the measured interior collision, not the old Vespucci cafe coordinates. Approaches still need supplied collision and review.
+The Mirror Park cafe's metadata bounds are much larger than its interior. The tool now uses its readable collision to avoid the old 181-metre replacement box. Add both cafe resources and load base game archives to resolve its fence post and wall vent. Approaches still need supplied collision and review. Protected furniture and door models remain separate collision blockers; a successful area fit is not a complete bake.
 
 Replacement box
 Min and Max are world X, Y and Z coordinates in metres. The box defines where existing navigation will be replaced. Include the intended floors, entrance and approaches, and provide collision for all of them. Keep unrelated areas outside the box. If bounds cannot be read, add the resource owning the missing archetype or enter a measured area manually.
@@ -64,6 +64,8 @@ Exclude an object only when you have established that it has no relevant collisi
 
 Use Game archives when placed props or original navigation must come from GTA's game files.
 
+For a quick preview, click LOAD BASE GAME with an empty archive list. It locates a registered GTA V Legacy installation or asks you to select its folder, adds common.rpf and x64 archives in order, and enables game sources. The selection remains unverified for the target build. It does not add a newer installed update or assume the correct DLC set. Existing archive selections are kept; use ADD to extend them.
+
 1. Enable Include assets from game archives.
 2. Browse to the GTA Legacy installation.
 3. Set Archive build to the build represented by your source files. It must match the project's Game build.
@@ -90,6 +92,8 @@ Preview controls
 The preview is a top-down inspection aid. Use the height filter for stacked floors, and inspect native files in BadWalker or collision geometry in Blender when a 3D view is needed.
 
 Issues lists unresolved inputs and checks that need attention. Activity shows progress and verification details. CANCEL stops after the current processing step; completed diagnostics are retained.
+
+PARTIAL PREVIEW — resource build blocked means the visible geometry is incomplete or the source set is unverified. Resolve the listed issues before building. Protected assets are identified explicitly, rather than being treated as empty space.
 
 Each run gets a new folder under Results folder, preserving earlier attempts. OPEN RESULTS opens the latest folder. OPEN PREVIOUS RESULT loads a report and its preview; it does not replace the project settings on the left.
 
@@ -139,6 +143,9 @@ Check the selected YMAP, world placement and Z range. Switch the preview to Coll
 
 Missing owning YTYP / missing drawable or collision
 Include the resource or build-matched game archive that owns the object. Verify the actual dependency; a name prefix is not proof of ownership.
+
+Cannot locate object definition while reading the map area
+Open Game archives and use LOAD BASE GAME, then read the bounds again. If the definition is still missing, add the actual owning custom resource or matching DLC archive. This warning concerns area selection; the bake separately checks complete collision.
 
 Unreadable or escrowed asset
 Request readable collision from the map author, or supply measured replacement collision. The baker cannot inspect protected geometry and does not treat it as empty space.

@@ -32,15 +32,19 @@ public static class SelfTest
                     Require(original.EntitySets.Count == reloaded.EntitySets.Count && original.PolygonFlags.SequenceEqual(reloaded.PolygonFlags) &&
                         original.Collision.Length == reloaded.Collision.Length, "desktop project round-trip preserves advanced settings");
                     form.LoadProject(saved);
+                    var details = MapSelection.Read(original);
+                    await form.ReadMapDetailsForTest();
+                    var fitted = form.ReadSettings();
+                    Require(Enumerable.Range(0, 3).All(i => Math.Abs(fitted.Min[i] - (details.Min[i] - 0.5f)) < 0.001f &&
+                        Math.Abs(fitted.Max[i] - (details.Max[i] + 0.5f)) < 0.001f), "bounds button fits the selected collision and game sources");
                     await form.GenerateForTest();
                     Require(form.LatestOutput != null && File.Exists(Path.Combine(form.LatestOutput, "report.json")), "desktop generates a retained report");
                     using var report = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(form.LatestOutput!, "report.json")));
                     Require(report.RootElement.GetProperty("status").GetString() == "diagnostic-only", "desktop preview completes");
                     Require(form.PreviewPolygonCount > 0, "desktop displays generated polygons");
                     Require(form.IssueCount == report.RootElement.GetProperty("issues").GetArrayLength(), "desktop displays unresolved inputs");
-                    var details = MapSelection.Read(original.ResourceRoots, original.Ymaps);
                     Require(float.IsFinite(details.Min.X) && details.Min.X < details.Max.X && details.Min.Y < details.Max.Y,
-                        "map picker reads world bounds from selected custom archetypes");
+                        "map picker reads finite world bounds");
                     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(screenshot))!);
                     form.CaptureTabsForTest(screenshot);
                     using var guide = new HelpForm { StartPosition = FormStartPosition.Manual, Location = new Point(-20000, -20000) };
@@ -63,7 +67,7 @@ public static class SelfTest
             };
             Application.Run(form);
             if (failure != null) throw new InvalidOperationException("Desktop workflow check failed.", failure);
-            Console.WriteLine("PASS: desktop project loading/saving, background generation, preview and issue report.");
+            Console.WriteLine("PASS: desktop projects, collision/game bounds fitting, background generation, preview, issues and embedded help.");
         }
         finally { Directory.Delete(temporary, true); }
     }
@@ -76,6 +80,10 @@ public static class SelfTest
 
     public static void Run()
     {
+        var boxBounds = MapSelection.WorldBounds(new BoundBox { BoxMin = new(-1, -2, 0), BoxMax = new(1, 2, 3),
+            Transform = Matrix.Translation(3, 0, 0) }, Matrix.Scaling(2) * Matrix.RotationZ(MathF.PI / 2) * Matrix.Translation(10, 20, 30));
+        Require(Vector3.Distance(boxBounds.Minimum, new(6, 24, 30)) < 0.00001f && Vector3.Distance(boxBounds.Maximum, new(14, 28, 36)) < 0.00001f,
+            "collision bounds apply the bound transform, scale and decoded placement exactly once");
         var settings = new BakeSettings { GameBuild = 3095, Min = [0, 0, -1], Max = [500, 30, 8] };
         var quantization = new QuantizationMetrics();
         var wide = NavMeshCompiler.TilePolygons([Quad(10, 10, 450, 2, 5)], settings, quantization);
@@ -139,6 +147,13 @@ public static class SelfTest
         Directory.CreateDirectory(temporary);
         try
         {
+            string install = Path.Combine(temporary, "synthetic-install"); Directory.CreateDirectory(install);
+            foreach (string name in new[] { "GTA5.exe", "common.rpf", "x64b.rpf", "x64a.rpf" }) File.WriteAllBytes(Path.Combine(install, name), []);
+            var sourceSet = GameSource.BaseGameSelection(install, 3095);
+            Require(!sourceSet.ValidatedForBuild && sourceSet.GameBuild == 3095 &&
+                sourceSet.Archives.Select(a => a.LogicalPath).SequenceEqual(new[] { "common.rpf", "x64a.rpf", "x64b.rpf" }) &&
+                sourceSet.Archives.All(a => Path.IsPathFullyQualified(a.Path) && a.Sha256.Length == 0),
+                "base game selection preserves target build, deterministic order and unverified provenance");
             var originals = new List<Vector3[]>();
             for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) originals.Add(Quad(x * 150, y * 150, 150, 150, 0));
             var originalTiles = NavMeshCompiler.CreateTiles(NavMeshCompiler.TilePolygons(originals, settings));
