@@ -87,6 +87,18 @@ public static class SelfTest
                     }
                     Require(!form.ExportEnabled, "unreviewed first-run preview does not enable export");
                     form.CaptureTabsForTest(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(screenshot))!, Path.GetFileNameWithoutExtension(screenshot) + "-first-run.png"));
+                    form.SaveForTest(saved);
+                    var manualProject = BakeSettings.Load(saved);
+                    if (manualProject.GameSourceFile.Length > 0)
+                    {
+                        var source = System.Text.Json.JsonSerializer.Deserialize<GameSourceManifest>(File.ReadAllText(manualProject.GameSourceFile), BakeSettings.Json)!;
+                        var manual = GameSource.BaseGameSelection(source.GameDirectory, source.GameBuild);
+                        manual.AutoDiscoverDlc = false;
+                        File.WriteAllText(manualProject.GameSourceFile, System.Text.Json.JsonSerializer.Serialize(manual, BakeSettings.Json));
+                        form.LoadProject(saved); form.SaveForTest(saved);
+                        var restored = System.Text.Json.JsonSerializer.Deserialize<GameSourceManifest>(File.ReadAllText(manualProject.GameSourceFile), BakeSettings.Json)!;
+                        Require(!restored.AutoDiscoverDlc, "explicit automatic-discovery opt-out survives project reload");
+                    }
                 }
                 catch (Exception e) { failure = e; }
                 finally { form.Close(); }

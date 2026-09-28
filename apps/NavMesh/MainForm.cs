@@ -474,13 +474,17 @@ internal sealed class MainForm : Form
 
     private void LoadGameSources(string path)
     {
-        var value = JsonSerializer.Deserialize<GameSourceManifest>(File.ReadAllText(path), BakeSettings.Json) ?? throw new InvalidDataException("Empty game source set.");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var value = document.Deserialize<GameSourceManifest>(BakeSettings.Json) ?? throw new InvalidDataException("Empty game source set.");
         string folder = Path.GetDirectoryName(Path.GetFullPath(path))!;
         value.GameDirectory = Path.GetFullPath(value.GameDirectory, folder);
         foreach (var archive in value.Archives) archive.Path = Path.GetFullPath(archive.Path, folder);
         // Upgrade only the previous release's untouched automatic base selection.
-        value.AutoDiscoverDlc |= !value.ValidatedForBuild && value.Source.StartsWith("Base archives from the installed") &&
-            value.Archives.All(a => a.LogicalPath == "common.rpf" || System.Text.RegularExpressions.Regex.IsMatch(a.LogicalPath, "^x64[a-z]\\.rpf$"));
+        bool legacy = !document.RootElement.EnumerateObject().Any(p => p.Name.Equals("autoDiscoverDlc", StringComparison.OrdinalIgnoreCase));
+        value.AutoDiscoverDlc |= legacy && !value.ValidatedForBuild && value.Source.StartsWith("Base archives from the installed") &&
+            value.Archives.All(a => a.Sha256.Length == 0) && GameSource.IsLegacyDirectory(value.GameDirectory) &&
+            value.Archives.Select(a => (a.Path, a.LogicalPath)).SequenceEqual(
+                GameSource.BaseGameSelection(value.GameDirectory, value.GameBuild).Archives.Select(a => (a.Path, a.LogicalPath)));
         ApplyGameSources(value);
     }
 
