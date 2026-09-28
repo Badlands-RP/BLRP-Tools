@@ -11,7 +11,7 @@ For your first attempt:
 
 Advanced settings reveals area/layout, game sources, pedestrian settings and extra collision. For interiors with optional furnishings, use Area & layout to select the entity sets actually enabled on your server.
 
-A partial preview helps inspect readable geometry. BUILD RESOURCE stays unavailable until a current preview passes the checks and includes original surrounding navigation.
+A partial preview helps inspect readable geometry. To try it in-game, open Export, enable Allow warnings — build a test resource, then click BUILD TEST RESOURCE. Missing props are skipped, conflicting inputs use the first selected copy, and source-verification warnings remain recorded. Original navigation is prepared automatically if needed. Leave this option off for a complete build with strict input checks.
 
 For Cool Beans, add hns_josecafe_mirror_park. Its hns_josecafe_base dependency is detected if it is installed beside it. Protected furniture and door collision still prevent a complete build from these installed files alone. No pilot has passed FiveM movement testing.
 
@@ -83,7 +83,7 @@ Use GTA SETTINGS or Advanced settings → Game sources for manual setup and veri
 
 Only enable Archive selection verified for this game build after establishing the source set's build compatibility. Matching the update identifies its version; it does not verify every installed base/DLC archive or every runtime override. FiveM can combine a newer executable's files with an older build's overrides. Review that mount configuration before exporting; hashing a newer installation alone does not certify it for 3095.
 
-Unverified sources can be used for inspection. A complete resource build requires a verified, reproducible source set. A future server-build change needs fresh source/baseline checks and another in-game test.
+Unverified sources can be used for inspection and explicit test builds. A complete resource build requires a verified, reproducible source set. A future server-build change needs fresh source/baseline checks and another in-game test.
 
 ## Generate and inspect a preview
 
@@ -100,13 +100,25 @@ The preview is a top-down inspection aid. Use the height filter for stacked floo
 
 Needs attention groups unresolved inputs by their cause. Click a category to see what to do next, then scroll its Details for the complete list of affected objects. Technical log shows processing and verification details. CANCEL stops after the current processing step; completed diagnostics are retained.
 
-PARTIAL PREVIEW — resource build blocked means the visible geometry is incomplete or the source set is unverified. Resolve the listed issues before building. Protected assets are identified explicitly, rather than being treated as empty space.
+PREVIEW WITH WARNINGS means the visible geometry is incomplete or the source set is unverified. Resolve the listed issues for a complete build, or enable Allow warnings under Export for a test resource. Protected assets are identified explicitly; a test build omits their unreadable collision and records that choice.
 
 Each run gets a new folder under Save results to, preserving earlier attempts. OPEN RESULTS opens the latest folder. OPEN PREVIOUS RESULT loads a report and its preview; it does not replace the project settings or enable export. Generate a fresh preview after changing inputs.
 
 Preview output contains inspection YNVs, editable XML, collision and navigation OBJ files, settings snapshots and a report. Without original surrounding navigation, the YNVs contain only your patch. Do not stream those partial tiles: they would replace the rest of the original tiles.
 
 ## Build a resource
+
+To bypass the prop and source warnings for in-game testing:
+
+1. Generate a preview, then open Export.
+2. Enable Allow warnings — build a test resource.
+3. Click BUILD TEST RESOURCE. Original surrounding navigation is captured automatically if needed. OPEN RESULTS contains the resource folder and full report.
+
+The checkbox is saved with your project. You do not need to dismiss individual warnings. Test output contains BUILD-WARNINGS.txt and a test-resource marker in its manifest. Missing collision is omitted; NPC routes may cross skipped props. Conflicting inputs keep the same first-selected version used by the preview. No bounding-box obstacles are invented.
+
+Test builds retain original navigation points and portal-bearing polygons inside the edit area, and report them for review. This preserves special routes but can leave original surfaces overlapping the new patch. Disconnected components are allowed and reported. Missing neighboring tiles, hash mismatches, incorrect game builds, invalid links and output tile-name conflicts still stop the build.
+
+For a complete build with strict checks, leave Allow warnings off:
 
 Before building a resource, preserve the original navigation for the replacement area and its neighboring tiles.
 
@@ -119,7 +131,7 @@ Before building a resource, preserve the original navigation for the replacement
 
 A successful build creates a resource folder containing fxmanifest.lua and stream/*.ynv. It is labelled as awaiting FiveM testing. Failed or cancelled staging may remain under resource.pending; use only the completed resource folder.
 
-The tool keeps navigation outside the replacement box and remaps affected connections. It stops if the edit intersects special navigation points/portals or needs unsupported link handling. Those cases require deliberate authoring; do not delete unrelated navigation simply to bypass the check.
+The tool keeps navigation outside the replacement box and remaps affected connections. Strict builds stop if the edit intersects special navigation points/portals or needs unsupported link handling. Test builds preserve the original special-route data as described above; invalid references remain errors.
 
 Generated surfaces must join preserved navigation in 3D. Different floor heights or border segmentation may require an authored transition. Allow intentionally disconnected navigation is for intended islands, not a way to repair a missing entrance connection.
 

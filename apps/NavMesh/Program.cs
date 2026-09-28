@@ -72,7 +72,8 @@ public static class Program
             cancellation.ThrowIfCancellationRequested();
             Console.WriteLine($"Collision: {scene.Triangles.Count} triangles; {scene.Issues.Distinct().Count()} unresolved items.");
             Geometry.WriteObj(Path.Combine(output, "collision.obj"), scene.Triangles);
-            if (!diagnostic && scene.Issues.Count != 0) throw new InvalidDataException("Collision inputs are incomplete. See report.json; use --diagnostic for inspection only.");
+            if (!diagnostic && !settings.AllowWarnings && scene.Issues.Count != 0)
+                throw new InvalidDataException("Collision inputs are incomplete. Resolve the warnings or enable Allow warnings under Export to build a test resource.");
             Console.WriteLine("Generating walkable surfaces with Recast...");
             var polygons = RecastBake.Build(scene.Triangles, settings);
             cancellation.ThrowIfCancellationRequested();
@@ -84,7 +85,7 @@ public static class Program
             else
             {
                 if (settings.BaselineDirectory.Length == 0) throw new InvalidDataException("A build-matched baselineDirectory is required for a streamable bake.");
-                baseline = Baseline.Load(settings, scene, diagnostic);
+                baseline = Baseline.Load(settings, scene, diagnostic || settings.AllowWarnings);
                 tiles = baseline.Compose(generated, settings);
             }
             Console.WriteLine("Connecting polygons and checking native output...");
@@ -114,7 +115,7 @@ public static class Program
             if (baseline != null && isolatedGeneratedComponents != 0 && !settings.AllowIsolatedComponents)
             {
                 scene.Issues.Add($"{isolatedGeneratedComponents} generated components do not connect to preserved baseline navigation. Inspect 3D seam alignment or explicitly allow intended islands.");
-                if (!diagnostic) throw new InvalidDataException("Generated navigation does not connect to the preserved neighborhood. See report.json.");
+                if (!diagnostic && !settings.AllowWarnings) throw new InvalidDataException("Generated navigation does not connect to the preserved neighborhood. See report.json.");
             }
             bytes = NavMeshCompiler.SaveAndVerify(tiles, baseline);
             cancellation.ThrowIfCancellationRequested();
@@ -146,18 +147,23 @@ public static class Program
                 File.WriteAllText(Path.Combine(output, "resource.pending", "fxmanifest.lua"),
                     "fx_version 'cerulean'\ngame 'gta5'\nthis_is_a_map 'yes'\n" +
                     $"navmesh_bake '{bakeId}'\nnavmesh_target_build '{settings.GameBuild}'\n" +
+                    (settings.AllowWarnings ? "navmesh_test_resource 'yes'\n" : "") +
                     $"dependency '/gameBuild:{settings.GameBuild}'\n" +
                     string.Concat(settings.Dependencies.Select(s => $"dependency '{s}'\n")));
+                if (settings.AllowWarnings)
+                    File.WriteAllText(Path.Combine(output, "resource.pending", "BUILD-WARNINGS.txt"),
+                        "TEST RESOURCE — input warnings were bypassed. Missing/unreadable collision is omitted; conflicting assets use the first selected copy.\n" +
+                        "Build/source verification may be incomplete. Test NPC routes and doors in FiveM.\n\n" + string.Join("\n", scene.Issues.Distinct().Order()));
                 Directory.Move(Path.Combine(output, "resource.pending"), Path.Combine(output, "resource"));
             }
-            status = diagnostic ? "diagnostic-only" : "awaiting-fivem-validation";
+            status = diagnostic ? "diagnostic-only" : settings.AllowWarnings ? "test-resource-with-warnings" : "awaiting-fivem-validation";
         }
         catch (Exception e) { failure = e; if (e is OperationCanceledException) status = "cancelled"; }
         finally
         {
             var report = new
             {
-                status, diagnostic, bakeId, settings.GameBuild, generatedAtUtc = DateTime.UtcNow,
+                status, diagnostic, warningsBypassed = !diagnostic && settings.AllowWarnings, bakeId, settings.GameBuild, generatedAtUtc = DateTime.UtcNow,
                 codeWalkerSha256 = CollisionScene.Hash(typeof(YnvFile).Assembly.Location),
                 recastVersion = typeof(DotRecast.Recast.RcBuilder).Assembly.GetName().Version?.ToString(),
                 settings, quantization, connectivity, collisionTriangleCount = scene.Triangles.Count,

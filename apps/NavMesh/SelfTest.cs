@@ -45,7 +45,7 @@ public static class SelfTest
                     Require(form.PreviewPolygonCount > 0, "desktop displays generated polygons");
                     Require(form.IssueCount == report.RootElement.GetProperty("issues").GetArrayLength(), "desktop displays unresolved inputs");
                     Require(!form.AdvancedVisible && form.IssueGroupCount <= 7, "normal workflow hides advanced controls and groups warnings");
-                    Require(form.IssueCount == 0 || !form.ExportEnabled, "incomplete preview cannot enable export");
+                    Require(original.AllowWarnings || form.IssueCount == 0 || !form.ExportEnabled, "incomplete preview cannot enable strict export");
                     Require(float.IsFinite(details.Min.X) && details.Min.X < details.Max.X && details.Min.Y < details.Max.Y,
                         "map picker reads finite world bounds");
                     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(screenshot))!);
@@ -87,6 +87,21 @@ public static class SelfTest
                     }
                     Require(!form.ExportEnabled, "unreviewed first-run preview does not enable export");
                     form.CaptureTabsForTest(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(screenshot))!, Path.GetFileNameWithoutExtension(screenshot) + "-first-run.png"));
+                    form.AllowWarningsForTest(true);
+                    Require(form.ExportEnabled == form.GameDetected, "warning bypass enables a test build with automatic baseline preparation");
+                    form.SaveForTest(saved);
+                    Require(BakeSettings.Load(saved).AllowWarnings, "test-build choice is saved with the project");
+                    if (original.AllowWarnings)
+                    {
+                        await form.BuildForTest();
+                        string resource = Path.Combine(form.LatestOutput!, "resource");
+                        Require(File.Exists(Path.Combine(resource, "fxmanifest.lua")) && File.Exists(Path.Combine(resource, "BUILD-WARNINGS.txt")), "desktop creates the test resource and warning record");
+                        using var builtReport = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(form.LatestOutput!, "report.json")));
+                        Require(builtReport.RootElement.GetProperty("status").GetString() == "test-resource-with-warnings", "desktop labels test output");
+                        form.CaptureTabsForTest(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(screenshot))!, Path.GetFileNameWithoutExtension(screenshot) + "-test-built.png"));
+                    }
+                    form.AllowWarningsForTest(false);
+                    Require(form.IssueCount == 0 || !form.ExportEnabled, "turning bypass off restores strict export checks");
                     form.SaveForTest(saved);
                     var manualProject = BakeSettings.Load(saved);
                     if (manualProject.GameSourceFile.Length > 0)
@@ -176,6 +191,11 @@ public static class SelfTest
         try { NavMeshCompiler.TilePolygons([[new(0, 0, 0), new(4, 0, 0), new(2, 1, 0), new(4, 4, 0), new(0, 4, 0)]], settings); }
         catch (InvalidDataException) { rejectedConcave = true; }
         Require(rejectedConcave, "concave navigation input rejected");
+        Vector3[] concave = [new(0, 0, 0), new(4, 0, 0), new(2, 1, 0), new(4, 4, 0), new(0, 4, 0)];
+        var convex = Geometry.ConvexPieces(concave);
+        Require(convex.All(Geometry.IsConvex) && convex.SelectMany(p => p).All(concave.Contains) &&
+            Math.Abs(convex.Sum(Geometry.SignedArea) - Geometry.SignedArea(concave)) < 1e-8,
+            "original concave geometry is triangulated without moving vertices or changing area");
         // A transformed box must have outward normals, especially its walkable top.
         var scene = new CollisionScene(settings);
         scene.AddBounds(new BoundBox { BoxMin = new(-1, -1, -1), BoxMax = new(1, 1, 1), Transform = Matrix.Identity },
@@ -225,15 +245,19 @@ public static class SelfTest
                 PolyIDFrom1 = 0, PolyIDFrom2 = 0, PolyIDTo1 = 0, PolyIDTo2 = 0, Type = 1,
                 PositionFrom = new(-110, -110, 0), PositionTo = new(-108, -110, 0) }];
             originalTiles[3939].Polys[0].PortalLinks = [0];
+            var originalCorner = originalTiles[3939].Polys[0];
+            originalCorner.Vertices = [originalCorner.Vertices[0], .. originalCorner.Vertices];
+            originalCorner.Edges = [NavMeshCompiler.Boundary(), .. originalCorner.Edges];
             var originalsBytes = NavMeshCompiler.SaveAndVerify(originalTiles);
             var manifest = new BaselineManifest { GameBuild = 3095, Source = "Synthetic test", ValidatedForBuild = true };
+            string baselineFolder = Path.Combine(temporary, "baseline"); Directory.CreateDirectory(baselineFolder);
             foreach (var pair in originalsBytes)
             {
-                string name = NavMeshCompiler.TileName(pair.Key); string file = Path.Combine(temporary, name);
+                string name = NavMeshCompiler.TileName(pair.Key); string file = Path.Combine(baselineFolder, name);
                 File.WriteAllBytes(file, pair.Value); manifest.Files[name] = CollisionScene.Hash(file);
             }
-            File.WriteAllText(Path.Combine(temporary, "baseline.json"), System.Text.Json.JsonSerializer.Serialize(manifest, BakeSettings.Json));
-            settings.BaselineDirectory = temporary; settings.Min = [10, 10, -1]; settings.Max = [20, 20, 1];
+            File.WriteAllText(Path.Combine(baselineFolder, "baseline.json"), System.Text.Json.JsonSerializer.Serialize(manifest, BakeSettings.Json));
+            settings.BaselineDirectory = baselineFolder; settings.Min = [10, 10, -1]; settings.Max = [20, 20, 1];
             var baseline = Baseline.Load(settings, scene);
             var replacement = NavMeshCompiler.TilePolygons([Quad(10, 10, 10, 10, 0)], settings);
             tiles = baseline.Compose(replacement, settings);
@@ -243,6 +267,44 @@ public static class SelfTest
             Require(Reachable(replacement[0]).Count == tiles.Values.Sum(t => t.Polys.Count), "replacement connects to preserved neighborhood");
             Require(tiles[3939].Points.Count == 1, "unrelated navigation point retained");
             Require(tiles[3939].Portals.Count == 1 && tiles[3939].Polys[0].PortalLinks.Length == 1, "unrelated portal retained");
+            Require(tiles[3939].Polys[0].Vertices.SequenceEqual(originalCorner.Vertices), "unrelated vanilla zero-length edges are retained unchanged");
+
+            // Warning bypass still writes complete native tiles and keeps their source verification honest.
+            manifest.ValidatedForBuild = false;
+            File.WriteAllText(Path.Combine(baselineFolder, "baseline.json"), System.Text.Json.JsonSerializer.Serialize(manifest, BakeSettings.Json));
+            conflicting.AllowWarnings = true; conflicting.AllowIsolatedComponents = true;
+            conflicting.BaselineDirectory = baselineFolder; conflicting.Min = [2, 2, -1]; conflicting.Max = [8, 8, 1];
+            conflicting.OutputDirectory = Path.Combine(temporary, "test-resource");
+            Require(Program.Bake(conflicting, false) == 0, "explicit bypass builds through asset conflicts and unverified sources");
+            string testResource = Path.Combine(conflicting.OutputDirectory, "resource");
+            Require(Directory.GetFiles(Path.Combine(testResource, "stream"), "*.ynv").Length == 9 &&
+                File.ReadAllText(Path.Combine(testResource, "BUILD-WARNINGS.txt")).Contains("Conflicting resource asset") &&
+                File.ReadAllText(Path.Combine(testResource, "fxmanifest.lua")).Contains("navmesh_test_resource 'yes'"),
+                "test resource retains baseline tiles and records bypassed warnings");
+            using (var testReport = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(conflicting.OutputDirectory, "report.json"))))
+                Require(testReport.RootElement.GetProperty("warningsBypassed").GetBoolean() &&
+                    testReport.RootElement.GetProperty("status").GetString() == "test-resource-with-warnings", "test output is explicitly labelled");
+            conflicting.GameBuild = 3258; conflicting.OutputDirectory = Path.Combine(temporary, "wrong-build");
+            bool wrongBuildBlocked = false;
+            try { Program.Bake(conflicting, false); }
+            catch (InvalidOperationException e) { wrongBuildBlocked = e.InnerException?.Message.Contains("Baseline gameBuild") == true; }
+            Require(wrongBuildBlocked && !Directory.Exists(Path.Combine(conflicting.OutputDirectory, "resource")), "bypass cannot relabel a baseline from another build");
+            manifest.ValidatedForBuild = true;
+            File.WriteAllText(Path.Combine(baselineFolder, "baseline.json"), System.Text.Json.JsonSerializer.Serialize(manifest, BakeSettings.Json));
+
+            var special = Baseline.Load(settings, scene);
+            var retainedPoint = new YnvPoint { Position = new(15, 15, 0), Type = 3, Angle = 17 };
+            special.Tiles[4040].Points = [retainedPoint];
+            bool pointBlocked = false;
+            try { special.Compose(NavMeshCompiler.TilePolygons([Quad(10, 10, 10, 10, 0)], settings), settings); }
+            catch (InvalidDataException e) { pointBlocked = e.Message.Contains("navigation point"); }
+            Require(pointBlocked, "strict builds still require point authoring inside edits");
+            settings.AllowWarnings = true;
+            special = Baseline.Load(settings, scene); special.Tiles[4040].Points = [retainedPoint];
+            tiles = special.Compose(NavMeshCompiler.TilePolygons([Quad(10, 10, 10, 10, 0)], settings), settings);
+            NavMeshCompiler.Connect(tiles, special); NavMeshCompiler.SaveAndVerify(tiles, special);
+            Require(tiles[4040].Points.Single().Position == retainedPoint.Position, "test builds preserve points inside the edit");
+            settings.AllowWarnings = false;
 
             baseline = Baseline.Load(settings, scene);
             foreach (var poly in baseline.Tiles.Values.SelectMany(t => t.Polys))

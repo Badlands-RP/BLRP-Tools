@@ -35,6 +35,7 @@ internal sealed class MainForm : Form
     private readonly TextBox output = new() { Dock = DockStyle.Fill };
     private readonly TextBox baseline = new() { Dock = DockStyle.Fill };
     private readonly CheckBox compose = new() { Text = "Include original surrounding navigation", AutoSize = true };
+    private readonly CheckBox allowWarnings = new() { Text = "Allow warnings — build a test resource", AutoSize = true };
     private readonly TextBox conflicts = new() { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical };
     private readonly CheckBox useGame = new() { Text = "Include assets from game archives", AutoSize = true };
     private readonly CheckBox automaticDlc = new() { Text = "Find DLC and matching updates automatically", AutoSize = true };
@@ -257,7 +258,8 @@ internal sealed class MainForm : Form
         var body = Tab("Export");
         FullRow(body, Caption("3. Create a server resource"), 38);
         FullRow(body, exportStatus, 120);
-        FullRow(body, Caption("A preview can contain only part of the map. Export requires complete collision and the original surrounding navigation for your server build."), 90);
+        FullRow(body, allowWarnings, 36);
+        FullRow(body, Caption("Allow warnings skips unreadable props, keeps the first conflicting asset and accepts unverified sources. Warnings stay in the output. Original navigation is prepared automatically if needed; invalid native files still stop the build."), 105);
         Row(body, "", compose, 32);
         Row(body, "Original navigation", FolderField(baseline), 36);
         Row(body, "", AsyncButton("PREPARE ORIGINAL NAVIGATION", CaptureBaseline), 40);
@@ -410,7 +412,7 @@ internal sealed class MainForm : Form
             OutputDirectory = Path.GetFullPath(output.Text), BaselineDirectory = compose.Checked && baseline.Text.Length > 0 ? Path.GetFullPath(baseline.Text) : "",
             ConflictScanRoots = conflicts.Lines.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => Path.GetFullPath(p.Trim())).ToArray(),
             Agent = JsonSerializer.Deserialize<AgentSettings>(JsonSerializer.Serialize(agent.SelectedObject, BakeSettings.Json), BakeSettings.Json)!,
-            Interior = interior.Checked, AllowIsolatedComponents = islands.Checked, Dependencies = Names(dependencies.Text),
+            Interior = interior.Checked, AllowIsolatedComponents = islands.Checked, AllowWarnings = allowWarnings.Checked, Dependencies = Names(dependencies.Text),
             IgnoreArchetypes = Names(ignored.Text), CollisionReview = review.Text,
             PolygonFlags = Names(flags.Text).Select(s => byte.Parse(s, CultureInfo.InvariantCulture)).ToArray(),
             Collision = collisions.Rows.Cast<DataGridViewRow>().Select(row =>
@@ -447,6 +449,7 @@ internal sealed class MainForm : Form
             ignored.Text = string.Join(", ", value.IgnoreArchetypes); review.Text = value.CollisionReview;
             flags.Text = string.Join(", ", value.PolygonFlags); agent.SelectedObject = value.Agent;
             interior.Checked = value.Interior; islands.Checked = value.AllowIsolatedComponents;
+            allowWarnings.Checked = value.AllowWarnings;
             autoFit.Checked = value.AutoFitArea;
             collisions.Rows.Clear(); foreach (var input in value.Collision) AddCollision(input);
             archiveItems.Clear(); gameFolder.Clear(); sourceNotes.Clear(); validated.Checked = false; archiveBuild.Value = value.GameBuild;
@@ -569,6 +572,8 @@ internal sealed class MainForm : Form
         {
             if (!await PrepareGameSources()) return;
             if (diagnostic && autoFit.Checked && maps.CheckedItems.Count > 0 && !await FitMapArea()) return;
+            if (!diagnostic && allowWarnings.Checked && (!compose.Checked || string.IsNullOrWhiteSpace(baseline.Text)))
+                if (!await CaptureBaseline()) return;
             value = ReadSettings();
             if (!diagnostic && value.BaselineDirectory.Length == 0) throw new InvalidDataException("Select original navigation and enable inclusion of the surrounding navigation before building a resource.");
             string run = Path.Combine(value.OutputDirectory, "bake-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N")[..4]);
@@ -581,23 +586,23 @@ internal sealed class MainForm : Form
         if (File.Exists(Path.Combine(value.OutputDirectory, "report.json"))) ShowReport(value.OutputDirectory, true);
     }
 
-    private async Task CaptureBaseline()
+    private async Task<bool> CaptureBaseline()
     {
         try
         {
             if (!useGame.Checked) throw new InvalidDataException("Configure and enable game archives first.");
-            if (!await PrepareGameSources()) return;
+            if (!await PrepareGameSources()) return false;
             var value = ReadSettings(requireBaseline: false);
             string destination = Path.Combine(value.OutputDirectory, "original-navigation-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..4]);
             string snapshot = Path.Combine(value.OutputDirectory, "capture-" + Guid.NewGuid().ToString("N") + ".json");
             SaveSnapshot(value, snapshot);
-            await RunOperation(() =>
+            return await RunOperation(() =>
             {
                 var source = new GameSource(value, new CollisionScene(value));
                 operation!.Token.ThrowIfCancellationRequested(); source.CaptureBaseline(value, destination);
             }, () => { baseline.Text = destination; compose.Checked = true; status.Text = "Original navigation saved. Generate a new preview to check its connections."; });
         }
-        catch (Exception e) { ShowError(e); }
+        catch (Exception e) { ShowError(e); return false; }
     }
 
     private async Task HashArchives()
@@ -663,15 +668,18 @@ internal sealed class MainForm : Form
         if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String) messages.Insert(0, error.GetString()!);
         SetIssues(messages);
         bool incomplete = result == "diagnostic-only" && issueMessages.Length > 0;
-        string label = result switch { "diagnostic-only" when incomplete => "PARTIAL PREVIEW — resource build blocked", "diagnostic-only" => "PREVIEW READY — inspection only", "awaiting-fivem-validation" => "RESOURCE BUILT — awaiting FiveM testing", "cancelled" => "CANCELLED", _ => "BUILD STOPPED" };
+        string label = result switch { "diagnostic-only" when incomplete => "PREVIEW WITH WARNINGS — see Export to build a test resource", "diagnostic-only" => "PREVIEW READY — inspection only", "test-resource-with-warnings" => "TEST RESOURCE BUILT — warnings bypassed", "awaiting-fivem-validation" => "RESOURCE BUILT — awaiting FiveM testing", "cancelled" => "CANCELLED", _ => "BUILD STOPPED" };
         summary.Text = $"{label}\n" + (issueMessages.Length > 0 ? $"{issues.Items.Count} categories need attention. Select one below for the next step." : "Review the walkable surfaces, then open Export for the next step.") +
             $"\nServer build {root.GetProperty("gameBuild").GetInt32()} · FiveM movement has not been tested.";
         summary.ForeColor = result == "failed" || incomplete ? Color.Salmon : Color.LightSkyBlue;
-        previewReadyForExport = currentRun && issueMessages.Length == 0 && result is "diagnostic-only" or "awaiting-fivem-validation";
-        exportStatus.Text = issueMessages.Length > 0 ? "Export is blocked by the checks under Needs attention.\n\n" + string.Join("\n", issues.Items.Cast<IssueGroup>().Select(g => "• " + g.Title)) :
+        previewReadyForExport = currentRun && (result is "diagnostic-only" or "awaiting-fivem-validation" or "test-resource-with-warnings") &&
+            !issueMessages.Any(m => m.StartsWith("Existing streamed tile requires composition/deconfliction:"));
+        exportStatus.Text = issueMessages.Length > 0 ? "Resolve these warnings for a complete build, or enable Allow warnings below for a test resource.\n\n" + string.Join("\n", issues.Items.Cast<IssueGroup>().Select(g => "• " + g.Title)) :
             "Preview checks passed. Prepare the original navigation below and preview again before building. Movement still needs testing in FiveM.";
+        if (result == "test-resource-with-warnings") exportStatus.Text = "Test resource saved. OPEN RESULTS contains resource/ and BUILD-WARNINGS.txt. Test the routes in FiveM; bypassed inputs are still listed in the report.";
+        if (result == "failed") exportStatus.Text = "Build stopped. The reported error must be resolved; Allow warnings does not bypass invalid native output or tile conflicts.";
         if (!currentRun) exportStatus.Text = "You are viewing an earlier result. Generate a preview of the current project before exporting.";
-        status.Text = "Preview saved. OPEN RESULTS shows its files and full report.";
+        status.Text = result == "test-resource-with-warnings" ? "Test resource saved. OPEN RESULTS shows its files and bypassed warnings." : "Result saved. OPEN RESULTS shows its files and full report.";
         LoadPreview(collisionView.Checked); RefreshActions();
     }
 
@@ -704,6 +712,8 @@ internal sealed class MainForm : Form
     internal int IssueCount => issueMessages.Length;
     internal int IssueGroupCount => issues.Items.Count;
     internal bool ExportEnabled => package.Enabled;
+    internal void AllowWarningsForTest(bool value) => allowWarnings.Checked = value;
+    internal Task BuildForTest() => BakeClicked(false);
     internal bool GameDetected => useGame.Checked && archiveItems.Count > 0;
     internal bool AdvancedVisible => advanced.Checked;
     internal bool AutomaticArea => autoFit.Checked;
@@ -757,7 +767,10 @@ internal sealed class MainForm : Form
     private void RefreshActions()
     {
         generate.Enabled = operation == null && (maps.CheckedItems.Count > 0 || collisions.Rows.Count > 0);
-        package.Enabled = operation == null && previewReadyForExport && compose.Checked && !string.IsNullOrWhiteSpace(baseline.Text);
+        bool hasBaseline = compose.Checked && !string.IsNullOrWhiteSpace(baseline.Text);
+        package.Text = allowWarnings.Checked ? "BUILD TEST RESOURCE" : "BUILD RESOURCE";
+        package.Enabled = operation == null && previewReadyForExport && (issueMessages.Length == 0 || allowWarnings.Checked) &&
+            (hasBaseline || (allowWarnings.Checked && useGame.Checked && archiveItems.Count > 0));
         foreach (var button in new[] { generate, package, cancel }) button.BackColor = button.Enabled ? BlrpTheme.Accent : Color.FromArgb(112, 120, 136);
     }
 
@@ -769,11 +782,12 @@ internal sealed class MainForm : Form
             {
                 if (control is TextBoxBase text) text.TextChanged += (_, _) => InputsChanged();
                 if (control is NumericUpDown number) number.ValueChanged += (_, _) => InputsChanged();
-                if (control is CheckBox check) check.CheckedChanged += (_, _) => InputsChanged();
+                if (control is CheckBox check && check != allowWarnings) check.CheckedChanged += (_, _) => InputsChanged();
                 Watch(control);
             }
         }
         Watch(editor);
+        allowWarnings.CheckedChanged += (_, _) => RefreshActions();
         foreach (var number in area) number.ValueChanged += (_, _) =>
         { if (!applyingSettings && operation == null) { autoFit.Checked = false; areaHint.Text = "Using your custom preview area."; } };
         build.ValueChanged += (_, _) =>

@@ -105,9 +105,13 @@ public static class NavMeshCompiler
         var original = all.ToDictionary(p => p, p => (Vertices: p.Vertices, Edges: p.Edges));
         var pool = new VertexPool();
         foreach (var p in all) foreach (var v in p.Vertices) pool.Add(v);
+        var changedPool = new VertexPool();
+        foreach (var p in all.Where(p => baseline?.Preserved.Contains(p) != true))
+            foreach (var v in p.Vertices) changedPool.Add(v);
         // Split T-junctions before matching. The spatial buckets avoid comparing every vertex with every edge.
         foreach (var poly in all)
         {
+            bool preserved = baseline?.Preserved.Contains(poly) == true;
             var vertices = new List<Vector3>(); var edges = new List<YnvEdge>();
             var source = original[poly];
             for (int i = 0; i < source.Vertices.Length; i++)
@@ -115,9 +119,10 @@ public static class NavMeshCompiler
                 var a = source.Vertices[i]; var b = source.Vertices[(i + 1) % source.Vertices.Length];
                 var points = new List<(float T, Vector3 Position)> { (0, a) };
                 var ab = b - a; float lengthSquared = ab.LengthSquared();
-                if (lengthSquared <= 1e-12f) throw new InvalidDataException("Degenerate navigation edge.");
-                foreach (var v in pool.NearSegment(a, b))
+                if (lengthSquared <= 1e-12f && !preserved) throw new InvalidDataException("Degenerate navigation edge.");
+                foreach (var v in (preserved ? changedPool : pool).NearSegment(a, b))
                 {
+                    if (lengthSquared <= 1e-12f) break; // Keep an existing zero-length vanilla edge unchanged.
                     float t = Vector3.Dot(v - a, ab) / lengthSquared;
                     if (t <= 0 || t >= 1) continue;
                     var projected = a + ab * t;
@@ -128,7 +133,7 @@ public static class NavMeshCompiler
                 }
                 foreach (var point in points.OrderBy(v => v.T))
                 {
-                    if (vertices.Count > 0 && Vector3.DistanceSquared(vertices[^1], point.Position) < EdgeTolerance * EdgeTolerance) continue;
+                    if ((!preserved || point.T > 0) && vertices.Count > 0 && Vector3.DistanceSquared(vertices[^1], point.Position) < EdgeTolerance * EdgeTolerance) continue;
                     vertices.Add(point.Position);
                     edges.Add(source.Edges != null && i < source.Edges.Length ? CopyEdge(source.Edges[i]) : Boundary());
                 }
@@ -140,13 +145,18 @@ public static class NavMeshCompiler
         for (int i = 0; i < poly.Vertices.Length; i++)
         {
             int a = pool.Add(poly.Vertices[i]), b = pool.Add(poly.Vertices[(i + 1) % poly.Vertices.Length]);
-            if (a == b) throw new InvalidDataException($"Navigation edge collapses within native quantization tolerance: {poly.Vertices[i]} -> {poly.Vertices[(i + 1) % poly.Vertices.Length]}");
+            if (a == b)
+            {
+                if (baseline?.Preserved.Contains(poly) == true) continue;
+                throw new InvalidDataException($"Navigation edge collapses within native quantization tolerance: {poly.Vertices[i]} -> {poly.Vertices[(i + 1) % poly.Vertices.Length]}");
+            }
             var key = (Math.Min(a, b), Math.Max(a, b));
             if (!edgeOwners.TryGetValue(key, out var owners)) edgeOwners[key] = owners = [];
             owners.Add((poly, i, a));
         }
         foreach (var owners in edgeOwners.Values)
         {
+            if (baseline != null && owners.All(o => baseline.Preserved.Contains(o.Poly))) continue;
             if (owners.Count > 2) throw new InvalidDataException("Non-manifold or overlapping navigation polygons share an edge.");
             if (owners.Count != 2) continue;
             var a = owners[0]; var b = owners[1];

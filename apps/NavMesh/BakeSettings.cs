@@ -27,6 +27,7 @@ public sealed class BakeSettings
     public string[] Dependencies { get; set; } = [];
     public string CollisionReview { get; set; } = "";
     public bool AllowIsolatedComponents { get; set; }
+    public bool AllowWarnings { get; set; }
 
     public static readonly JsonSerializerOptions Json = new()
     {

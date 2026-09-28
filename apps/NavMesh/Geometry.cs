@@ -15,6 +15,33 @@ public static class Geometry
         points.Min(v => v.Y) <= max.Y && points.Max(v => v.Y) >= min.Y &&
         points.Min(v => v.Z) <= max.Z && points.Max(v => v.Z) >= min.Z;
 
+    // Native polygons can have small concave corners after quantization. Split them without moving vertices.
+    public static List<Vector3[]> ConvexPieces(Vector3[] polygon)
+    {
+        if (IsConvex(polygon)) return [polygon];
+        if (SignedArea(polygon) <= 0) throw new InvalidDataException("Baseline polygon has unsupported winding.");
+        var vertices = polygon.ToList();
+        var pieces = new List<Vector3[]>();
+        while (vertices.Count > 3)
+        {
+            bool clipped = false;
+            for (int i = 0; i < vertices.Count; i++)
+            {
+                int previous = (i + vertices.Count - 1) % vertices.Count, next = (i + 1) % vertices.Count;
+                var a = vertices[previous]; var b = vertices[i]; var c = vertices[next];
+                if (SignedArea([a, b, c]) <= 1e-10) continue;
+                bool contains = vertices.Where((_, j) => j != previous && j != i && j != next)
+                    .Any(p => SignedArea([a, b, p]) >= -1e-10 && SignedArea([b, c, p]) >= -1e-10 && SignedArea([c, a, p]) >= -1e-10);
+                if (contains) continue;
+                pieces.Add([a, b, c]); vertices.RemoveAt(i); clipped = true; break;
+            }
+            if (!clipped) throw new InvalidDataException("Cannot triangulate the original navigation polygon without changing its boundary.");
+        }
+        if (SignedArea(vertices.ToArray()) <= 0) throw new InvalidDataException("Degenerate original navigation polygon.");
+        pieces.Add(vertices.ToArray());
+        return pieces;
+    }
+
     public static double SignedArea(Vector3[] p)
     {
         double area = 0;

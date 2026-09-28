@@ -29,6 +29,7 @@ public sealed class Baseline
             ?? throw new InvalidDataException("Missing baseline manifest.");
         if (manifest.GameBuild != settings.GameBuild || string.IsNullOrWhiteSpace(manifest.Source) || (!diagnostic && !manifest.ValidatedForBuild))
             throw new InvalidDataException("Baseline gameBuild/source does not match the requested build.");
+        if (!manifest.ValidatedForBuild) scene.Issues.Add("Original baseline source has not been verified for the target build.");
         scene.Inputs[path] = CollisionScene.Hash(path);
         var baseline = new Baseline();
         foreach (var item in manifest.Files.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
@@ -42,6 +43,15 @@ public sealed class Baseline
             if (ynv.AreaID is < 0 or >= 10000 || NavMeshCompiler.TileName(ynv.AreaID) != item.Key)
                 throw new InvalidDataException($"Baseline filename/AreaID mismatch: {item.Key}");
             if (!baseline.Tiles.TryAdd(ynv.AreaID, ynv)) throw new InvalidDataException("Duplicate baseline area.");
+            if (settings.AllowWarnings)
+            {
+                foreach (var point in ynv.Points ?? [])
+                    if (Geometry.Overlaps([point.Position], settings.BoundsMin, settings.BoundsMax))
+                        scene.Issues.Add($"Original navigation point {ynv.AreaID}:{point.Index} retained inside the edit area at {point.Position}; review its behavior in FiveM.");
+                foreach (var poly in ynv.Polys.Where(p => p.PortalLinks?.Length > 0))
+                    if (Math.Abs(Geometry.SignedArea(Geometry.ClipBox(poly.Vertices, settings.BoundsMin, settings.BoundsMax))) > 1e-8)
+                        scene.Issues.Add($"Original navigation portal polygon {ynv.AreaID}:{poly.Index} retained inside the edit area. Test output may overlap it; review the special route in FiveM.");
+            }
             foreach (var poly in ynv.Polys) baseline.originals[(ynv.AreaID, poly.Index)] = poly;
         }
         foreach (var tile in baseline.Tiles.Values)
@@ -82,23 +92,23 @@ public sealed class Baseline
         foreach (var tile in Tiles.Values)
         {
             foreach (var point in tile.Points ?? [])
-                if (Geometry.Overlaps([point.Position], settings.BoundsMin, settings.BoundsMax))
+                if (!settings.AllowWarnings && Geometry.Overlaps([point.Position], settings.BoundsMin, settings.BoundsMax))
                     throw new InvalidDataException($"Edit intersects navigation point {tile.AreaID}:{point.Index}, type {point.Type}, at {point.Position}; explicit point authoring is required.");
             var newPolys = new List<YnvPoly>();
             foreach (var poly in tile.Polys)
             {
                 var removedPart = Geometry.ClipBox(poly.Vertices, settings.BoundsMin, settings.BoundsMax);
-                if (removedPart.Length < 3 || Math.Abs(Geometry.SignedArea(removedPart)) < 1e-8)
+                if (removedPart.Length < 3 || Math.Abs(Geometry.SignedArea(removedPart)) < 1e-8 ||
+                    (settings.AllowWarnings && poly.PortalLinks?.Length > 0))
                 {
                     Preserved.Add(poly); newPolys.Add(poly); replacements[poly] = [poly];
                     Origins[poly] = poly;
                     continue;
                 }
-                if (!Geometry.IsConvex(poly.Vertices)) throw new InvalidDataException("Baseline edit requires convex polygons with positive winding.");
                 editedAreas.Add(tile.AreaID);
                 if (poly.PortalLinks?.Length > 0)
                     throw new InvalidDataException($"Edit intersects special navigation portal at {tile.AreaID}:{poly.Index}; adjust bounds or author its replacement explicitly.");
-                var pieces = Geometry.SubtractBox(poly.Vertices, settings.BoundsMin, settings.BoundsMax)
+                var pieces = Geometry.ConvexPieces(poly.Vertices).SelectMany(p => Geometry.SubtractBox(p, settings.BoundsMin, settings.BoundsMax))
                     .Select(v => new YnvPoly { RawData = poly.RawData, Vertices = NavMeshCompiler.QuantizeXY(v, poly.AreaID), AreaID = poly.AreaID })
                     .Where(p => p.Vertices.Length >= 3 && Geometry.SignedArea(p.Vertices) > 1e-8).ToList();
                 foreach (var piece in pieces)
