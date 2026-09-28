@@ -17,7 +17,7 @@ public static class SelfTest
         {
             var original = BakeSettings.Load(project);
             original.OutputDirectory = Path.Combine(temporary, "results");
-            using var form = new MainForm { StartPosition = FormStartPosition.Manual, Location = new Point(-20000, -20000), ShowInTaskbar = false };
+            using var form = new MainForm(preferencesPath: Path.Combine(temporary, "preferences.json")) { StartPosition = FormStartPosition.Manual, Location = new Point(-20000, -20000), ShowInTaskbar = false };
             form.ApplySettings(original);
             form.Shown += async (_, _) =>
             {
@@ -32,7 +32,7 @@ public static class SelfTest
                     Require(original.EntitySets.Count == reloaded.EntitySets.Count && original.PolygonFlags.SequenceEqual(reloaded.PolygonFlags) &&
                         original.Collision.Length == reloaded.Collision.Length, "desktop project round-trip preserves advanced settings");
                     form.LoadProject(saved);
-                    var details = MapSelection.Read(original);
+                    var details = MapSelection.Read(reloaded);
                     await form.ReadMapDetailsForTest();
                     var fitted = form.ReadSettings();
                     Require(Enumerable.Range(0, 3).All(i => Math.Abs(fitted.Min[i] - (details.Min[i] - 0.5f)) < 0.001f &&
@@ -43,10 +43,15 @@ public static class SelfTest
                     Require(report.RootElement.GetProperty("status").GetString() == "diagnostic-only", "desktop preview completes");
                     Require(form.PreviewPolygonCount > 0, "desktop displays generated polygons");
                     Require(form.IssueCount == report.RootElement.GetProperty("issues").GetArrayLength(), "desktop displays unresolved inputs");
+                    Require(!form.AdvancedVisible && form.IssueGroupCount <= 6, "normal workflow hides advanced controls and groups warnings");
+                    Require(form.IssueCount == 0 || !form.ExportEnabled, "incomplete preview cannot enable export");
                     Require(float.IsFinite(details.Min.X) && details.Min.X < details.Max.X && details.Min.Y < details.Max.Y,
                         "map picker reads finite world bounds");
                     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(screenshot))!);
                     form.CaptureTabsForTest(screenshot);
+                    form.SetAdvancedForTest(true);
+                    form.CaptureTabsForTest(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(screenshot))!, Path.GetFileNameWithoutExtension(screenshot) + "-advanced.png"));
+                    form.SetAdvancedForTest(false);
                     using var guide = new HelpForm { StartPosition = FormStartPosition.Manual, Location = new Point(-20000, -20000) };
                     guide.Show(form);
                     Require(guide.TopicCount == 8 && guide.CurrentArticle.Contains("GENERATE PREVIEW"), "embedded help opens at the quick start");
@@ -61,6 +66,25 @@ public static class SelfTest
                     guide.DrawToBitmap(helpImage, new Rectangle(Point.Empty, helpImage.Size));
                     helpImage.Save(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(screenshot))!, Path.GetFileNameWithoutExtension(screenshot) + "-help.png"));
                     guide.Close();
+
+                    // Exercise the ordinary first-run flow: no project, no game-folder dialog, no coordinates.
+                    form.ApplySettings(new BakeSettings { GameBuild = original.GameBuild, Min = [0, 0, -1], Max = [10, 10, 4],
+                        OutputDirectory = Path.Combine(temporary, "first-run"), AutoFitArea = true });
+                    Require(form.AutomaticArea && !form.PreviewEnabled && !form.ExportEnabled, "empty project guides the user to map selection first");
+                    if (GameSource.FindLegacyDirectory() != null) Require(form.GameDetected, "installed GTA is selected automatically");
+                    string firstMap = original.Ymaps[0];
+                    string firstResource = original.ResourceRoots.First(r => !Path.GetRelativePath(r, firstMap).StartsWith(".."));
+                    form.AddResourceForTest(firstResource); form.SelectMapsForTest([firstMap]);
+                    await form.GenerateForTest();
+                    Require(form.PreviewPolygonCount > 0 && form.AutomaticArea, "one preview action fits and generates the selected map");
+                    if (Path.GetFileName(firstMap) == "hns_josecafe_mrpark_milo_.ymap")
+                    {
+                        var setup = form.ReadSettings();
+                        Require(setup.ResourceRoots.Any(r => Path.GetFileName(r) == "hns_josecafe_base"), "cafe base resource discovered from the MLO owner");
+                        Require(setup.Max[0] - setup.Min[0] < 35 && setup.Max[1] - setup.Min[1] < 25, "automatic cafe area stays close to its actual collision");
+                    }
+                    Require(!form.ExportEnabled, "unreviewed first-run preview does not enable export");
+                    form.CaptureTabsForTest(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(screenshot))!, Path.GetFileNameWithoutExtension(screenshot) + "-first-run.png"));
                 }
                 catch (Exception e) { failure = e; }
                 finally { form.Close(); }
@@ -154,6 +178,14 @@ public static class SelfTest
                 sourceSet.Archives.Select(a => a.LogicalPath).SequenceEqual(new[] { "common.rpf", "x64a.rpf", "x64b.rpf" }) &&
                 sourceSet.Archives.All(a => Path.IsPathFullyQualified(a.Path) && a.Sha256.Length == 0),
                 "base game selection preserves target build, deterministic order and unverified provenance");
+            string preferencesPath = Path.Combine(temporary, "preferences.json");
+            new UserPreferences { GtaFolder = install, GameBuild = 3095, ResultsFolder = temporary }.Save(preferencesPath);
+            var preferences = UserPreferences.Load(preferencesPath);
+            Require(preferences.GtaFolder == install && preferences.ResultsFolder == temporary && GameSource.FindLegacyDirectory(preferences.GtaFolder) == install,
+                "remembered game location is restored and preferred without changing build verification");
+            var groups = IssueGroup.From(["Escrow-protected test.ydr", "Escrow-protected test.ydr", "Missing owning YTYP for test", "Archive not pinned by SHA256: test", "Another failure"]);
+            Require(groups.Length == 4 && groups.Sum(g => g.Messages.Length) == 4 && groups.All(g => g.NextStep.Length > 30),
+                "issues are grouped with next steps while retaining every distinct detail");
             var originals = new List<Vector3[]>();
             for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) originals.Add(Quad(x * 150, y * 150, 150, 150, 0));
             var originalTiles = NavMeshCompiler.CreateTiles(NavMeshCompiler.TilePolygons(originals, settings));

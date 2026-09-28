@@ -13,6 +13,56 @@ internal sealed record MapDetails(Vector3 Min, Vector3 Max, EntitySetChoice[] Se
 
 internal static class MapSelection
 {
+    internal static string[] FindSiblingDependencies(string[] resources, string[] maps, CancellationToken cancellation = default)
+    {
+        var selected = resources.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var nearby = resources.Select(Path.GetDirectoryName).Where(p => p != null && Directory.Exists(p))
+            .SelectMany(p => Directory.EnumerateDirectories(p!))
+            .Where(p => File.Exists(Path.Combine(p, "fxmanifest.lua")) || File.Exists(Path.Combine(p, "__resource.lua")));
+        var owners = new Dictionary<uint, List<(string Root, Archetype Archetype)>>();
+        foreach (string root in resources.Concat(nearby).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string path in Directory.EnumerateFiles(root, "*.ytyp", SearchOption.AllDirectories))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            try
+            {
+                var data = File.ReadAllBytes(path);
+                if (data.Length < 4 || System.Text.Encoding.ASCII.GetString(data, 0, 4) != "RSC7") continue;
+                var file = new YtypFile(); file.Load(data);
+                foreach (var archetype in file.AllArchetypes ?? [])
+                {
+                    if (!owners.TryGetValue(archetype.Hash, out var matches)) owners[archetype.Hash] = matches = [];
+                    matches.Add((root, archetype));
+                }
+            }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+            { Console.WriteLine($"Dependency scan could not read {path}: {e.Message}"); }
+        }
+        var queue = new Queue<uint>();
+        foreach (string path in maps)
+        {
+            var file = new YmapFile(); file.Load(File.ReadAllBytes(path));
+            foreach (var entity in file.AllEntities ?? []) queue.Enqueue(entity.CEntityDef.archetypeName);
+        }
+        var visited = new HashSet<uint>(); var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (queue.TryDequeue(out uint hash))
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (!visited.Add(hash) || !owners.TryGetValue(hash, out var matches)) continue;
+            var chosen = matches.Where(m => selected.Contains(m.Root)).ToArray();
+            if (chosen.Length == 0) chosen = matches.ToArray();
+            // Auto-add interior owners only. An unrelated sibling may override an ordinary GTA prop.
+            if (!chosen.Any(m => m.Archetype is MloArchetype)) continue;
+            var roots = chosen.Select(m => m.Root).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (roots.Length != 1)
+            { Console.WriteLine($"Multiple resources supply {hash}; choose the intended owner manually: {string.Join(", ", roots)}"); continue; }
+            if (!selected.Contains(roots[0])) added.Add(roots[0]);
+            foreach (var mlo in chosen.Select(m => m.Archetype).OfType<MloArchetype>())
+                foreach (var child in mlo.entities ?? []) queue.Enqueue(child.Data.archetypeName);
+        }
+        return added.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     public static MapDetails Read(BakeSettings settings, GameSourceManifest? gameSources = null)
     {
         if (settings.Ymaps.Length == 0) throw new InvalidDataException("Select at least one map first.");
@@ -57,7 +107,7 @@ internal static class MapSelection
                 if (archetype == null)
                 {
                     unresolved.Add($"Cannot locate object definition {entity.CEntityDef.archetypeName} (0x{hash:X8}) in {Path.GetFileName(path)}. " +
-                        (game == null ? "Use Game archives > LOAD BASE GAME, or add the resource that supplies it." : "Add its owning resource or the matching DLC archive to Game archives.") +
+                        (game == null ? "Use GTA SETTINGS to locate the game, or add the resource that supplies it." : "Add its owning resource or the matching DLC archive under Advanced settings > Game sources.") +
                         " The area below excludes this object; its collision must still be resolved before building.");
                     continue;
                 }
@@ -88,7 +138,7 @@ internal static class MapSelection
                     sets.Add(new EntitySetChoice(Path.GetFileName(path) + ":" + entity.Index, set.EntitySet.Name));
             }
         }
-        if (collisionCount + metadataCount == 0) throw new InvalidDataException("No map bounds could be resolved. Select the owning resource or configure Game archives, then try again.");
+        if (collisionCount + metadataCount == 0) throw new InvalidDataException("No map bounds could be resolved. Add the resource that supplies this map's interior, or use GTA SETTINGS to locate the game, then try again.");
         if (game != null && !game.Manifest.ValidatedForBuild)
             unresolved.Add("Game archives resolved object definitions for this preview. Their compatibility with the target build remains unverified.");
         return new MapDetails(min, max, sets.ToArray(), unresolved.Distinct().ToArray(), collisionCount, metadataCount);

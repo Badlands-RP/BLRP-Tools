@@ -8,8 +8,25 @@ namespace BLRP.NavMesh;
 
 internal sealed class MainForm : Form
 {
-    private readonly TabControl editor = new() { Dock = DockStyle.Fill };
+    private readonly TabControl editor = new() { Dock = DockStyle.Fill, Multiline = true };
     private readonly FlowLayoutPanel toolbar = new() { Dock = DockStyle.Fill, WrapContents = false };
+    private readonly CheckBox advanced = new() { Text = "Advanced settings", AutoSize = true, Margin = new Padding(18, 8, 0, 0) };
+    private readonly CheckBox autoFit = new() { Text = "Fit the area automatically before previewing", AutoSize = true };
+    private readonly Label gameStatus = Caption("Checking for GTA V Legacy…");
+    private readonly Label areaHint = Caption("The preview area will be fitted to your selected map.");
+    private readonly Label exportStatus = Caption("Generate a preview first. Export becomes available after the input checks pass.");
+    private readonly Label resourceHint = Caption("Choose the resource folder containing fxmanifest.lua. Required sibling resources are detected when possible.");
+    private readonly TextBox issueDetails = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, WordWrap = true, ScrollBars = ScrollBars.Vertical };
+    private readonly ToolTip tips = new() { AutoPopDelay = 15000 };
+    private readonly NumericUpDown floorHeight = Number(0, -100000, 100000, 2);
+    private readonly CheckBox collisionView = new() { Text = "Show collision", AutoSize = true, Margin = new Padding(10, 7, 0, 0) };
+    private TabPage[] advancedPages = [];
+    private TabPage exportPage = null!;
+    private readonly string preferencesPath;
+    private readonly UserPreferences preferences;
+    private bool applyingSettings;
+    private bool previewReadyForExport;
+    private string[] issueMessages = [];
     private readonly ListBox resources = new() { Dock = DockStyle.Fill, HorizontalScrollbar = true };
     private readonly CheckedListBox maps = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
     private readonly CheckedListBox entitySets = new() { Dock = DockStyle.Fill, CheckOnClick = true, HorizontalScrollbar = true };
@@ -20,7 +37,7 @@ internal sealed class MainForm : Form
     private readonly CheckBox compose = new() { Text = "Include original surrounding navigation", AutoSize = true };
     private readonly TextBox conflicts = new() { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical };
     private readonly CheckBox useGame = new() { Text = "Include assets from game archives", AutoSize = true };
-    private readonly TextBox gameFolder = new() { Dock = DockStyle.Fill };
+    private readonly TextBox gameFolder = new() { Dock = DockStyle.Fill, ReadOnly = true };
     private readonly NumericUpDown archiveBuild = Number(3095, 1, 100000, 0);
     private readonly TextBox sourceNotes = new() { Dock = DockStyle.Fill };
     private readonly CheckBox validated = new() { Text = "Archive selection verified for this game build", AutoSize = true };
@@ -37,7 +54,7 @@ internal sealed class MainForm : Form
     private readonly NavPreview preview = new() { Dock = DockStyle.Fill };
     private readonly TextBox log = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false };
     private readonly ListBox issues = new() { Dock = DockStyle.Fill, HorizontalScrollbar = true };
-    private readonly Label summary = Caption("Select a resource and its maps, then read the map area.");
+    private readonly Label summary = Caption("Start with your map\nAdd a map resource on the left, then generate a preview.");
     private readonly Label status = Caption("Ready");
     private readonly ProgressBar progress = new() { Dock = DockStyle.Fill, Style = ProgressBarStyle.Marquee, Visible = false };
     private readonly Button generate;
@@ -50,8 +67,10 @@ internal sealed class MainForm : Form
     private bool closeAfterOperation;
     private HelpForm? help;
 
-    public MainForm(string? initialPath = null)
+    public MainForm(string? initialPath = null, string? preferencesPath = null)
     {
+        this.preferencesPath = preferencesPath ?? UserPreferences.DefaultPath;
+        preferences = UserPreferences.Load(this.preferencesPath);
         Text = "BLRP NavMesh";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
@@ -69,18 +88,41 @@ internal sealed class MainForm : Form
         cancel.Enabled = false;
         BuildLayout();
         BlrpTheme.Apply(this);
+        void ReadableFonts(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                control.Font = new Font("Segoe UI", Math.Max(10, control.Font.Size), control.Font.Style);
+                ReadableFonts(control);
+            }
+        }
+        ReadableFonts(this);
         foreach (var tab in editor.TabPages.Cast<TabPage>()) { tab.UseVisualStyleBackColor = false; tab.BackColor = BlrpTheme.Background; }
         foreach (var list in new ListBox[] { resources, maps, entitySets, issues }) { list.BackColor = BlrpTheme.Input; list.ForeColor = Color.White; }
         agent.ViewBackColor = BlrpTheme.Input; agent.ViewForeColor = Color.White;
         agent.HelpBackColor = BlrpTheme.Card; agent.HelpForeColor = Color.White;
         agent.LineColor = BlrpTheme.Card;
-        ApplySettings(new BakeSettings { GameBuild = 3095, Min = [0, 0, -1], Max = [10, 10, 4],
-            OutputDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "BLRP", "NavMesh") });
+        ConfigureInputEvents();
+        advanced.CheckedChanged += (_, _) => SetAdvanced(advanced.Checked);
+        SetAdvanced(false);
+        ApplySettings(new BakeSettings { GameBuild = Math.Clamp(preferences.GameBuild, 1, 100000), Min = [0, 0, -1], Max = [10, 10, 4], AutoFitArea = true,
+            OutputDirectory = string.IsNullOrWhiteSpace(preferences.ResultsFolder) ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "BLRP", "NavMesh") : preferences.ResultsFolder });
         FormClosing += (_, e) =>
         {
             if (operation == null) return;
             e.Cancel = true; closeAfterOperation = true; operation.Cancel();
             status.Text = "Finishing the current step before closing…";
+        };
+        FormClosed += (_, _) =>
+        {
+            try
+            {
+                if (GameSource.IsLegacyDirectory(gameFolder.Text)) preferences.GtaFolder = gameFolder.Text;
+                preferences.GameBuild = (int)build.Value; preferences.ResultsFolder = output.Text;
+                preferences.Save(this.preferencesPath);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* Preferences must not prevent closing. */ }
+            tips.Dispose();
         };
         Shown += (_, _) => { if (initialPath != null) TryUi(() => LoadProject(initialPath)); };
     }
@@ -104,39 +146,49 @@ internal sealed class MainForm : Form
         page.Controls.Add(header, 0, 0);
         toolbar.Controls.Add(Button("NEW", () =>
         {
-            projectPath = null; latestOutput = null; preview.Clear(); issues.Items.Clear(); log.Clear();
-            ApplySettings(new BakeSettings { GameBuild = (int)build.Value, Min = [0, 0, -1], Max = [10, 10, 4], OutputDirectory = output.Text });
-            Text = "BLRP NavMesh"; summary.Text = "New project. Select a resource and its maps.";
+            projectPath = null; latestOutput = null; preview.Clear(); SetIssues([]); log.Clear();
+            ApplySettings(new BakeSettings { GameBuild = (int)build.Value, Min = [0, 0, -1], Max = [10, 10, 4], OutputDirectory = output.Text, AutoFitArea = true });
+            Text = "BLRP NavMesh"; summary.ForeColor = Color.LightSkyBlue;
+            summary.Text = "Start with your map\nAdd a map resource on the left, then generate a preview.";
         }));
         toolbar.Controls.Add(Button("OPEN PROJECT", () => PickFile("Bake projects|*.json", path => LoadProject(path))));
         toolbar.Controls.Add(Button("SAVE PROJECT", SaveProject));
         toolbar.Controls.Add(Button("OPEN RESULTS", () => { if (latestOutput != null) OpenFolder(latestOutput); }));
         toolbar.Controls.Add(Button("OPEN PREVIOUS RESULT", () => PickFile("Bake reports|report.json", path => ShowReport(Path.GetDirectoryName(path)!))));
+        toolbar.Controls.Add(advanced);
         page.Controls.Add(toolbar, 0, 1);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new Size(1300, 700), SplitterDistance = 580,
             Panel1MinSize = 480, Panel2MinSize = 400 };
         split.Panel1.Padding = new Padding(0, 0, 10, 0); split.Panel1.Controls.Add(editor);
-        BuildMapTab(); BuildArchiveTab(); BuildNavigationTab(); BuildCollisionTab();
+        BuildMapTab(); BuildAreaTab(); BuildArchiveTab(); BuildNavigationTab(); BuildCollisionTab();
+        advancedPages = editor.TabPages.Cast<TabPage>().Skip(1).ToArray();
+        BuildExportTab(); exportPage = editor.TabPages[^1];
         var result = Table();
         result.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
-        result.RowStyles.Add(new RowStyle(SizeType.Percent, 63));
+        result.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
         result.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        result.RowStyles.Add(new RowStyle(SizeType.Percent, 37));
+        result.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
         summary.Padding = new Padding(8); result.Controls.Add(summary, 0, 0);
         result.Controls.Add(preview, 0, 1);
         var viewControls = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-        var slice = new CheckBox { Text = "Floor at Z", AutoSize = true, Margin = new Padding(6, 7, 0, 0) };
-        var height = Number(10, -100000, 100000, 2); height.Width = 90; height.Dock = DockStyle.None;
-        void SetSlice() { preview.FloorHeight = slice.Checked ? (float)height.Value : null; preview.Invalidate(); }
-        slice.CheckedChanged += (_, _) => SetSlice(); height.ValueChanged += (_, _) => SetSlice();
-        viewControls.Controls.AddRange([Button("FIT VIEW", preview.Fit), slice, height]);
-        var collisionView = new CheckBox { Text = "Collision", AutoSize = true, Margin = new Padding(10, 7, 0, 0) };
+        var slice = new CheckBox { Text = "Floor height", AutoSize = true, Margin = new Padding(6, 7, 0, 0) };
+        floorHeight.Width = 90; floorHeight.Dock = DockStyle.None;
+        void SetSlice() { preview.FloorHeight = slice.Checked ? (float)floorHeight.Value : null; preview.Invalidate(); }
+        slice.CheckedChanged += (_, _) => SetSlice(); floorHeight.ValueChanged += (_, _) => SetSlice();
+        viewControls.Controls.AddRange([Button("FIT VIEW", preview.Fit), slice, floorHeight]);
         collisionView.CheckedChanged += (_, _) => TryUi(() => LoadPreview(collisionView.Checked));
         viewControls.Controls.Add(collisionView); result.Controls.Add(viewControls, 0, 2);
         var details = new TabControl { Dock = DockStyle.Fill };
-        var issueTab = new TabPage("Issues"); issueTab.Controls.Add(issues);
-        var logTab = new TabPage("Activity"); logTab.Controls.Add(log);
+        var issueTab = new TabPage("Needs attention");
+        var issueLayout = Table(); issueLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 100)); issueLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        issueLayout.Controls.Add(issues, 0, 0); issueLayout.Controls.Add(issueDetails, 0, 1); issueTab.Controls.Add(issueLayout);
+        issues.SelectedIndexChanged += (_, _) =>
+        {
+            if (issues.SelectedItem is IssueGroup group)
+                issueDetails.Text = group.NextStep + Environment.NewLine + Environment.NewLine + "Details:" + Environment.NewLine + string.Join(Environment.NewLine, group.Messages);
+        };
+        var logTab = new TabPage("Technical log"); logTab.Controls.Add(log);
         details.TabPages.AddRange([issueTab, logTab]); result.Controls.Add(details, 0, 3);
         split.Panel2.Controls.Add(result); page.Controls.Add(split, 0, 2);
         var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Padding = new Padding(0, 10, 0, 0) };
@@ -152,16 +204,40 @@ internal sealed class MainForm : Form
 
     private void BuildMapTab()
     {
-        var body = Tab("Map & area");
-        Row(body, "Mapping resources", ListWithActions(resources, () => PickFolder(path => AddResource(path)), () =>
+        var body = Tab("Map & preview");
+        FullRow(body, Caption("1. Choose a map    →    2. Generate a preview    →    3. Review & export"), 48);
+        var gameRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        gameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); gameRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
+        gameRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        gameRow.Controls.Add(gameStatus, 0, 0); var gameButton = Button("GTA SETTINGS", () =>
+        {
+            if (!useGame.Checked && archiveItems.Count == 0) ChooseGameFolder();
+            else { advanced.Checked = true; editor.SelectedTab = advancedPages[1]; }
+        });
+        gameButton.Dock = DockStyle.Fill; gameButton.AutoSize = false; gameRow.Controls.Add(gameButton, 1, 0);
+        FullRow(body, gameRow, 72);
+        Row(body, "Map resources", ListWithActions(resources, () => PickFolder(path => AddResource(path)), () =>
         {
             if (resources.SelectedItem is not string root) return;
             resources.Items.Remove(root);
             foreach (string path in maps.Items.Cast<string>().Where(p => Path.GetRelativePath(root, p) is var relative && !relative.StartsWith("..")).ToArray()) maps.Items.Remove(path);
-        }), 132);
-        Row(body, "Maps to include", ListWithActions(maps, () => PickFiles("Map placements|*.ymap", paths =>
+            InputsChanged();
+        }, "ADD MAP RESOURCE"), 120);
+        FullRow(body, resourceHint, 48);
+        Row(body, "Placements", ListWithActions(maps, () => PickFiles("Map placements|*.ymap", paths =>
         { foreach (string path in paths) if (!maps.Items.Contains(path)) maps.Items.Add(path, true); }), () =>
-        { if (maps.SelectedIndex >= 0) maps.Items.RemoveAt(maps.SelectedIndex); }), 145);
+        { if (maps.SelectedIndex >= 0) maps.Items.RemoveAt(maps.SelectedIndex); InputsChanged(); }), 105);
+        Row(body, "Server build", build, 34);
+        Row(body, "Save results to", FolderField(output), 36);
+        FullRow(body, autoFit, 32);
+        FullRow(body, areaHint, 44);
+        FullRow(body, Caption("Click GENERATE PREVIEW below. The tool finds the map area and checks its collision. Your map files stay unchanged."), 52);
+    }
+
+    private void BuildAreaTab()
+    {
+        var body = Tab("Area & layout");
+        FullRow(body, Caption("Optional overrides. Normal previews fit the area automatically. Editing coordinates turns automatic fitting off."), 58);
         Row(body, "World area", AsyncButton("READ MAP BOUNDS & ENTITY SETS", ReadMapDetails), 40);
         var bounds = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 3 };
         bounds.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46));
@@ -171,23 +247,29 @@ internal sealed class MainForm : Form
         Row(body, "Replacement box (m)", bounds, 96);
         Row(body, "Active entity sets", entitySets, 115);
         Row(body, "", Caption("Unchecked sets are excluded. Match the sets enabled on your server."), 42);
-        Row(body, "Game build", build, 34);
-        Row(body, "Results folder", FolderField(output), 36);
-        Row(body, "", Caption("Each run gets a new folder. Preview output is for inspection; a resource build requires complete inputs."), 58);
+    }
+
+    private void BuildExportTab()
+    {
+        var body = Tab("Export");
+        FullRow(body, Caption("3. Create a server resource"), 38);
+        FullRow(body, exportStatus, 120);
+        FullRow(body, Caption("A preview can contain only part of the map. Export requires complete collision and the original surrounding navigation for your server build."), 90);
         Row(body, "", compose, 32);
         Row(body, "Original navigation", FolderField(baseline), 36);
-        Row(body, "", AsyncButton("CAPTURE ORIGINAL NAVIGATION", CaptureBaseline), 40);
+        Row(body, "", AsyncButton("PREPARE ORIGINAL NAVIGATION", CaptureBaseline), 40);
+        FullRow(body, Caption("Original tiles are saved in a new folder inside your results folder. After preparing them, generate another preview to check the connections."), 75);
         Row(body, "Conflict scan folders", conflicts, 66);
         Row(body, "", Button("ADD SCAN FOLDER", () => PickFolder(path => conflicts.AppendText((conflicts.Text.Length == 0 ? "" : Environment.NewLine) + path))), 36);
     }
 
     private void BuildArchiveTab()
     {
-        var body = Tab("Game archives");
+        var body = Tab("Game sources");
         Row(body, "", useGame, 34);
-        Row(body, "GTA Legacy folder", FolderField(gameFolder), 36);
-        Row(body, "Quick setup", Button("LOAD BASE GAME", LoadBaseGame), 40);
-        Row(body, "", Caption("Finds the installed Legacy game and loads base archives for previews. Add build-matched DLC/update archives as needed."), 62);
+        Row(body, "GTA Legacy folder", gameFolder, 36);
+        Row(body, "", Button("CHANGE GTA FOLDER", ChooseGameFolder), 40);
+        Row(body, "", Caption("GTA is detected automatically for previews. These controls are for build verification and custom DLC/update selections."), 62);
         Row(body, "Archive build", archiveBuild, 34);
         Row(body, "Source notes", sourceNotes, 60);
         archives.AutoGenerateColumns = false;
@@ -219,7 +301,7 @@ internal sealed class MainForm : Form
 
     private void BuildNavigationTab()
     {
-        var body = Tab("Navigation");
+        var body = Tab("Pedestrian settings");
         Row(body, "Pedestrian settings", agent, 305);
         Row(body, "", Caption("Sizes are metres; slope is degrees. Tune radius, headroom and climb against actual doors and steps."), 54);
         Row(body, "", interior, 34); Row(body, "", islands, 42);
@@ -244,43 +326,60 @@ internal sealed class MainForm : Form
         Row(body, "", Caption("Optional standalone collision, such as pavement approaches or creator-supplied bounds. Enter decoded world position, quaternion orientation and scale. Resource/MLO collision is loaded from the selected maps automatically."), 112);
     }
 
-    private void AddResource(string path)
+    private void AddResource(string path, bool includeMaps = true)
     {
         if (!resources.Items.Contains(path)) resources.Items.Add(path);
-        var files = Directory.EnumerateFiles(path, "*.ymap", SearchOption.AllDirectories).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        var files = includeMaps ? Directory.EnumerateFiles(path, "*.ymap", SearchOption.AllDirectories).Order(StringComparer.OrdinalIgnoreCase).ToArray() : [];
         foreach (string map in files) if (!maps.Items.Contains(map)) maps.Items.Add(map, files.Length == 1);
         string name = Path.GetFileName(path);
         if (name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
             dependencies.Text = string.Join(", ", Names(dependencies.Text).Append(name).Distinct());
-        status.Text = $"Found {files.Length} maps. Check the placements to include, then read their bounds.";
+        status.Text = $"Added {Path.GetFileName(path)}. Choose its placement, then generate a preview.";
+        if (includeMaps) resourceHint.Text = files.Length == 0 ? "This resource has no placements. Add the map resource that uses these assets." :
+            files.Length == 1 ? "The map placement is selected. Generate a preview; required interior resources will be found nearby." : $"Found {files.Length} placements. Check the ones you want to preview.";
+        InputsChanged();
     }
 
-    private async Task ReadMapDetails()
+    private async Task<bool> FitMapArea()
     {
         var value = new BakeSettings { GameBuild = (int)build.Value,
             ResourceRoots = resources.Items.Cast<string>().ToArray(), Ymaps = maps.CheckedItems.Cast<string>().ToArray() };
         archives.EndEdit();
         var sources = useGame.Checked ? ReadGameSources() : null;
         MapDetails? details = null;
-        await RunOperation(() => { details = MapSelection.Read(value, sources); }, () =>
+        string[] found = [];
+        bool success = await RunOperation(() =>
+        {
+            Console.WriteLine("Finding map dependencies and fitting the preview area…");
+            found = MapSelection.FindSiblingDependencies(value.ResourceRoots, value.Ymaps, operation!.Token);
+            value.ResourceRoots = value.ResourceRoots.Concat(found).ToArray();
+            details = MapSelection.Read(value, sources);
+        }, () =>
         {
             if (details == null) return;
+            foreach (string root in found) AddResource(root, false);
+            resourceHint.Text = found.Length > 0 ? "Added required resources: " + string.Join(", ", found.Select(Path.GetFileName)) : "Resource names are shown above. Hover over a name to see its full folder path.";
             for (int i = 0; i < 3; i++) { area[i].Value = (decimal)details.Min[i] - 0.5m; area[i + 3].Value = (decimal)details.Max[i] + 0.5m; }
+            floorHeight.Value = (decimal)details.Min.Z;
+            if (details.CollisionBoundsCount > 0) interior.Checked = true;
             var previous = ReadEntitySets(); entitySets.Items.Clear();
             foreach (var choice in details.Sets)
                 entitySets.Items.Add(choice, previous.TryGetValue(choice.Placement, out var names) && names.Contains(choice.Name));
             settings.EntitySets = details.Sets.Select(s => s.Placement).Distinct().ToDictionary(key => key, _ => Array.Empty<string>());
-            issues.Items.Clear(); issues.Items.AddRange(details.Unresolved);
+            SetIssues(details.Unresolved);
             preview.Clear();
             summary.ForeColor = Color.LightSkyBlue;
             var size = details.Max - details.Min + new SharpDX.Vector3(1);
+            areaHint.Text = $"Preview area: {size.X:N1} × {size.Y:N1} m. Adjust it under Advanced settings → Area & layout.";
             summary.Text = $"MAP AREA READY — {size.X:N1} × {size.Y:N1} × {size.Z:N1} m\n" +
                 $"{details.CollisionBoundsCount} interior collision bounds · {details.MetadataBoundsCount} object bounds · {details.Unresolved.Length} notices\n" +
                 "Generate a preview to check floors, entrances and remaining collision issues.";
             status.Text = "Interior area fitted to collision where available. Review approaches and active entity sets before generating.";
         });
+        return success && details != null;
     }
 
+    private async Task ReadMapDetails() => await FitMapArea();
     internal Task ReadMapDetailsForTest() => ReadMapDetails();
 
     private Dictionary<string, string[]> ReadEntitySets()
@@ -291,14 +390,15 @@ internal sealed class MainForm : Form
         return result;
     }
 
-    internal BakeSettings ReadSettings()
+    internal BakeSettings ReadSettings(bool requireBaseline = true)
     {
         collisions.EndEdit(); archives.EndEdit();
-        if (compose.Checked && string.IsNullOrWhiteSpace(baseline.Text))
-            throw new InvalidDataException("Choose the original navigation folder, or turn off inclusion of surrounding navigation for a standalone preview.");
+        if (requireBaseline && compose.Checked && string.IsNullOrWhiteSpace(baseline.Text))
+            throw new InvalidDataException("Open Export and use PREPARE ORIGINAL NAVIGATION, or turn off inclusion of surrounding navigation for a standalone preview.");
         var result = new BakeSettings
         {
             GameBuild = (int)build.Value, ResourceRoots = resources.Items.Cast<string>().ToArray(),
+            AutoDetectGame = useGame.Checked, AutoFitArea = autoFit.Checked,
             Ymaps = maps.CheckedItems.Cast<string>().ToArray(), EntitySets = ReadEntitySets(),
             Min = area.Take(3).Select(n => (float)n.Value).ToArray(), Max = area.Skip(3).Select(n => (float)n.Value).ToArray(),
             OutputDirectory = Path.GetFullPath(output.Text), BaselineDirectory = compose.Checked && baseline.Text.Length > 0 ? Path.GetFullPath(baseline.Text) : "",
@@ -328,20 +428,28 @@ internal sealed class MainForm : Form
 
     internal void ApplySettings(BakeSettings value)
     {
-        settings = value;
-        resources.Items.Clear(); resources.Items.AddRange(value.ResourceRoots);
-        maps.Items.Clear(); foreach (string path in value.Ymaps) maps.Items.Add(path, true);
-        entitySets.Items.Clear(); foreach (var pair in value.EntitySets) foreach (string name in pair.Value) entitySets.Items.Add(new EntitySetChoice(pair.Key, name), true);
-        build.Value = value.GameBuild; for (int i = 0; i < 3; i++) { area[i].Value = (decimal)value.Min[i]; area[i + 3].Value = (decimal)value.Max[i]; }
-        output.Text = value.OutputDirectory; baseline.Text = value.BaselineDirectory; compose.Checked = value.BaselineDirectory.Length != 0;
-        conflicts.Lines = value.ConflictScanRoots; dependencies.Text = string.Join(", ", value.Dependencies);
-        ignored.Text = string.Join(", ", value.IgnoreArchetypes); review.Text = value.CollisionReview;
-        flags.Text = string.Join(", ", value.PolygonFlags); agent.SelectedObject = value.Agent;
-        interior.Checked = value.Interior; islands.Checked = value.AllowIsolatedComponents;
-        collisions.Rows.Clear(); foreach (var input in value.Collision) AddCollision(input);
-        archiveItems.Clear(); gameFolder.Clear(); sourceNotes.Clear(); validated.Checked = false; archiveBuild.Value = value.GameBuild;
-        useGame.Checked = value.GameSourceFile.Length > 0;
-        if (useGame.Checked) LoadGameSources(value.GameSourceFile);
+        applyingSettings = true;
+        try
+        {
+            settings = value;
+            resources.Items.Clear(); resources.Items.AddRange(value.ResourceRoots);
+            maps.Items.Clear(); foreach (string path in value.Ymaps) maps.Items.Add(path, true);
+            entitySets.Items.Clear(); foreach (var pair in value.EntitySets) foreach (string name in pair.Value) entitySets.Items.Add(new EntitySetChoice(pair.Key, name), true);
+            build.Value = value.GameBuild; for (int i = 0; i < 3; i++) { area[i].Value = (decimal)value.Min[i]; area[i + 3].Value = (decimal)value.Max[i]; }
+            output.Text = value.OutputDirectory; baseline.Text = value.BaselineDirectory; compose.Checked = value.BaselineDirectory.Length != 0;
+            conflicts.Lines = value.ConflictScanRoots; dependencies.Text = string.Join(", ", value.Dependencies);
+            ignored.Text = string.Join(", ", value.IgnoreArchetypes); review.Text = value.CollisionReview;
+            flags.Text = string.Join(", ", value.PolygonFlags); agent.SelectedObject = value.Agent;
+            interior.Checked = value.Interior; islands.Checked = value.AllowIsolatedComponents;
+            autoFit.Checked = value.AutoFitArea;
+            collisions.Rows.Clear(); foreach (var input in value.Collision) AddCollision(input);
+            archiveItems.Clear(); gameFolder.Clear(); sourceNotes.Clear(); validated.Checked = false; archiveBuild.Value = value.GameBuild;
+            useGame.Checked = value.GameSourceFile.Length > 0;
+            if (useGame.Checked) LoadGameSources(value.GameSourceFile);
+            else if (value.AutoDetectGame) DetectGame();
+            areaHint.Text = autoFit.Checked ? "The preview area will be fitted to your selected map." : "Using the project's saved area. Enable automatic fitting or edit it under Advanced settings.";
+        }
+        finally { applyingSettings = false; InputsChanged(); RefreshGameStatus(); }
     }
 
     private void AddCollision(CollisionInput input) => collisions.Rows.Add(new object[] { input.Path }.Concat(
@@ -350,7 +458,9 @@ internal sealed class MainForm : Form
     internal void LoadProject(string path)
     {
         ApplySettings(BakeSettings.Load(path)); projectPath = path;
+        preview.Clear(); SetIssues([]); log.Clear(); latestOutput = null;
         Text = "BLRP NavMesh — " + Path.GetFileNameWithoutExtension(path);
+        summary.ForeColor = Color.LightSkyBlue;
         summary.Text = "Project loaded. Review the area, inputs and navigation settings, then generate a preview.";
         if (File.Exists(Path.Combine(settings.OutputDirectory, "report.json"))) ShowReport(settings.OutputDirectory);
     }
@@ -365,25 +475,39 @@ internal sealed class MainForm : Form
         foreach (var archive in value.Archives)
             archiveItems.Add(new ArchiveInput { Path = Path.GetFullPath(archive.Path, folder), LogicalPath = archive.LogicalPath, Sha256 = archive.Sha256 });
         useGame.Checked = true;
+        RefreshGameStatus();
     }
 
-    private void LoadBaseGame()
+    private void DetectGame()
     {
-        if (archiveItems.Count != 0)
-            throw new InvalidDataException("Game archives are already selected. Use ADD to extend that source set, or remove its entries before loading a fresh base selection.");
-        string folder = gameFolder.Text.Trim();
-        if (folder.Length == 0) folder = GameSource.FindLegacyDirectory() ?? "";
-        if (folder.Length == 0)
-        {
-            using var picker = new FolderBrowserDialog { Description = "Choose your GTA V Legacy installation", UseDescriptionForTitle = true };
-            if (picker.ShowDialog(this) != DialogResult.OK) return;
-            folder = picker.SelectedPath;
-        }
+        string? folder = GameSource.FindLegacyDirectory(preferences.GtaFolder);
+        if (folder != null) SelectBaseGame(folder);
+    }
+
+    private void ChooseGameFolder()
+    {
+        using var picker = new FolderBrowserDialog { Description = "Choose GTA V Legacy (this choice is remembered)", UseDescriptionForTitle = true,
+            InitialDirectory = gameFolder.Text };
+        if (picker.ShowDialog(this) == DialogResult.OK) SelectBaseGame(picker.SelectedPath);
+    }
+
+    private void SelectBaseGame(string folder)
+    {
         var source = GameSource.BaseGameSelection(folder, (int)build.Value);
         gameFolder.Text = source.GameDirectory; archiveBuild.Value = source.GameBuild; sourceNotes.Text = source.Source;
+        archiveItems.Clear();
         foreach (var archive in source.Archives) archiveItems.Add(archive);
         useGame.Checked = true; validated.Checked = false;
-        status.Text = $"Loaded {source.Archives.Length} base archives for inspection. Read map bounds again; build compatibility still needs review.";
+        preferences.GtaFolder = source.GameDirectory;
+        RefreshGameStatus(); InputsChanged();
+    }
+
+    private void RefreshGameStatus()
+    {
+        gameStatus.Text = useGame.Checked && archiveItems.Count > 0 ? $"GTA V Legacy ready for previews\n{gameFolder.Text}" :
+            "GTA files are not selected.\nUse GTA SETTINGS to locate the game, or preview custom collision only.";
+        gameStatus.ForeColor = useGame.Checked && archiveItems.Count > 0 ? Color.LightGreen : Color.LightSkyBlue;
+        tips.SetToolTip(gameStatus, gameFolder.Text);
     }
 
     private void SaveSnapshot(BakeSettings value, string path)
@@ -410,16 +534,17 @@ internal sealed class MainForm : Form
         BakeSettings value;
         try
         {
+            if (diagnostic && autoFit.Checked && maps.CheckedItems.Count > 0 && !await FitMapArea()) return;
             value = ReadSettings();
             if (!diagnostic && value.BaselineDirectory.Length == 0) throw new InvalidDataException("Select original navigation and enable inclusion of the surrounding navigation before building a resource.");
             string run = Path.Combine(value.OutputDirectory, "bake-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N")[..4]);
             value.OutputDirectory = run; value.Validate(); SaveSnapshot(value, run + ".json");
         }
         catch (Exception e) { ShowError(e); return; }
-        latestOutput = value.OutputDirectory; preview.Clear(); issues.Items.Clear(); log.Clear();
+        latestOutput = value.OutputDirectory; preview.Clear(); SetIssues([]); log.Clear();
         summary.Text = diagnostic ? "Generating inspection output…" : "Checking inputs and building a resource…";
         await RunOperation(() => Program.Bake(value, diagnostic, operation!.Token), () => { });
-        if (File.Exists(Path.Combine(value.OutputDirectory, "report.json"))) ShowReport(value.OutputDirectory);
+        if (File.Exists(Path.Combine(value.OutputDirectory, "report.json"))) ShowReport(value.OutputDirectory, true);
     }
 
     private async Task CaptureBaseline()
@@ -427,17 +552,15 @@ internal sealed class MainForm : Form
         try
         {
             if (!useGame.Checked) throw new InvalidDataException("Configure and enable game archives first.");
-            var value = ReadSettings();
-            using var dialog = new FolderBrowserDialog { Description = "Choose a new, empty folder for original navigation", UseDescriptionForTitle = true };
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
-            string destination = dialog.SelectedPath;
+            var value = ReadSettings(requireBaseline: false);
+            string destination = Path.Combine(value.OutputDirectory, "original-navigation-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..4]);
             string snapshot = Path.Combine(value.OutputDirectory, "capture-" + Guid.NewGuid().ToString("N") + ".json");
             SaveSnapshot(value, snapshot);
             await RunOperation(() =>
             {
                 var source = new GameSource(value, new CollisionScene(value));
                 operation!.Token.ThrowIfCancellationRequested(); source.CaptureBaseline(value, destination);
-            }, () => { baseline.Text = destination; compose.Checked = true; status.Text = "Original navigation captured. Its build verification status is retained."; });
+            }, () => { baseline.Text = destination; compose.Checked = true; status.Text = "Original navigation saved. Generate a new preview to check its connections."; });
         }
         catch (Exception e) { ShowError(e); }
     }
@@ -461,12 +584,14 @@ internal sealed class MainForm : Form
         archiveItems.RemoveAt(index); archiveItems.Insert(next, item); archives.CurrentCell = archives.Rows[next].Cells[0];
     }
 
-    private async Task RunOperation(Action work, Action complete)
+    private async Task<bool> RunOperation(Action work, Action complete)
     {
-        if (operation != null) return;
+        if (operation != null) return false;
         operation = new CancellationTokenSource();
+        previewReadyForExport = false;
         editor.Enabled = toolbar.Enabled = generate.Enabled = package.Enabled = false;
         cancel.Enabled = progress.Visible = true; status.Text = "Working…";
+        RefreshActions();
         var writer = new ProgressWriter(new Progress<string>(text =>
         {
             if (IsDisposed) return;
@@ -475,35 +600,44 @@ internal sealed class MainForm : Form
             if (operation != null && !operation.IsCancellationRequested) status.Text = text;
         }));
         var previous = Console.Out; var previousError = Console.Error;
+        bool success = false;
         try
         {
             Console.SetOut(writer); Console.SetError(writer);
-            await Task.Run(work); operation.Token.ThrowIfCancellationRequested(); complete();
+            await Task.Run(work); operation.Token.ThrowIfCancellationRequested(); complete(); success = true;
         }
         catch (Exception e) { if (operation.IsCancellationRequested) status.Text = "Cancelled. Any completed diagnostics are retained."; else ShowError(e); }
         finally
         {
             Console.SetOut(previous); Console.SetError(previousError);
             operation.Dispose(); operation = null;
-            editor.Enabled = toolbar.Enabled = generate.Enabled = package.Enabled = true;
+            editor.Enabled = toolbar.Enabled = true;
             cancel.Enabled = progress.Visible = false;
+            RefreshActions();
             if (closeAfterOperation) BeginInvoke(Close);
         }
+        return success;
     }
 
-    internal void ShowReport(string folder)
+    internal void ShowReport(string folder, bool currentRun = false)
     {
         using var report = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "report.json")));
-        var root = report.RootElement; latestOutput = folder; issues.Items.Clear();
-        foreach (var issue in root.GetProperty("issues").EnumerateArray()) issues.Items.Add(issue.GetString() ?? "");
+        var root = report.RootElement; latestOutput = folder;
+        var messages = root.GetProperty("issues").EnumerateArray().Select(i => i.GetString() ?? "").ToList();
         string result = root.GetProperty("status").GetString() ?? "unknown";
-        if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String) issues.Items.Insert(0, error.GetString()!);
-        int tiles = root.GetProperty("outputHashes").EnumerateObject().Count();
-        bool incomplete = result == "diagnostic-only" && issues.Items.Count > 0;
+        if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String) messages.Insert(0, error.GetString()!);
+        SetIssues(messages);
+        bool incomplete = result == "diagnostic-only" && issueMessages.Length > 0;
         string label = result switch { "diagnostic-only" when incomplete => "PARTIAL PREVIEW — resource build blocked", "diagnostic-only" => "PREVIEW READY — inspection only", "awaiting-fivem-validation" => "RESOURCE BUILT — awaiting FiveM testing", "cancelled" => "CANCELLED", _ => "BUILD STOPPED" };
-        summary.Text = $"{label}\n{root.GetProperty("collisionTriangleCount").GetInt32():N0} collision triangles · {tiles} native tiles · {issues.Items.Count} issues\nClient build: {root.GetProperty("gameBuild").GetInt32()} · movement in FiveM remains unverified";
+        summary.Text = $"{label}\n" + (issueMessages.Length > 0 ? $"{issues.Items.Count} categories need attention. Select one below for the next step." : "Review the walkable surfaces, then open Export for the next step.") +
+            $"\nServer build {root.GetProperty("gameBuild").GetInt32()} · FiveM movement has not been tested.";
         summary.ForeColor = result == "failed" || incomplete ? Color.Salmon : Color.LightSkyBlue;
-        status.Text = folder; LoadPreview(false);
+        previewReadyForExport = currentRun && issueMessages.Length == 0 && result is "diagnostic-only" or "awaiting-fivem-validation";
+        exportStatus.Text = issueMessages.Length > 0 ? "Export is blocked by the checks under Needs attention.\n\n" + string.Join("\n", issues.Items.Cast<IssueGroup>().Select(g => "• " + g.Title)) :
+            "Preview checks passed. Prepare the original navigation below and preview again before building. Movement still needs testing in FiveM.";
+        if (!currentRun) exportStatus.Text = "You are viewing an earlier result. Generate a preview of the current project before exporting.";
+        status.Text = "Preview saved. OPEN RESULTS shows its files and full report.";
+        LoadPreview(collisionView.Checked); RefreshActions();
     }
 
     private void LoadPreview(bool collision)
@@ -516,7 +650,8 @@ internal sealed class MainForm : Form
     private void ShowError(Exception error)
     {
         string message = error.GetBaseException().Message;
-        status.Text = message; issues.Items.Insert(0, message); log.AppendText(message + Environment.NewLine);
+        status.Text = message; SetIssues(new[] { message }.Concat(issueMessages)); log.AppendText(message + Environment.NewLine);
+        previewReadyForExport = false; exportStatus.Text = "Resolve the checks under Needs attention, then generate a new preview."; RefreshActions();
     }
     private void ShowHelp()
     {
@@ -531,7 +666,20 @@ internal sealed class MainForm : Form
     internal Task GenerateForTest() => BakeClicked(true);
     internal string? LatestOutput => latestOutput;
     internal int PreviewPolygonCount => preview.PolygonCount;
-    internal int IssueCount => issues.Items.Count;
+    internal int IssueCount => issueMessages.Length;
+    internal int IssueGroupCount => issues.Items.Count;
+    internal bool ExportEnabled => package.Enabled;
+    internal bool GameDetected => useGame.Checked && archiveItems.Count > 0;
+    internal bool AdvancedVisible => advanced.Checked;
+    internal bool AutomaticArea => autoFit.Checked;
+    internal bool PreviewEnabled => generate.Enabled;
+    internal void AddResourceForTest(string path) => AddResource(path);
+    internal void SelectMapsForTest(string[] selected)
+    {
+        for (int i = 0; i < maps.Items.Count; i++) maps.SetItemChecked(i, selected.Contains((string)maps.Items[i], StringComparer.OrdinalIgnoreCase));
+        RefreshActions();
+    }
+    internal void SetAdvancedForTest(bool value) => advanced.Checked = value;
     internal void SaveForTest(string path) => SaveSnapshot(ReadSettings(), path);
     internal void CaptureTabsForTest(string path)
     {
@@ -545,8 +693,82 @@ internal sealed class MainForm : Form
         }
     }
     private static string[] Names(string value) => value.Split([',', ';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    private void SetIssues(IEnumerable<string> messages)
+    {
+        issueMessages = messages.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct().ToArray();
+        issues.Items.Clear(); issues.Items.AddRange(IssueGroup.From(issueMessages));
+        issueDetails.Text = issueMessages.Length == 0 ? "No issues reported. Preview results still need visual review and testing in FiveM." : "Select a category for the next step.";
+        if (issues.Items.Count > 0) issues.SelectedIndex = 0;
+    }
+
+    private void SetAdvanced(bool visible)
+    {
+        foreach (var page in advancedPages)
+        {
+            if (visible && !editor.TabPages.Contains(page)) editor.TabPages.Insert(editor.TabPages.IndexOf(exportPage), page);
+            else if (!visible) editor.TabPages.Remove(page);
+        }
+        if (!visible) editor.SelectedIndex = 0;
+    }
+
+    private void InputsChanged()
+    {
+        if (applyingSettings || operation != null) return;
+        previewReadyForExport = false;
+        exportStatus.Text = "Generate a preview of these settings first. Any missing inputs will be explained under Needs attention.";
+        RefreshActions();
+    }
+
+    private void RefreshActions()
+    {
+        generate.Enabled = operation == null && (maps.CheckedItems.Count > 0 || collisions.Rows.Count > 0);
+        package.Enabled = operation == null && previewReadyForExport && compose.Checked && !string.IsNullOrWhiteSpace(baseline.Text);
+        foreach (var button in new[] { generate, package, cancel }) button.BackColor = button.Enabled ? BlrpTheme.Accent : Color.FromArgb(112, 120, 136);
+    }
+
+    private void ConfigureInputEvents()
+    {
+        void Watch(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                if (control is TextBoxBase text) text.TextChanged += (_, _) => InputsChanged();
+                if (control is NumericUpDown number) number.ValueChanged += (_, _) => InputsChanged();
+                if (control is CheckBox check) check.CheckedChanged += (_, _) => InputsChanged();
+                Watch(control);
+            }
+        }
+        Watch(editor);
+        foreach (var number in area) number.ValueChanged += (_, _) =>
+        { if (!applyingSettings && operation == null) { autoFit.Checked = false; areaHint.Text = "Using your custom preview area."; } };
+        build.ValueChanged += (_, _) =>
+        {
+            if (applyingSettings) return;
+            // A target-build edit never certifies the selected game files.
+            validated.Checked = false;
+            if (sourceNotes.Text.StartsWith("Base archives from the installed")) archiveBuild.Value = build.Value;
+        };
+        autoFit.CheckedChanged += (_, _) => { if (!applyingSettings) areaHint.Text = autoFit.Checked ? "The preview area will be fitted to your selected map." : "Using the saved area. Edit coordinates under Advanced settings → Area & layout."; };
+        useGame.CheckedChanged += (_, _) => RefreshGameStatus();
+        archiveItems.ListChanged += (_, _) => { InputsChanged(); RefreshGameStatus(); };
+        archives.CellValueChanged += (_, _) => InputsChanged(); collisions.CellValueChanged += (_, _) => InputsChanged();
+        collisions.RowsAdded += (_, _) => InputsChanged(); collisions.RowsRemoved += (_, _) => InputsChanged();
+        agent.PropertyValueChanged += (_, _) => InputsChanged();
+        foreach (var list in new[] { maps, entitySets }) list.ItemCheck += (_, _) =>
+        { InputsChanged(); if (IsHandleCreated) BeginInvoke((Action)RefreshActions); };
+        foreach (var list in new ListBox[] { resources, maps })
+        {
+            list.FormattingEnabled = true;
+            list.Format += (_, e) => { if (e.ListItem is string path) e.Value = Path.GetFileName(Path.TrimEndingDirectorySeparator(path)); };
+            list.MouseMove += (_, e) =>
+            {
+                int index = list.IndexFromPoint(e.Location);
+                tips.SetToolTip(list, index >= 0 ? (string)list.Items[index] : "");
+            };
+        }
+    }
     private static TableLayoutPanel Table() => new() { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 0 };
-    private static Label Caption(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
+    private static Label Caption(string text) => new() { Text = text, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, UseMnemonic = false };
     private static NumericUpDown Number(decimal value, decimal min, decimal max, int places = 6) => new() { Minimum = min, Maximum = max, Value = value, DecimalPlaces = places, Dock = DockStyle.Fill };
     private static DataGridView Grid() => new() { Dock = DockStyle.Fill, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
         RowHeadersVisible = false, MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None };
@@ -574,22 +796,27 @@ internal sealed class MainForm : Form
         table.Controls.Add(Caption(label), 0, row); table.Controls.Add(value, 1, row);
         value.Dock = DockStyle.Fill;
     }
+    private static void FullRow(TableLayoutPanel table, Control value, int height)
+    {
+        int row = table.RowCount++; table.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        table.Controls.Add(value, 0, row); table.SetColumnSpan(value, 2); value.Dock = DockStyle.Fill;
+    }
     private Control FolderField(TextBox field)
     {
         var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
         table.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
-        table.Controls.Add(field); var browse = Button("BROWSE", () => PickFolder(path => field.Text = path)); browse.Dock = DockStyle.Fill; table.Controls.Add(browse); return table;
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+        table.Controls.Add(field); var browse = Button("BROWSE", () => PickFolder(path => field.Text = path)); browse.Dock = DockStyle.Fill; browse.AutoSize = false; table.Controls.Add(browse); return table;
     }
-    private Control ListButtons(Action add, Action remove)
+    private Control ListButtons(Action add, Action remove, string addLabel = "ADD")
     {
         var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-        panel.Controls.AddRange([Button("ADD", add), Button("REMOVE", remove)]); return panel;
+        panel.Controls.AddRange([Button(addLabel, add), Button("REMOVE", remove)]); return panel;
     }
-    private Control ListWithActions(Control list, Action add, Action remove)
+    private Control ListWithActions(Control list, Action add, Action remove, string addLabel = "ADD")
     {
         var table = Table(); table.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); table.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
-        table.Controls.Add(list, 0, 0); table.Controls.Add(ListButtons(add, remove), 0, 1); return table;
+        table.Controls.Add(list, 0, 0); table.Controls.Add(ListButtons(add, remove, addLabel), 0, 1); return table;
     }
     private void PickFolder(Action<string> action)
     {

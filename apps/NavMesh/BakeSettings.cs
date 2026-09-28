@@ -9,6 +9,8 @@ public sealed class BakeSettings
 {
     public int GameBuild { get; set; }
     public string GameSourceFile { get; set; } = "";
+    public bool AutoDetectGame { get; set; } = true;
+    public bool AutoFitArea { get; set; }
     public string[] ResourceRoots { get; set; } = [];
     public string[] ConflictScanRoots { get; set; } = [];
     public string[] Ymaps { get; set; } = [];

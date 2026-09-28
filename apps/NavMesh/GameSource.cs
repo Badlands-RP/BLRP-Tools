@@ -27,8 +27,10 @@ public sealed class GameSource
     private readonly Dictionary<uint, Archetype> archetypes = [];
     private readonly CollisionScene scene;
 
-    internal static string? FindLegacyDirectory()
+    internal static string? FindLegacyDirectory(string? preferredFolder = null)
     {
+        foreach (string? path in new[] { preferredFolder, UserPreferences.ReadLiveryGameFolder() })
+            if (IsLegacyDirectory(path)) return path;
         // Use registered installation paths, never a path from the developer's machine.
         foreach (var view in new[] { Microsoft.Win32.RegistryView.Registry64, Microsoft.Win32.RegistryView.Registry32 })
         {
@@ -39,11 +41,14 @@ public sealed class GameSource
                 (@"SOFTWARE\Rockstar Games\Grand Theft Auto V", "InstallFolder") })
             {
                 using var entry = machine.OpenSubKey(key);
-                if (entry?.GetValue(value) is string path && File.Exists(Path.Combine(path, "GTA5.exe")) && File.Exists(Path.Combine(path, "common.rpf"))) return path;
+                if (entry?.GetValue(value) is string path && IsLegacyDirectory(path)) return path;
             }
         }
         return null;
     }
+
+    internal static bool IsLegacyDirectory(string? path) => !string.IsNullOrWhiteSpace(path) &&
+        File.Exists(Path.Combine(path, "GTA5.exe")) && File.Exists(Path.Combine(path, "common.rpf"));
 
     internal static GameSourceManifest BaseGameSelection(string folder, int build)
     {
