@@ -32,8 +32,9 @@ public static class SelfTest
                     Require(original.EntitySets.Count == reloaded.EntitySets.Count && original.PolygonFlags.SequenceEqual(reloaded.PolygonFlags) &&
                         original.Collision.Length == reloaded.Collision.Length, "desktop project round-trip preserves advanced settings");
                     form.LoadProject(saved);
-                    var details = MapSelection.Read(reloaded);
                     await form.ReadMapDetailsForTest();
+                    form.SaveForTest(saved);
+                    var details = MapSelection.Read(BakeSettings.Load(saved));
                     var fitted = form.ReadSettings();
                     Require(Enumerable.Range(0, 3).All(i => Math.Abs(fitted.Min[i] - (details.Min[i] - 0.5f)) < 0.001f &&
                         Math.Abs(fitted.Max[i] - (details.Max[i] + 0.5f)) < 0.001f), "bounds button fits the selected collision and game sources");
@@ -43,7 +44,7 @@ public static class SelfTest
                     Require(report.RootElement.GetProperty("status").GetString() == "diagnostic-only", "desktop preview completes");
                     Require(form.PreviewPolygonCount > 0, "desktop displays generated polygons");
                     Require(form.IssueCount == report.RootElement.GetProperty("issues").GetArrayLength(), "desktop displays unresolved inputs");
-                    Require(!form.AdvancedVisible && form.IssueGroupCount <= 6, "normal workflow hides advanced controls and groups warnings");
+                    Require(!form.AdvancedVisible && form.IssueGroupCount <= 7, "normal workflow hides advanced controls and groups warnings");
                     Require(form.IssueCount == 0 || !form.ExportEnabled, "incomplete preview cannot enable export");
                     Require(float.IsFinite(details.Min.X) && details.Min.X < details.Max.X && details.Min.Y < details.Max.Y,
                         "map picker reads finite world bounds");
@@ -74,7 +75,8 @@ public static class SelfTest
                     if (GameSource.FindLegacyDirectory() != null) Require(form.GameDetected, "installed GTA is selected automatically");
                     string firstMap = original.Ymaps[0];
                     string firstResource = original.ResourceRoots.First(r => !Path.GetRelativePath(r, firstMap).StartsWith(".."));
-                    form.AddResourceForTest(firstResource); form.SelectMapsForTest([firstMap]);
+                    form.AddResourceForTest(firstResource);
+                    form.SelectMapsForTest(original.Ymaps.Where(p => !Path.GetRelativePath(firstResource, p).StartsWith("..")).ToArray());
                     await form.GenerateForTest();
                     Require(form.PreviewPolygonCount > 0 && form.AutomaticArea, "one preview action fits and generates the selected map");
                     if (Path.GetFileName(firstMap) == "hns_josecafe_mrpark_milo_.ymap")
@@ -104,6 +106,9 @@ public static class SelfTest
 
     public static void Run()
     {
+        CheckCollisionPrimitives();
+        Require(GameArchiveDiscovery.UpdateHashes(3095)?["update/update.rpf"] == "fd46de4495d32f0533b8b3ae72507b829e8650f3" &&
+            GameArchiveDiscovery.UpdateHashes(1) == null, "game discovery requires an exact supported build");
         var boxBounds = MapSelection.WorldBounds(new BoundBox { BoxMin = new(-1, -2, 0), BoxMax = new(1, 2, 3),
             Transform = Matrix.Translation(3, 0, 0) }, Matrix.Scaling(2) * Matrix.RotationZ(MathF.PI / 2) * Matrix.Translation(10, 20, 30));
         Require(Vector3.Distance(boxBounds.Minimum, new(6, 24, 30)) < 0.00001f && Vector3.Distance(boxBounds.Maximum, new(14, 28, 36)) < 0.00001f,
@@ -186,6 +191,19 @@ public static class SelfTest
             var groups = IssueGroup.From(["Escrow-protected test.ydr", "Escrow-protected test.ydr", "Missing owning YTYP for test", "Archive not pinned by SHA256: test", "Another failure"]);
             Require(groups.Length == 4 && groups.Sum(g => g.Messages.Length) == 4 && groups.All(g => g.NextStep.Length > 30),
                 "issues are grouped with next steps while retaining every distinct detail");
+            string first = Path.Combine(temporary, "first"), second = Path.Combine(temporary, "second");
+            Directory.CreateDirectory(first); Directory.CreateDirectory(second);
+            byte[] floorBytes = new YbnFile { Bounds = new BoundBox { Type = BoundsType.Box, BoxMin = new(-2, -2, -1), BoxMax = new(12, 12, 0) } }.Save();
+            File.WriteAllBytes(Path.Combine(first, "floor.ybn"), floorBytes);
+            File.WriteAllBytes(Path.Combine(second, "floor.ybn"), [.. floorBytes, 0]);
+            var conflicting = new BakeSettings { GameBuild = 3095, Min = [0, 0, -1], Max = [10, 10, 3], ResourceRoots = [first, second],
+                Collision = [new CollisionInput { Path = Path.Combine(first, "floor.ybn") }], OutputDirectory = Path.Combine(temporary, "conflict-preview") };
+            Require(Program.Bake(conflicting, true) == 0, "asset conflicts allow a diagnostic preview");
+            conflicting.OutputDirectory = Path.Combine(temporary, "conflict-build");
+            bool conflictBlocked = false;
+            try { Program.Bake(conflicting, false); }
+            catch (InvalidOperationException e) { conflictBlocked = e.InnerException?.Message.StartsWith("Collision inputs are incomplete") == true; }
+            Require(conflictBlocked && !Directory.Exists(Path.Combine(conflicting.OutputDirectory, "resource")), "asset conflicts still block resource output");
             var originals = new List<Vector3[]>();
             for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) originals.Add(Quad(x * 150, y * 150, 150, 150, 0));
             var originalTiles = NavMeshCompiler.CreateTiles(NavMeshCompiler.TilePolygons(originals, settings));
@@ -231,6 +249,62 @@ public static class SelfTest
         }
         finally { Directory.Delete(temporary, true); }
         Console.WriteLine("PASS: clipping, links, native round-trip, T-junctions, walls, stacked floors, headroom, ramps, transforms and baseline preservation.");
+    }
+
+    private static void CheckCollisionPrimitives()
+    {
+        Bounds[] shapes = [
+            new BoundSphere { Type = BoundsType.Sphere, SphereRadius = 0.5f },
+            new BoundCapsule { Type = BoundsType.Capsule, SphereRadius = 0.8f, Margin = 0.2f },
+            new BoundCylinder { Type = BoundsType.Cylinder, BoxMin = new(-0.3f, -0.7f, -0.3f), BoxMax = new(0.3f, 0.7f, 0.3f) }];
+        var transform = Matrix.Scaling(1.2f, 0.8f, 1.4f) * Matrix.RotationZ(0.4f) * Matrix.Translation(5, 6, 7);
+        foreach (var shape in shapes)
+        {
+            var file = new YbnFile { Bounds = shape };
+            var reloaded = new YbnFile(); reloaded.Load(file.Save());
+            var scene = new CollisionScene(new BakeSettings()); scene.AddBounds(reloaded.Bounds, transform, "round-trip fixture");
+            Require(scene.Issues.Count == 0 && scene.Triangles.Count > 0, "native rounded collision is extracted");
+            foreach (Vector3 direction in new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ, Vector3.Normalize(new Vector3(1, 0.2f, 1)) })
+            {
+                var localRay = new Ray(direction * 5, -direction);
+                var expected = reloaded.Bounds.RayIntersect(ref localRay);
+                // CodeWalker's cylinder ray routine degenerates for an axis-parallel ray; use the exact cap height there.
+                bool cylinderCap = reloaded.Bounds is BoundCylinder && direction == Vector3.UnitY;
+                Require(expected.Hit || cylinderCap, $"analytic primitive ray hits {reloaded.Bounds.GetType().Name} along {direction}");
+                Vector3 expectedPoint = cylinderCap ? new Vector3(0, shape.BoxMax.Y, 0) : expected.Position;
+                Vector3 origin = Vector3.TransformCoordinate(localRay.Position, transform);
+                var ray = new Ray(origin, Vector3.Normalize(new Vector3(5, 6, 7) - origin));
+                float nearest = float.MaxValue;
+                foreach (var triangle in scene.Triangles)
+                    if (ray.Intersects(ref triangle[0], ref triangle[1], ref triangle[2], out float distance)) nearest = Math.Min(nearest, distance);
+                Vector3 actual = origin + ray.Direction * nearest;
+                Require(Vector3.Distance(actual, Vector3.TransformCoordinate(expectedPoint, transform)) < CollisionPrimitives.MaxWorldError,
+                    "rounded collision agrees with CodeWalker's analytic ray intersections after scale/rotation/native reload");
+            }
+            Require(scene.Triangles.All(t => Vector3.Dot(Vector3.Cross(t[1] - t[0], t[2] - t[0]),
+                (t[0] + t[1] + t[2]) / 3 - new Vector3(5, 6, 7)) > 0), "rounded collision has outward normals");
+        }
+
+        var bound = new BoundBox { Transform = Matrix.Translation(2, 3, 4) };
+        var composite = new BoundComposite { Children = new ResourcePointerArray64<Bounds> { data_items = [bound] } };
+        var fragment = new FragType
+        {
+            Drawable = new FragDrawable { Skeleton = new Skeleton { BonesMap = new Dictionary<ushort, Bone> { [7] = new Bone { AbsTransform = Matrix.Translation(2, 3, 4) } } } },
+            PhysicsLODGroup = new FragPhysicsLODGroup
+            {
+                PhysicsLOD1 = new FragPhysicsLOD
+                {
+                    Archetype1 = new FragPhysArchetype { Bound = composite },
+                    Children = new ResourcePointerArray64<FragPhysTypeChild> { data_items = [new FragPhysTypeChild { BoneTag = 7, Drawable1 = new FragDrawable { FragMatrix = Matrix4F_s.Identity } }] }
+                }
+            }
+        };
+        var fixture = new YftFile { Fragment = fragment };
+        Require(ReferenceEquals(CollisionScene.FragmentBounds(fixture, "fixture"), composite), "fragment bind placement is verified without doubling transforms");
+        bound.Transform = Matrix.Identity;
+        bool rejected = false;
+        try { CollisionScene.FragmentBounds(fixture, "fixture"); } catch (NotSupportedException) { rejected = true; }
+        Require(rejected, "ambiguous fragment placement remains blocked");
     }
 
     public static HashSet<YnvPoly> Reachable(YnvPoly start)

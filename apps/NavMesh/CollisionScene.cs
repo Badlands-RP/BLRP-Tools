@@ -47,8 +47,11 @@ public sealed class CollisionScene
                 string name = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
                 JenkIndex.Ensure(name);
                 var key = (JenkHash.GenHash(name), extension);
-                if (files.TryGetValue(key, out var previous) && Hash(previous) != Hash(file))
-                    throw new InvalidDataException($"Conflicting asset names: {previous} and {file}");
+                if (files.TryGetValue(key, out var previous))
+                {
+                    if (Hash(previous) != Hash(file)) Issues.Add($"Conflicting resource asset: {name}{extension}. Preview uses {previous}; also found {file}. Resolve the active resource versions before exporting.");
+                    continue;
+                }
                 files[key] = file;
             }
             var manifest = Path.Combine(root, "fxmanifest.lua");
@@ -63,7 +66,10 @@ public sealed class CollisionScene
             {
                 uint hash = archetype.Hash;
                 if (archetypes.TryGetValue(hash, out var previous) && previous.Ytyp != ytyp)
-                    throw new InvalidDataException($"Conflicting archetype {archetype.Name}: {previous.Ytyp?.Name} and {ytyp.Name}.");
+                {
+                    Issues.Add($"Conflicting archetype {archetype.Name}: {previous.Ytyp?.Name} and {ytyp.Name}. Preview keeps the first selected definition; resolve the active definition before exporting.");
+                    continue;
+                }
                 archetypes[hash] = archetype;
             }
         }
@@ -116,6 +122,8 @@ public sealed class CollisionScene
             orientation = new[] { entity.Orientation.X, entity.Orientation.Y, entity.Orientation.Z, entity.Orientation.W },
             scale = new[] { entity.Scale.X, entity.Scale.Y, entity.Scale.Z } });
         string? collisionFile = null;
+        uint asset = archetype.BaseArchetypeDef.assetName;
+        if (asset == 0) asset = hash;
         string? Find(uint asset, string extension) => files.TryGetValue((asset, extension), out var path) ? path :
             game?.Contains(asset, extension) == true ? $"game:{asset:X8}{extension}" : null;
         if (archetype is MloArchetype)
@@ -128,15 +136,15 @@ public sealed class CollisionScene
             if (physics != 0) collisionFile = Find(physics, ".ybn");
             if (collisionFile == null && (uint)archetype.DrawableDict != 0)
                 collisionFile = Find(archetype.DrawableDict, ".ydd");
-            collisionFile ??= Find(hash, ".ydr");
-            collisionFile ??= Find(hash, ".yft");
+            collisionFile ??= Find(asset, ".ydr");
+            collisionFile ??= Find(asset, ".yft");
         }
         if (collisionFile == null) Issues.Add($"Missing collision/drawable for {archetype.Name} ({source}).");
         else
         {
             try
             {
-                var collision = ReadBounds(collisionFile, hash);
+                var collision = ReadBounds(collisionFile, asset);
                 if (collision != null) AddBounds(collision, transform, $"{source}/{archetype.Name}");
             }
             catch (Exception e) when (e is InvalidDataException || e is NotSupportedException) { Issues.Add(e.Message); }
@@ -183,13 +191,37 @@ public sealed class CollisionScene
                 result = drawable.Bound; break;
             case ".yft":
                 var yft = fromGame ? game!.Load<YftFile>(asset, ".yft") : new YftFile(); if (!fromGame) yft.Load(data);
-                if (yft.Fragment?.PhysicsLODGroup?.PhysicsLOD1?.Bound != null)
-                    throw new NotSupportedException($"Fragment physics requires validated bone/child transforms: {filename}");
-                result = yft.Fragment?.Drawable?.Bound; break;
+                result = FragmentBounds(yft, filename); break;
             default: throw new NotSupportedException($"Unsupported collision input: {filename}");
         }
         bounds[key] = result;
         return result;
+    }
+
+    internal static Bounds? FragmentBounds(YftFile file, string source)
+    {
+        var fragment = file.Fragment;
+        var lod = fragment?.PhysicsLODGroup?.PhysicsLOD1;
+        var physics = lod?.Archetype1?.Bound;
+        if (physics == null) return fragment?.Drawable?.Bound;
+        if (physics is not BoundComposite composite)
+            throw new NotSupportedException($"Unsupported fragment physics root: {source}");
+        var children = composite.Children?.data_items ?? [];
+        var parts = lod!.Children?.data_items ?? [];
+        for (int i = 0; i < children.Length; i++)
+        {
+            if (children[i] is not { } bound) continue;
+            if (i >= parts.Length || parts[i]?.Drawable1 == null ||
+                fragment!.Drawable?.Skeleton?.BonesMap?.TryGetValue(parts[i].BoneTag, out var bone) != true)
+                throw new NotSupportedException($"Fragment physics has no rest-pose bone mapping for child {i}: {source}");
+            // Match Sollumz's pristine collision placement: fragment bound matrix followed by the absolute bind bone.
+            // CodeWalker decodes this into the composite child transform. Verify, rather than applying it twice.
+            Matrix expected = parts[i].Drawable1.FragMatrix.ToMatrix() * bone!.AbsTransform;
+            float error = expected.ToArray().Zip(bound.Transform.ToArray(), (a, b) => Math.Abs(a - b)).Max();
+            if (!float.IsFinite(error) || error > 0.0001f)
+                throw new NotSupportedException($"Fragment physics rest-pose transform differs for child {i} ({error:G4}): {source}");
+        }
+        return composite;
     }
 
     public void AddBounds(Bounds bound, Matrix parent, string source)
@@ -216,17 +248,27 @@ public sealed class CollisionScene
         {
             foreach (var polygon in geometry.Polygons ?? [])
             {
-                if (polygon is not BoundPolygonTriangle triangle)
+                Vector3 Vertex(int index)
                 {
-                    Issues.Add($"Unsupported collision primitive {polygon.Type}: {source}. Supply triangulated collision.");
-                    continue;
+                    if (index < 0 || index >= geometry.Vertices.Length) throw new InvalidDataException($"Invalid collision indices: {source}");
+                    return geometry.Vertices[index] + geometry.CenterGeom;
                 }
-                var indices = new[] { triangle.vertIndex1, triangle.vertIndex2, triangle.vertIndex3 };
-                if (indices.Any(i => i < 0 || i >= geometry.Vertices.Length)) throw new InvalidDataException($"Invalid collision indices: {source}");
-                // GetVertexPos already applies Transform; use raw vertices here to avoid applying it twice.
-                var vertices = indices.Select(i => Vector3.TransformCoordinate(geometry.Vertices[i] + geometry.CenterGeom, transform)).ToArray();
-                if (Vector3.Cross(vertices[1] - vertices[0], vertices[2] - vertices[0]).LengthSquared() > 1e-12f)
-                    Triangles.Add(vertices);
+                switch (polygon)
+                {
+                    case BoundPolygonTriangle triangle:
+                        AddTriangle([Vertex(triangle.vertIndex1), Vertex(triangle.vertIndex2), Vertex(triangle.vertIndex3)], transform); break;
+                    case BoundPolygonSphere sphere:
+                        AddRound(Vertex(sphere.sphereIndex), Vertex(sphere.sphereIndex), sphere.sphereRadius, true, transform); break;
+                    case BoundPolygonCapsule capsule:
+                        AddRound(Vertex(capsule.capsuleIndex1), Vertex(capsule.capsuleIndex2), capsule.capsuleRadius, true, transform); break;
+                    case BoundPolygonCylinder cylinder:
+                        AddRound(Vertex(cylinder.cylinderIndex1), Vertex(cylinder.cylinderIndex2), cylinder.cylinderRadius, false, transform); break;
+                    case BoundPolygonBox box:
+                        var a = Vertex(box.boxIndex1); var b = Vertex(box.boxIndex2); var c = Vertex(box.boxIndex3); var d = Vertex(box.boxIndex4);
+                        var edge = ((c + d) - (a + b)) * 0.5f; // CodeWalker's four diagonal corner representation.
+                        AddConvex(CollisionPrimitives.Box(a, edge, c - edge - a, d - edge - a), (a + b + c + d) * 0.25f, transform); break;
+                    default: Issues.Add($"Unsupported collision primitive {polygon.Type}: {source}."); break;
+                }
             }
         }
         else if (bound is BoundBox)
@@ -236,6 +278,41 @@ public sealed class CollisionScene
             int[] faces = [0,2,1, 0,3,2, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 3,7,6, 3,6,2, 1,2,6, 1,6,5, 0,4,7, 0,7,3];
             for (int i = 0; i < faces.Length; i += 3) Triangles.Add([corners[faces[i]], corners[faces[i + 1]], corners[faces[i + 2]]]);
         }
+        else if (bound is BoundSphere) AddRound(bound.SphereCenter, bound.SphereCenter, bound.SphereRadius, true, transform);
+        else if (bound is BoundCapsule)
+        {
+            var extent = new Vector3(0, Math.Max(0, bound.SphereRadius - bound.Margin), 0);
+            AddRound(bound.SphereCenter - extent, bound.SphereCenter + extent, bound.Margin, true, transform);
+        }
+        else if (bound is BoundCylinder)
+        {
+            var extent = new Vector3(0, (bound.BoxMax.Y - bound.BoxMin.Y) * 0.5f, 0);
+            AddRound(bound.SphereCenter - extent, bound.SphereCenter + extent, (bound.BoxMax.X - bound.BoxMin.X) * 0.5f, false, transform);
+        }
         else Issues.Add($"Unsupported bounds type {bound.Type}: {source}. Supply triangulated collision.");
+    }
+
+    private void AddTriangle(Vector3[] points, Matrix transform)
+    {
+        var vertices = points.Select(p => Vector3.TransformCoordinate(p, transform)).ToArray();
+        if (vertices.Any(v => !float.IsFinite(v.X) || !float.IsFinite(v.Y) || !float.IsFinite(v.Z))) throw new InvalidDataException("Non-finite collision geometry.");
+        if (Vector3.Cross(vertices[1] - vertices[0], vertices[2] - vertices[0]).LengthSquared() > 1e-12f) Triangles.Add(vertices);
+    }
+
+    private void AddConvex(IEnumerable<Vector3[]> triangles, Vector3 center, Matrix transform)
+    {
+        var worldCenter = Vector3.TransformCoordinate(center, transform);
+        foreach (var triangle in triangles)
+        {
+            var p = triangle.Select(v => Vector3.TransformCoordinate(v, transform)).ToArray();
+            if (Vector3.Dot(Vector3.Cross(p[1] - p[0], p[2] - p[0]), (p[0] + p[1] + p[2]) / 3 - worldCenter) < 0) (p[1], p[2]) = (p[2], p[1]);
+            AddTriangle(p, Matrix.Identity);
+        }
+    }
+
+    private void AddRound(Vector3 a, Vector3 b, float radius, bool capsule, Matrix transform)
+    {
+        float stretch = MathF.Sqrt(transform.Row1.LengthSquared() + transform.Row2.LengthSquared() + transform.Row3.LengthSquared());
+        AddConvex(CollisionPrimitives.Round(a, b, radius, capsule, CollisionPrimitives.MaxWorldError / stretch), (a + b) * 0.5f, transform);
     }
 }

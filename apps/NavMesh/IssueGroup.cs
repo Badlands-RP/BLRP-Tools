@@ -14,6 +14,7 @@ internal sealed record IssueGroup(string Title, string NextStep, string[] Messag
                 2 => ("Collision shapes need support", "These collision shapes cannot be extracted by this version of the tool. A complete build needs supported replacement collision or additional extractor support. The remaining geometry can still be previewed."),
                 3 => ("Game files need verification", "Your installed game files are available for previews. Before exporting, check that the selected sources match the server build, including DLC/update overrides. Hashes and source verification are under Advanced settings → Game sources. Auto-detection does not verify a game build."),
                 4 => ("Surrounding navigation needs attention", "Open Export to prepare the original navigation. Missing tiles, special navigation data or disconnected entrances must be resolved before creating a server resource."),
+                5 => ("Conflicting resource assets", "Selected resources supply different versions of the same asset or definition. The preview uses the first selected copy. Resolve which version is actually streamed before exporting; these differences are not ignored in a complete build."),
                 _ => ("Other checks", "Review the details below. The complete report and input snapshot are available through Open results.")
             };
             return new IssueGroup(title, action, group.ToArray());
@@ -26,6 +27,7 @@ internal sealed record IssueGroup(string Title, string NextStep, string[] Messag
         if (message.StartsWith("Unsupported") || message.StartsWith("Fragment physics")) return 2;
         if (message.StartsWith("Archive ") || message.StartsWith("Game archive") || message.StartsWith("Game source") || message.Contains("target build remains unverified")) return 3;
         if (message.Contains("baseline", StringComparison.OrdinalIgnoreCase) || message.Contains("navigation point", StringComparison.OrdinalIgnoreCase) || message.Contains("does not connect", StringComparison.OrdinalIgnoreCase)) return 4;
-        return 5;
+        if (message.StartsWith("Conflicting resource") || message.StartsWith("Conflicting archetype")) return 5;
+        return 6;
     }
 }

@@ -10,6 +10,8 @@ public sealed class GameSourceManifest
     public string Source { get; set; } = "";
     public string GameDirectory { get; set; } = "";
     public bool ValidatedForBuild { get; set; }
+    public bool AutoDiscoverDlc { get; set; }
+    public string[] DiscoveryIssues { get; set; } = [];
     public ArchiveInput[] Archives { get; set; } = [];
 }
 
@@ -58,7 +60,7 @@ public sealed class GameSource
         var names = new[] { "common.rpf" }.Concat(Enumerable.Range('a', 26).Select(c => $"x64{(char)c}.rpf"));
         return new GameSourceManifest
         {
-            GameBuild = build, GameDirectory = folder, ValidatedForBuild = false,
+            GameBuild = build, GameDirectory = folder, ValidatedForBuild = false, AutoDiscoverDlc = true,
             Source = "Base archives from the installed GTA V Legacy. Target-build compatibility and DLC/update overrides require review.",
             Archives = names.Where(n => File.Exists(Path.Combine(folder, n)))
                 .Select(n => new ArchiveInput { Path = Path.Combine(folder, n), LogicalPath = n }).ToArray()
@@ -75,6 +77,7 @@ public sealed class GameSource
             throw new InvalidDataException("Game source requires matching gameBuild, source and ordered archives.");
         if (manifest == null) scene.Inputs[settings.GameSourceFile] = CollisionScene.Hash(settings.GameSourceFile);
         if (!Manifest.ValidatedForBuild) scene.Issues.Add("Game archive selection has not been validated for the target build.");
+        scene.Issues.AddRange(Manifest.DiscoveryIssues.Select(message => "Game source discovery: " + message));
         GTA5Keys.LoadFromPath(Path.GetFullPath(Manifest.GameDirectory, root), false, null);
         foreach (var archive in Manifest.Archives)
         {

@@ -13,19 +13,31 @@ internal sealed record MapDetails(Vector3 Min, Vector3 Max, EntitySetChoice[] Se
 
 internal static class MapSelection
 {
-    internal static string[] FindSiblingDependencies(string[] resources, string[] maps, CancellationToken cancellation = default)
+    internal static string[] FindDependencies(BakeSettings settings, GameSource? game, CancellationToken cancellation = default)
     {
+        var resources = settings.ResourceRoots; var maps = settings.Ymaps;
         var selected = resources.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var nearby = resources.Select(Path.GetDirectoryName).Where(p => p != null && Directory.Exists(p))
-            .SelectMany(p => Directory.EnumerateDirectories(p!))
-            .Where(p => File.Exists(Path.Combine(p, "fxmanifest.lua")) || File.Exists(Path.Combine(p, "__resource.lua")));
+        var searchRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string root in resources)
+        {
+            var parent = Directory.GetParent(root);
+            var resourceTree = parent;
+            while (resourceTree != null && !resourceTree.Name.Equals("resources", StringComparison.OrdinalIgnoreCase)) resourceTree = resourceTree.Parent;
+            if (resourceTree != null) searchRoots.Add(resourceTree.FullName);
+            else if (parent != null) searchRoots.Add(parent.FullName);
+        }
+        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        var definitions = resources.Concat(searchRoots).SelectMany(root => Directory.EnumerateFiles(root, "*.ytyp", options)).Distinct(StringComparer.OrdinalIgnoreCase);
         var owners = new Dictionary<uint, List<(string Root, Archetype Archetype)>>();
-        foreach (string root in resources.Concat(nearby).Distinct(StringComparer.OrdinalIgnoreCase))
-        foreach (string path in Directory.EnumerateFiles(root, "*.ytyp", SearchOption.AllDirectories))
+        foreach (string path in definitions)
         {
             cancellation.ThrowIfCancellationRequested();
             try
             {
+                var directory = Directory.GetParent(path);
+                while (directory != null && !File.Exists(Path.Combine(directory.FullName, "fxmanifest.lua")) && !File.Exists(Path.Combine(directory.FullName, "__resource.lua"))) directory = directory.Parent;
+                if (directory == null) continue;
+                string root = directory.FullName;
                 var data = File.ReadAllBytes(path);
                 if (data.Length < 4 || System.Text.Encoding.ASCII.GetString(data, 0, 4) != "RSC7") continue;
                 var file = new YtypFile(); file.Load(data);
@@ -38,40 +50,49 @@ internal static class MapSelection
             catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
             { Console.WriteLine($"Dependency scan could not read {path}: {e.Message}"); }
         }
-        var queue = new Queue<uint>();
+        var queue = new Queue<(uint Hash, string Placement)>();
         foreach (string path in maps)
         {
             var file = new YmapFile(); file.Load(File.ReadAllBytes(path));
-            foreach (var entity in file.AllEntities ?? []) queue.Enqueue(entity.CEntityDef.archetypeName);
+            foreach (var entity in file.AllEntities ?? [])
+                queue.Enqueue((entity.CEntityDef.archetypeName, Path.GetFileName(path) + ":" + entity.Index));
         }
-        var visited = new HashSet<uint>(); var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        while (queue.TryDequeue(out uint hash))
+        var visited = new HashSet<(uint, string)>(); var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (queue.TryDequeue(out var item))
         {
             cancellation.ThrowIfCancellationRequested();
-            if (!visited.Add(hash) || !owners.TryGetValue(hash, out var matches)) continue;
+            var (hash, placement) = item;
+            if (!visited.Add(item) || !owners.TryGetValue(hash, out var matches)) continue;
             var chosen = matches.Where(m => selected.Contains(m.Root)).ToArray();
+            // Do not select an unrelated custom override of an already available GTA object.
+            if (chosen.Length == 0 && game?.FindArchetype(hash) != null) continue;
             if (chosen.Length == 0) chosen = matches.ToArray();
-            // Auto-add interior owners only. An unrelated sibling may override an ordinary GTA prop.
-            if (!chosen.Any(m => m.Archetype is MloArchetype)) continue;
             var roots = chosen.Select(m => m.Root).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             if (roots.Length != 1)
             { Console.WriteLine($"Multiple resources supply {hash}; choose the intended owner manually: {string.Join(", ", roots)}"); continue; }
             if (!selected.Contains(roots[0])) added.Add(roots[0]);
             foreach (var mlo in chosen.Select(m => m.Archetype).OfType<MloArchetype>())
-                foreach (var child in mlo.entities ?? []) queue.Enqueue(child.Data.archetypeName);
+            {
+                foreach (var child in mlo.entities ?? []) queue.Enqueue((child.Data.archetypeName, placement));
+                if (settings.EntitySets.TryGetValue(placement, out var enabled))
+                    foreach (var set in mlo.entitySets ?? [])
+                        if (enabled.Contains(set.Name))
+                            foreach (var child in set.Entities ?? []) queue.Enqueue((child.Data.archetypeName, placement));
+            }
         }
         return added.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public static MapDetails Read(BakeSettings settings, GameSourceManifest? gameSources = null)
+    public static MapDetails Read(BakeSettings settings, GameSourceManifest? gameSources = null, GameSource? loadedGame = null)
     {
         if (settings.Ymaps.Length == 0) throw new InvalidDataException("Select at least one map first.");
         var scene = new CollisionScene(settings);
-        var game = gameSources != null || settings.GameSourceFile.Length > 0 ? new GameSource(settings, scene, gameSources) : null;
+        var game = loadedGame ?? (gameSources != null || settings.GameSourceFile.Length > 0 ? new GameSource(settings, scene, gameSources) : null);
+        var unresolved = new List<string>();
         var archetypes = new Dictionary<uint, Archetype>();
         var owners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var collisions = new Dictionary<uint, string>();
-        foreach (string path in settings.ResourceRoots.SelectMany(r => Directory.EnumerateFiles(r, "*", SearchOption.AllDirectories)))
+        foreach (string path in settings.ResourceRoots.SelectMany(r => Directory.EnumerateFiles(r, "*", SearchOption.AllDirectories).Order(StringComparer.OrdinalIgnoreCase)))
         {
             string extension = Path.GetExtension(path).ToLowerInvariant();
             if (extension is not (".ytyp" or ".ybn" or ".ydr" or ".ydd" or ".yft")) continue;
@@ -79,7 +100,7 @@ internal static class MapSelection
             string name = Path.GetFileName(path);
             if (owners.TryGetValue(name, out var previousPath))
             {
-                if (CollisionScene.Hash(previousPath) != CollisionScene.Hash(path)) throw new InvalidDataException($"Conflicting resource asset: {name}");
+                if (CollisionScene.Hash(previousPath) != CollisionScene.Hash(path)) unresolved.Add($"Conflicting resource asset: {name}. Preview uses {previousPath}; also found {path}. Resolve the active resource versions before exporting.");
                 continue;
             }
             owners[name] = path;
@@ -89,12 +110,15 @@ internal static class MapSelection
             foreach (var archetype in file.AllArchetypes ?? [])
             {
                 if (archetypes.TryGetValue(archetype.Hash, out var previous) && previous.Ytyp != file)
-                    throw new InvalidDataException($"Duplicate archetype {archetype.Name}; reconcile the resource selection first.");
+                {
+                    unresolved.Add($"Conflicting archetype {archetype.Name}. Preview keeps the first selected definition; reconcile the resource selection before exporting.");
+                    continue;
+                }
                 archetypes[archetype.Hash] = archetype;
             }
         }
         var min = new Vector3(float.MaxValue); var max = new Vector3(float.MinValue);
-        var sets = new List<EntitySetChoice>(); var unresolved = new List<string>();
+        var sets = new List<EntitySetChoice>();
         int collisionCount = 0, metadataCount = 0;
         foreach (string path in settings.Ymaps)
         {

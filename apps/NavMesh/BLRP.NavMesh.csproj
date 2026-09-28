@@ -15,6 +15,7 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="UserGuide.md" LogicalName="BLRP.NavMesh.UserGuide.md" />
+    <EmbeddedResource Include="GameBuildUpdates.json" LogicalName="BLRP.NavMesh.GameBuildUpdates.json" />
     <Compile Include="../../shared/BlrpTheme.cs" Link="BlrpTheme.cs" />
     <None Update="DotRecast-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Update="README.md;examples/**/*.json;fivem/**/*" CopyToOutputDirectory="PreserveNewest" />

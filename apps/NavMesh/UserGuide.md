@@ -6,7 +6,7 @@ For your first attempt:
 
 1. In Map & preview, click ADD MAP RESOURCE and choose the folder containing fxmanifest.lua. A resource with one YMAP placement selects it automatically; otherwise, check the placement you want.
 2. Check Server build. It starts at 3095 and remembers your last choice. GTA V Legacy is detected automatically; only use GTA SETTINGS if it was not found. A default results folder is already chosen.
-3. Click GENERATE PREVIEW. The tool finds nearby interior dependencies, fits the area and checks the collision. You do not need to enter coordinates or choose archives for an initial preview.
+3. Click GENERATE PREVIEW. The tool finds local game DLC and resource dependencies, fits the area and checks the collision. You do not need to enter coordinates or choose archives for an initial preview.
 4. Inspect the surfaces. Select a category under Needs attention for an explanation and next step. Open Export when you are ready to prepare a server resource. SAVE PROJECT retains your setup.
 
 Advanced settings reveals area/layout, game sources, pedestrian settings and extra collision. For interiors with optional furnishings, use Area & layout to select the entity sets actually enabled on your server.
@@ -20,7 +20,7 @@ For Cool Beans, add hns_josecafe_mirror_park. Its hns_josecafe_base dependency i
 Map resources
 Add the resource containing the map. Names are shown without long paths; hover over a name to see its full folder. Adding a resource lists its YMAP files; check only the placements you intend to include.
 
-When fitting the area, the tool looks in sibling resource folders for the selected interior's actual YTYP owner. It adds an unambiguous interior dependency without selecting that dependency's other maps. It does not search your entire server or choose between competing owners. Add other resources manually when they supply props or live elsewhere.
+When fitting the area, the tool searches the containing resources tree for actual YTYP owners of missing custom props and interiors, including enabled entity sets. Outside a resources tree it searches neighboring folders. It adds an unambiguous dependency without selecting that dependency's maps. Add the owner manually when it lives elsewhere or several resources supply it. Discovery finds files; check that the added resources are actually enabled on your server.
 
 Placements
 The map must describe the object in its placed world location. For Cool Beans, select hns_josecafe_mrpark_milo_.ymap from the Mirror Park resource. For the Market pilot, start with gabz_vbm_store01_milo_.ymap. Other shop placements and different furnishings need their own checks.
@@ -67,19 +67,21 @@ Exclude an object only when you have established that it has no relevant collisi
 
 GTA V Legacy is selected automatically when opening a new project. The tool tries your remembered NavMesh folder, the Livery Tool's saved folder, then registered GTA installations. It remembers a manual choice for next time, along with your server build and results folder.
 
-Automatic setup includes common.rpf and x64 archives in order. It leaves build compatibility unverified and does not add a newer installed update or assume the right DLC set. An existing project's explicit archive selection is preserved. A project saved with game sources disabled stays that way.
+Automatic setup starts with common.rpf and x64 archives. Before previewing, it searches the local FiveM cache and GTA folder for an update whose hash matches Server build. That update's DLC list and setup files determine which installed DLC packs to include and their order. This can take a little longer on the first preview.
+
+A newer installed update is never substituted for the requested build. If the matching update is missing, connect FiveM to that build to populate its cache, or import a matching source set. Automatic discovery does not download game files. Existing explicit archive selections are preserved; old untouched automatic base-only selections gain DLC discovery. A project saved with game sources disabled stays that way.
 
 Use GTA SETTINGS or Advanced settings → Game sources for manual setup and verification:
 
 1. If GTA was not detected, click CHANGE GTA FOLDER. This replaces the base archive selection and remembers the folder. IMPORT SOURCE SET can restore an authored selection.
 2. Enable Include assets from game archives if it is off.
 3. Set Archive build to the build represented by your source files. It must match Server build.
-4. Add the relevant base, DLC and update archives, or use IMPORT SOURCE SET to load an existing selection.
+4. Leave Find DLC and matching updates automatically enabled for preview setup. Disable it to add archives manually, or use IMPORT SOURCE SET. Editing the archive list switches to manual selection.
 5. Review the Original archive path column. A base archive might be x64f.rpf; an update archive might be update/update.rpf. Cached copies need their original archive name/path, not the cache's hash-suffixed filename.
 6. Use UP and DOWN to set the override order. Later archives override earlier assets with the same name.
 7. Write where the files came from in Source notes. CALCULATE HASHES records their identities.
 
-Only enable Archive selection verified for this game build after establishing the source set's build compatibility. Hashing a newer installation does not make it compatible with 3095. The tool does not automatically reconstruct the server's DLC mount order.
+Only enable Archive selection verified for this game build after establishing the source set's build compatibility. Matching the update identifies its version; it does not verify every installed base/DLC archive or every runtime override. FiveM can combine a newer executable's files with an older build's overrides. Review that mount configuration before exporting; hashing a newer installation alone does not certify it for 3095.
 
 Unverified sources can be used for inspection. A complete resource build requires a verified, reproducible source set. A future server-build change needs fresh source/baseline checks and another in-game test.
 
@@ -156,10 +158,10 @@ Unreadable or escrowed asset
 Request readable collision from the map author, or supply measured replacement collision. The baker cannot inspect protected geometry and does not treat it as empty space.
 
 Unsupported primitive or fragment physics
-Use validated, triangulated collision for that object. The app reports unsupported extraction instead of guessing its shape or transforms.
+Boxes, spheres, capsules and cylinders are supported, including primitives inside triangle collision. Curved surfaces are sampled to a 2mm maximum error under the placed transform. Static fragment collision uses pristine physics bounds only when its bone transforms agree. Other fragment layouts still need validated replacement collision; the app reports them instead of guessing their shape or transforms.
 
 Conflicting asset or archetype
-Check whether you selected duplicate resource versions or two competing owners of the same object. Choose the actual active resources and resolve the conflict before baking.
+Check whether you selected duplicate resource versions or competing owners of an object. The preview keeps the first selected copy and lists conflicts separately. Resolve which version is actually streamed before building a resource. A preview continuing through a conflict does not establish that the chosen copy is correct.
 
 Unverified archive set / archive hash mismatch
 Establish that the archives belong to the chosen build. If an input changed, inspect why before recalculating its hash. Rebuild the baseline when its source or target build changes.

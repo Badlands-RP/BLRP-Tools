@@ -15,7 +15,7 @@ internal sealed class MainForm : Form
     private readonly Label gameStatus = Caption("Checking for GTA V Legacy…");
     private readonly Label areaHint = Caption("The preview area will be fitted to your selected map.");
     private readonly Label exportStatus = Caption("Generate a preview first. Export becomes available after the input checks pass.");
-    private readonly Label resourceHint = Caption("Choose the resource folder containing fxmanifest.lua. Required sibling resources are detected when possible.");
+    private readonly Label resourceHint = Caption("Choose the resource folder containing fxmanifest.lua. Dependencies are found in its resources tree when available.");
     private readonly TextBox issueDetails = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, WordWrap = true, ScrollBars = ScrollBars.Vertical };
     private readonly ToolTip tips = new() { AutoPopDelay = 15000 };
     private readonly NumericUpDown floorHeight = Number(0, -100000, 100000, 2);
@@ -37,6 +37,9 @@ internal sealed class MainForm : Form
     private readonly CheckBox compose = new() { Text = "Include original surrounding navigation", AutoSize = true };
     private readonly TextBox conflicts = new() { Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Vertical };
     private readonly CheckBox useGame = new() { Text = "Include assets from game archives", AutoSize = true };
+    private readonly CheckBox automaticDlc = new() { Text = "Find DLC and matching updates automatically", AutoSize = true };
+    private string preparedGameKey = "";
+    private string[] discoveryIssues = [];
     private readonly TextBox gameFolder = new() { Dock = DockStyle.Fill, ReadOnly = true };
     private readonly NumericUpDown archiveBuild = Number(3095, 1, 100000, 0);
     private readonly TextBox sourceNotes = new() { Dock = DockStyle.Fill };
@@ -267,9 +270,10 @@ internal sealed class MainForm : Form
     {
         var body = Tab("Game sources");
         Row(body, "", useGame, 34);
+        Row(body, "", automaticDlc, 34);
         Row(body, "GTA Legacy folder", gameFolder, 36);
         Row(body, "", Button("CHANGE GTA FOLDER", ChooseGameFolder), 40);
-        Row(body, "", Caption("GTA is detected automatically for previews. These controls are for build verification and custom DLC/update selections."), 62);
+        Row(body, "", Caption("Preview preparation finds DLC for the server build using local GTA/FiveM files. A newer update is never substituted. Turn automatic discovery off to author a source set manually."), 80);
         Row(body, "Archive build", archiveBuild, 34);
         Row(body, "Source notes", sourceNotes, 60);
         archives.AutoGenerateColumns = false;
@@ -336,14 +340,15 @@ internal sealed class MainForm : Form
             dependencies.Text = string.Join(", ", Names(dependencies.Text).Append(name).Distinct());
         status.Text = $"Added {Path.GetFileName(path)}. Choose its placement, then generate a preview.";
         if (includeMaps) resourceHint.Text = files.Length == 0 ? "This resource has no placements. Add the map resource that uses these assets." :
-            files.Length == 1 ? "The map placement is selected. Generate a preview; required interior resources will be found nearby." : $"Found {files.Length} placements. Check the ones you want to preview.";
+            files.Length == 1 ? "The map placement is selected. Generate a preview to find dependencies and fit the area." : $"Found {files.Length} placements. Check the ones you want to preview.";
         InputsChanged();
     }
 
     private async Task<bool> FitMapArea()
     {
+        if (!await PrepareGameSources()) return false;
         var value = new BakeSettings { GameBuild = (int)build.Value,
-            ResourceRoots = resources.Items.Cast<string>().ToArray(), Ymaps = maps.CheckedItems.Cast<string>().ToArray() };
+            ResourceRoots = resources.Items.Cast<string>().ToArray(), Ymaps = maps.CheckedItems.Cast<string>().ToArray(), EntitySets = ReadEntitySets() };
         archives.EndEdit();
         var sources = useGame.Checked ? ReadGameSources() : null;
         MapDetails? details = null;
@@ -351,9 +356,10 @@ internal sealed class MainForm : Form
         bool success = await RunOperation(() =>
         {
             Console.WriteLine("Finding map dependencies and fitting the preview area…");
-            found = MapSelection.FindSiblingDependencies(value.ResourceRoots, value.Ymaps, operation!.Token);
+            var game = sources == null ? null : new GameSource(value, new CollisionScene(value), sources);
+            found = MapSelection.FindDependencies(value, game, operation!.Token);
             value.ResourceRoots = value.ResourceRoots.Concat(found).ToArray();
-            details = MapSelection.Read(value, sources);
+            details = MapSelection.Read(value, sources, game);
         }, () =>
         {
             if (details == null) return;
@@ -422,7 +428,7 @@ internal sealed class MainForm : Form
     private GameSourceManifest ReadGameSources() => new()
     {
         GameBuild = (int)archiveBuild.Value, GameDirectory = Path.GetFullPath(gameFolder.Text), Source = sourceNotes.Text,
-        ValidatedForBuild = validated.Checked,
+        ValidatedForBuild = validated.Checked, AutoDiscoverDlc = automaticDlc.Checked, DiscoveryIssues = discoveryIssues,
         Archives = archiveItems.Select(a => new ArchiveInput { Path = Path.GetFullPath(a.Path), LogicalPath = a.LogicalPath, Sha256 = a.Sha256.Trim() }).ToArray()
     };
 
@@ -444,6 +450,7 @@ internal sealed class MainForm : Form
             autoFit.Checked = value.AutoFitArea;
             collisions.Rows.Clear(); foreach (var input in value.Collision) AddCollision(input);
             archiveItems.Clear(); gameFolder.Clear(); sourceNotes.Clear(); validated.Checked = false; archiveBuild.Value = value.GameBuild;
+            automaticDlc.Checked = false; preparedGameKey = ""; discoveryIssues = [];
             useGame.Checked = value.GameSourceFile.Length > 0;
             if (useGame.Checked) LoadGameSources(value.GameSourceFile);
             else if (value.AutoDetectGame) DetectGame();
@@ -469,13 +476,38 @@ internal sealed class MainForm : Form
     {
         var value = JsonSerializer.Deserialize<GameSourceManifest>(File.ReadAllText(path), BakeSettings.Json) ?? throw new InvalidDataException("Empty game source set.");
         string folder = Path.GetDirectoryName(Path.GetFullPath(path))!;
-        gameFolder.Text = Path.GetFullPath(value.GameDirectory, folder); sourceNotes.Text = value.Source;
+        value.GameDirectory = Path.GetFullPath(value.GameDirectory, folder);
+        foreach (var archive in value.Archives) archive.Path = Path.GetFullPath(archive.Path, folder);
+        // Upgrade only the previous release's untouched automatic base selection.
+        value.AutoDiscoverDlc |= !value.ValidatedForBuild && value.Source.StartsWith("Base archives from the installed") &&
+            value.Archives.All(a => a.LogicalPath == "common.rpf" || System.Text.RegularExpressions.Regex.IsMatch(a.LogicalPath, "^x64[a-z]\\.rpf$"));
+        ApplyGameSources(value);
+    }
+
+    private void ApplyGameSources(GameSourceManifest value)
+    {
+        gameFolder.Text = value.GameDirectory; sourceNotes.Text = value.Source;
         archiveBuild.Value = value.GameBuild; validated.Checked = value.ValidatedForBuild;
         archiveItems.Clear();
         foreach (var archive in value.Archives)
-            archiveItems.Add(new ArchiveInput { Path = Path.GetFullPath(archive.Path, folder), LogicalPath = archive.LogicalPath, Sha256 = archive.Sha256 });
+            archiveItems.Add(new ArchiveInput { Path = archive.Path, LogicalPath = archive.LogicalPath, Sha256 = archive.Sha256 });
+        automaticDlc.Checked = value.AutoDiscoverDlc; discoveryIssues = value.DiscoveryIssues; preparedGameKey = "";
         useGame.Checked = true;
         RefreshGameStatus();
+    }
+
+    private async Task<bool> PrepareGameSources()
+    {
+        if (!useGame.Checked || !automaticDlc.Checked || validated.Checked) return true;
+        string folder = gameFolder.Text; int target = (int)build.Value;
+        string key = folder + "|" + target;
+        if (preparedGameKey == key) return true;
+        GameSourceManifest? sources = null;
+        return await RunOperation(() => sources = GameArchiveDiscovery.Discover(folder, target, operation!.Token), () =>
+        {
+            ApplyGameSources(sources!); preparedGameKey = key;
+            status.Text = $"Found {archiveItems.Count} game archives for previewing build {target}.";
+        });
     }
 
     private void DetectGame()
@@ -494,10 +526,7 @@ internal sealed class MainForm : Form
     private void SelectBaseGame(string folder)
     {
         var source = GameSource.BaseGameSelection(folder, (int)build.Value);
-        gameFolder.Text = source.GameDirectory; archiveBuild.Value = source.GameBuild; sourceNotes.Text = source.Source;
-        archiveItems.Clear();
-        foreach (var archive in source.Archives) archiveItems.Add(archive);
-        useGame.Checked = true; validated.Checked = false;
+        ApplyGameSources(source);
         preferences.GtaFolder = source.GameDirectory;
         RefreshGameStatus(); InputsChanged();
     }
@@ -534,6 +563,7 @@ internal sealed class MainForm : Form
         BakeSettings value;
         try
         {
+            if (!await PrepareGameSources()) return;
             if (diagnostic && autoFit.Checked && maps.CheckedItems.Count > 0 && !await FitMapArea()) return;
             value = ReadSettings();
             if (!diagnostic && value.BaselineDirectory.Length == 0) throw new InvalidDataException("Select original navigation and enable inclusion of the surrounding navigation before building a resource.");
@@ -552,6 +582,7 @@ internal sealed class MainForm : Form
         try
         {
             if (!useGame.Checked) throw new InvalidDataException("Configure and enable game archives first.");
+            if (!await PrepareGameSources()) return;
             var value = ReadSettings(requireBaseline: false);
             string destination = Path.Combine(value.OutputDirectory, "original-navigation-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..4]);
             string snapshot = Path.Combine(value.OutputDirectory, "capture-" + Guid.NewGuid().ToString("N") + ".json");
@@ -746,12 +777,18 @@ internal sealed class MainForm : Form
             if (applyingSettings) return;
             // A target-build edit never certifies the selected game files.
             validated.Checked = false;
-            if (sourceNotes.Text.StartsWith("Base archives from the installed")) archiveBuild.Value = build.Value;
+            if (automaticDlc.Checked || sourceNotes.Text.StartsWith("Base archives from the installed")) archiveBuild.Value = build.Value;
         };
         autoFit.CheckedChanged += (_, _) => { if (!applyingSettings) areaHint.Text = autoFit.Checked ? "The preview area will be fitted to your selected map." : "Using the saved area. Edit coordinates under Advanced settings → Area & layout."; };
         useGame.CheckedChanged += (_, _) => RefreshGameStatus();
-        archiveItems.ListChanged += (_, _) => { InputsChanged(); RefreshGameStatus(); };
-        archives.CellValueChanged += (_, _) => InputsChanged(); collisions.CellValueChanged += (_, _) => InputsChanged();
+        void ArchivesEdited()
+        {
+            if (!applyingSettings && operation == null) { automaticDlc.Checked = false; discoveryIssues = []; }
+            InputsChanged(); RefreshGameStatus();
+        }
+        automaticDlc.CheckedChanged += (_, _) => preparedGameKey = "";
+        archiveItems.ListChanged += (_, _) => ArchivesEdited();
+        archives.CellValueChanged += (_, _) => ArchivesEdited(); collisions.CellValueChanged += (_, _) => InputsChanged();
         collisions.RowsAdded += (_, _) => InputsChanged(); collisions.RowsRemoved += (_, _) => InputsChanged();
         agent.PropertyValueChanged += (_, _) => InputsChanged();
         foreach (var list in new[] { maps, entitySets }) list.ItemCheck += (_, _) =>
