@@ -39,8 +39,14 @@ internal sealed class MainForm : Form
     private readonly TextBox _inventoryModel = CreateTextBox();
     private readonly ComboBox _inventoryTexture = CreatePathComboBox();
     private readonly TextBox _inventoryReplacement = CreateTextBox();
+    private readonly TextBox _stencilBackground = CreateTextBox();
+    private readonly TextBox _stencilSpray = CreateTextBox();
+    private readonly NumericUpDown _stencilScale = CreateNumber(10, 150, 50);
+    private readonly NumericUpDown _stencilOffsetX = CreateNumber(-256, 256, 0);
+    private readonly NumericUpDown _stencilOffsetY = CreateNumber(-256, 256, 8);
     private readonly Label _status = CreateLabel("READY", 9, AccentLight, FontStyle.Bold);
     private readonly ModelPreview _preview = new() { Dock = DockStyle.Fill };
+    private readonly PictureBox _stencilPreview = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(14, 14, 28), Visible = false };
     private readonly ContextMenuStrip _partsMenu = new();
     private readonly ComboBox _mode = CreateComboBox();
     private readonly Button _importButton;
@@ -49,6 +55,10 @@ internal sealed class MainForm : Form
     private Control _staffCard = null!;
     private Control _cupCard = null!;
     private Control _inventoryCard = null!;
+    private Control _stencilCard = null!;
+    private Control _previewButtons = null!;
+    private Control _previewFooter = null!;
+    private Label _previewTitle = null!;
     private string? _loadedModel;
     private string? _loadedReplacement;
     private string? _loadedCupTop;
@@ -57,6 +67,7 @@ internal sealed class MainForm : Form
     private bool IsDeveloper => _mode.SelectedIndex == 1;
     private bool IsCup => _mode.SelectedIndex == 2;
     private bool IsInventory => _mode.SelectedIndex == 3;
+    private bool IsStencil => _mode.SelectedIndex == 4;
 
     public MainForm()
     {
@@ -82,10 +93,11 @@ internal sealed class MainForm : Form
         BuildInterface();
         RefreshGeometryMenu();
         SetBatDefaults();
-        _mode.Items.AddRange(["STAFF PREVIEW", "DEVELOPER IMPORT", "CUP CREATOR", "INVENTORY PHOTO"]);
+        _mode.Items.AddRange(["STAFF PREVIEW", "DEVELOPER IMPORT", "CUP CREATOR", "INVENTORY PHOTO", "STENCIL CREATOR"]);
         _mode.SelectedIndexChanged += (_, _) => ApplyMode();
         _mode.SelectedIndex = 0;
         Shown += async (_, _) => { if (IsDeveloper && Directory.Exists(_root.Text)) await ScanAsync(); };
+        FormClosed += (_, _) => _stencilPreview.Image?.Dispose();
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
@@ -110,10 +122,12 @@ internal sealed class MainForm : Form
         _developerCard = BuildSetupCard();
         _cupCard = BuildCupCard();
         _inventoryCard = BuildInventoryCard();
+        _stencilCard = BuildStencilCard();
         leftHost.Controls.Add(_developerCard);
         leftHost.Controls.Add(_staffCard);
         leftHost.Controls.Add(_cupCard);
         leftHost.Controls.Add(_inventoryCard);
+        leftHost.Controls.Add(_stencilCard);
         split.Controls.Add(leftHost, 0, 0);
         split.Controls.Add(BuildPreviewCard(), 1, 0);
         page.Controls.Add(split, 0, 1);
@@ -320,6 +334,55 @@ internal sealed class MainForm : Form
         return card;
     }
 
+    private Control BuildStencilCard()
+    {
+        var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 0), Padding = new Padding(18) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3, RowCount = 9 };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        Label heading = CreateLabel("STENCIL IMAGE CREATOR", 11, AccentLight, FontStyle.Bold);
+        layout.Controls.Add(heading, 0, 0);
+        layout.SetColumnSpan(heading, 3);
+        Label explanation = CreateLabel("Place transparent spray artwork over the clean built-in scroll, adjust its size and position, then save a stencil WebP.", 9, TextPrimary);
+        explanation.AutoEllipsis = false;
+        layout.Controls.Add(explanation, 0, 1);
+        layout.SetColumnSpan(explanation, 3);
+        AddSection(layout, "IMAGE SOURCES", 2);
+        AddField(layout, "BLANK SCROLL BACKGROUND (.PNG / .WEBP)", _stencilBackground, 3,
+            CreateButton("BROWSE", (_, _) => BrowseAsset(_stencilBackground, StencilImageFilter)));
+        AddField(layout, "SPRAY ART (.PNG / .WEBP)", _stencilSpray, 4,
+            CreateButton("BROWSE", (_, _) => BrowseAsset(_stencilSpray, StencilImageFilter)));
+        AddSection(layout, "SPRAY PLACEMENT", 5);
+        AddTripleField(layout, "SIZE %", _stencilScale, "X OFFSET", _stencilOffsetX, "Y OFFSET", _stencilOffsetY, 6);
+        Button preview = CreateButton("UPDATE PREVIEW", (_, _) => RefreshStencilPreview(true), true);
+        preview.Dock = DockStyle.Fill;
+        preview.Margin = new Padding(0, 8, 0, 0);
+        layout.Controls.Add(preview, 0, 7);
+        layout.SetColumnSpan(preview, 3);
+        Button save = CreateButton("SAVE STENCIL WEBP", (_, _) => SaveStencilImage(), true);
+        save.Dock = DockStyle.Top;
+        save.Height = 40;
+        save.Margin = new Padding(0, 12, 0, 0);
+        layout.Controls.Add(save, 0, 8);
+        layout.SetColumnSpan(save, 3);
+        _stencilScale.ValueChanged += (_, _) => RefreshStencilPreview();
+        _stencilOffsetX.ValueChanged += (_, _) => RefreshStencilPreview();
+        _stencilOffsetY.ValueChanged += (_, _) => RefreshStencilPreview();
+        card.Controls.Add(layout);
+        return card;
+    }
+
     private Control BuildPreviewCard()
     {
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(14) };
@@ -329,8 +392,10 @@ internal sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        layout.Controls.Add(CreateLabel("3D MODEL PREVIEW", 11, AccentLight, FontStyle.Bold), 0, 0);
+        _previewTitle = CreateLabel("3D MODEL PREVIEW", 11, AccentLight, FontStyle.Bold);
+        layout.Controls.Add(_previewTitle, 0, 0);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, BackColor = Color.Transparent, WrapContents = false };
+        _previewButtons = buttons;
         const float step = MathF.PI / 36f;
         Button reset = CreateButton("RESET", (_, _) => _preview.ResetView()); reset.Width = 54;
         Button down = CreateButton("DOWN", (_, _) => _preview.Rotate(pitchDelta: step)); down.Width = 42;
@@ -348,7 +413,10 @@ internal sealed class MainForm : Form
         layout.Controls.Add(buttons, 1, 0);
         layout.Controls.Add(_preview, 0, 1);
         layout.SetColumnSpan(_preview, 2);
+        layout.Controls.Add(_stencilPreview, 0, 1);
+        layout.SetColumnSpan(_stencilPreview, 2);
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 4 };
+        _previewFooter = footer;
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
@@ -379,6 +447,7 @@ internal sealed class MainForm : Form
         _componentPrefix.Text = "COMPONENT_BAT_VARMOD_BL";
         _cupRoot.Text = _root.Text;
         _cupModel.Text = BundledAssets.CupTemplate();
+        _stencilBackground.Text = BundledAssets.StencilTemplate();
         _cupId.Text = "prop_coffeecup_new";
         _cupRoot.TextChanged += (_, _) => UpdateCupTargets();
         _cupId.TextChanged += (_, _) => UpdateCupTargets();
@@ -391,12 +460,18 @@ internal sealed class MainForm : Form
 
     private void ApplyMode()
     {
-        if (_developerCard is null || _staffCard is null || _cupCard is null || _inventoryCard is null) return;
+        if (_developerCard is null || _staffCard is null || _cupCard is null || _inventoryCard is null || _stencilCard is null) return;
         _developerCard.Visible = IsDeveloper;
         _staffCard.Visible = IsStaff;
         _cupCard.Visible = IsCup;
         _inventoryCard.Visible = IsInventory;
-        if (IsInventory) _inventoryCard.BringToFront(); else if (IsCup) _cupCard.BringToFront(); else if (IsDeveloper) _developerCard.BringToFront(); else _staffCard.BringToFront();
+        _stencilCard.Visible = IsStencil;
+        if (IsStencil) _stencilCard.BringToFront(); else if (IsInventory) _inventoryCard.BringToFront(); else if (IsCup) _cupCard.BringToFront(); else if (IsDeveloper) _developerCard.BringToFront(); else _staffCard.BringToFront();
+        _preview.Visible = !IsStencil;
+        _stencilPreview.Visible = IsStencil;
+        _previewButtons.Visible = !IsStencil;
+        _previewFooter.Visible = !IsStencil;
+        _previewTitle.Text = IsStencil ? "2D STENCIL PREVIEW" : "3D MODEL PREVIEW";
         _preview.EmptyMessage = IsInventory
             ? "SELECT A GTA YDR, YDD, OR YFT, THEN LOAD MODEL"
             : IsCup
@@ -405,7 +480,9 @@ internal sealed class MainForm : Form
             ? "SELECT A YDR + YTD, THEN LOAD PREVIEW"
             : "SELECT A SUBMISSION PNG OR DDS, THEN LOAD PREVIEW";
         _preview.Invalidate();
-        SetStatus(IsInventory
+        SetStatus(IsStencil
+            ? "STENCIL CREATOR  /  CHOOSE THE BACKGROUND AND SPRAY ART"
+            : IsInventory
             ? "INVENTORY PHOTO  /  LOAD, POSE, THEN SAVE 256 WEBP"
             : IsCup
             ? "CUP CREATOR  /  LOAD, POSE, THEN CREATE YDR + WEBP"
@@ -442,6 +519,11 @@ internal sealed class MainForm : Form
 
     private async Task LoadPreviewAsync()
     {
+        if (IsStencil)
+        {
+            RefreshStencilPreview(true);
+            return;
+        }
         string modelPath = IsInventory ? _inventoryModel.Text : IsCup ? _cupModel.Text : IsDeveloper ? _sourceModel.Text : BatTemplate(".ydr");
         string? texturePath = IsInventory
             ? (string.IsNullOrWhiteSpace(_inventoryTexture.Text) ? null : _inventoryTexture.Text)
@@ -602,6 +684,58 @@ internal sealed class MainForm : Form
         catch (Exception exception) { ShowError("Inventory image failed: " + exception.Message); }
     }
 
+    private void RefreshStencilPreview(bool showError = false)
+    {
+        if (!File.Exists(_stencilBackground.Text) || !File.Exists(_stencilSpray.Text))
+        {
+            if (showError) ShowError("Choose a valid background stencil and transparent spray image first.");
+            return;
+        }
+        try
+        {
+            Bitmap preview = StencilComposer.Preview(_stencilBackground.Text, _stencilSpray.Text,
+                (int)_stencilScale.Value, (int)_stencilOffsetX.Value, (int)_stencilOffsetY.Value);
+            Image? old = _stencilPreview.Image;
+            _stencilPreview.Image = preview;
+            old?.Dispose();
+            SetStatus($"STENCIL PREVIEW READY  /  SPRAY {_stencilScale.Value}%  /  OFFSET {_stencilOffsetX.Value}, {_stencilOffsetY.Value}");
+        }
+        catch (Exception exception)
+        {
+            if (showError) ShowError("Stencil preview failed: " + exception.Message);
+            else SetStatus("STENCIL PREVIEW FAILED: " + exception.Message, true);
+        }
+    }
+
+    private void SaveStencilImage()
+    {
+        if (!File.Exists(_stencilBackground.Text) || !File.Exists(_stencilSpray.Text))
+        {
+            ShowError("Choose a valid background stencil and transparent spray image first.");
+            return;
+        }
+        string sprayName = Path.GetFileNameWithoutExtension(_stencilSpray.Text);
+        string outputName = sprayName.StartsWith("spray_", StringComparison.OrdinalIgnoreCase)
+            ? "stencil_" + sprayName[6..]
+            : sprayName + "_stencil";
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "WebP image|*.webp",
+            DefaultExt = "webp",
+            AddExtension = true,
+            FileName = outputName + ".webp",
+            InitialDirectory = InventoryFolder() ?? Path.GetDirectoryName(_stencilSpray.Text)
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            StencilComposer.SaveWebp(_stencilBackground.Text, _stencilSpray.Text,
+                (int)_stencilScale.Value, (int)_stencilOffsetX.Value, (int)_stencilOffsetY.Value, dialog.FileName);
+            SetStatus($"SAVED STENCIL WEBP  /  {Path.GetFileName(dialog.FileName)}");
+        }
+        catch (Exception exception) { ShowError("Stencil image failed: " + exception.Message); }
+    }
+
     private void UpdateCupTargets()
     {
         try
@@ -648,7 +782,11 @@ internal sealed class MainForm : Form
 
     private void BrowseAsset(Control target, string filter)
     {
-        string? initialDirectory = target == _cupModel
+        string? initialDirectory = target == _stencilBackground && InventoryFolder() is string inventory
+            ? inventory
+            : target == _stencilSpray && Directory.Exists(Path.Combine(_root.Text, @"resources\rcore_spray\ui\graffiti"))
+            ? Path.Combine(_root.Text, @"resources\rcore_spray\ui\graffiti")
+            : target == _cupModel
             ? CupStreamFolder()
             : target == _sourceModel || target == _sourceTexture
             ? StreamFolder()
@@ -670,7 +808,9 @@ internal sealed class MainForm : Form
         {
             _inventoryTexture.Items.Add(dialog.FileName);
         }
-        if (target == _cupModel || ((target == _cupPng || target == _cupTop || target == _cupLod) && File.Exists(_cupModel.Text)) || target == _staffPng ||
+        if (target == _stencilBackground || target == _stencilSpray)
+            RefreshStencilPreview();
+        else if (target == _cupModel || ((target == _cupPng || target == _cupTop || target == _cupLod) && File.Exists(_cupModel.Text)) || target == _staffPng ||
             (target == _sourcePng && File.Exists(_sourceModel.Text) && File.Exists(_sourceTexture.Text)) ||
             ((target == _inventoryTexture || target == _inventoryReplacement) && File.Exists(_inventoryModel.Text)))
             _ = LoadPreviewAsync();
@@ -770,6 +910,7 @@ internal sealed class MainForm : Form
     private void ShowError(string message) { SetStatus(message, true); MessageBox.Show(this, message, "BLRP Asset Studio", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
 
     private const string ReplacementFilter = "Texture image|*.png;*.dds|PNG image|*.png|DDS texture|*.dds";
+    private const string StencilImageFilter = "Image|*.png;*.webp|PNG image|*.png|WebP image|*.webp";
 
     private static string? OptionalFullPath(string path) => string.IsNullOrWhiteSpace(path) ? null : Path.GetFullPath(path);
 
@@ -810,9 +951,27 @@ internal sealed class MainForm : Form
         layout.SetColumnSpan(holder, 3);
     }
 
+    private static void AddTripleField(TableLayoutPanel layout, string firstLabel, Control first, string secondLabel, Control second, string thirdLabel, Control third, int row)
+    {
+        var holder = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 3, RowCount = 2, Margin = new Padding(0) };
+        holder.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.34F));
+        holder.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+        holder.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33F));
+        holder.RowStyles.Add(new RowStyle(SizeType.Absolute, 16));
+        holder.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        holder.Controls.Add(CreateLabel(firstLabel, 7, TextMuted, FontStyle.Bold), 0, 0);
+        holder.Controls.Add(CreateLabel(secondLabel, 7, TextMuted, FontStyle.Bold), 1, 0);
+        holder.Controls.Add(CreateLabel(thirdLabel, 7, TextMuted, FontStyle.Bold), 2, 0);
+        first.Dock = DockStyle.Fill; second.Dock = DockStyle.Fill; third.Dock = DockStyle.Fill;
+        holder.Controls.Add(first, 0, 1); holder.Controls.Add(second, 1, 1); holder.Controls.Add(third, 2, 1);
+        layout.Controls.Add(holder, 0, row);
+        layout.SetColumnSpan(holder, 3);
+    }
+
     private static TextBox CreateTextBox(bool readOnly = false) => new() { BackColor = InputBackground, ForeColor = readOnly ? AccentLight : TextPrimary, BorderStyle = BorderStyle.FixedSingle, Font = PickMonoFont(8.5F), ReadOnly = readOnly };
     private static ComboBox CreatePathComboBox() => new() { BackColor = InputBackground, ForeColor = TextPrimary, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDown, DropDownWidth = 720, Font = PickMonoFont(8.5F) };
     private static ComboBox CreateComboBox() => new() { BackColor = InputBackground, ForeColor = TextPrimary, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList, Font = PickMonoFont(8.5F, FontStyle.Bold) };
+    private static NumericUpDown CreateNumber(int minimum, int maximum, int value) => new() { Minimum = minimum, Maximum = maximum, Value = value, BackColor = InputBackground, ForeColor = TextPrimary, BorderStyle = BorderStyle.FixedSingle, Font = PickMonoFont(8.5F) };
     private static Label CreateLabel(string text, float size, Color color, FontStyle style = FontStyle.Regular) => new() { Text = text, ForeColor = color, BackColor = Color.Transparent, Font = PickMonoFont(size, style), Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private static Button CreateButton(string text, EventHandler handler, bool primary = false)
     {

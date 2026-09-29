@@ -1,7 +1,7 @@
 # BLRP Asset Studio
 
-Windows utility for previewing and building BadlandsRP weapon skins, cups, and
-transparent inventory images.
+Windows utility for previewing and building BadlandsRP weapon skins, cups,
+stencils, and transparent inventory images.
 
 - **Staff Preview** is read-only. It ships with the BLRP bat template so staff
   can choose a ticket PNG or DDS and inspect it in 3D.
@@ -12,6 +12,15 @@ transparent inventory images.
   wrap, and creates both the renamed YDR and a posed 256x256 transparent WebP.
 - **Inventory Photo** loads any GTA YDR with an optional adjacent YTD and
   optional PNG/DDS diffuse override, then captures the posed model as a WebP.
+- **Stencil Creator** places transparent spray artwork over a clean built-in
+  scroll with adjustable size and X/Y positioning.
+
+## Stencil Creator
+
+Choose the transparent spray artwork, then adjust its size and X/Y offset in
+the live 2D preview. The bundled background is a blank scroll with no existing
+gang tag. Positive Y offsets move the artwork down, which keeps tall details
+such as crowns on the paper. A custom PNG or WebP background can also be used.
 
 ## Preview and inventory images
 

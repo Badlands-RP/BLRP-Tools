@@ -16,7 +16,14 @@ internal static class BundledAssets
         "cup-template",
         "prop_coffeecup_template.ydr");
 
+    public static string StencilTemplate() => Path.Combine(
+        ToolDirectory,
+        "assets",
+        "stencil-template",
+        "blank_scroll.png");
+
     internal static bool SelfTest() => File.Exists(BatTemplate(".ydr")) &&
         File.Exists(BatTemplate(".ytd")) &&
-        File.Exists(CupTemplate());
+        File.Exists(CupTemplate()) &&
+        File.Exists(StencilTemplate());
 }

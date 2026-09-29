@@ -10,6 +10,7 @@ app/
 app-v*/
 release/
 buildcheck/
+/exports/
 tools/*
 !tools/grzyClothTool-outfit/
 tools/grzyClothTool-outfit/*
