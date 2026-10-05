@@ -165,6 +165,16 @@ internal sealed class ClothingCatalog
         return baseOffset + priorPackCount + entry.RelativeIndex;
     }
 
+    public ClothingEntry RefreshModel(string filePath)
+    {
+        int index = _entries.FindIndex(entry => entry.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase));
+        if (index < 0) throw new FileNotFoundException("The edited model is no longer in the clothing index.", filePath);
+        ClothingEntry refreshed = _entries[index] with { Length = new FileInfo(filePath).Length };
+        _entries[index] = refreshed;
+        _hashCache.TryRemove(filePath, out _);
+        return refreshed;
+    }
+
     public string? FindPreviewTexture(ClothingEntry entry)
     {
         return FindTextures(entry)

@@ -2,6 +2,20 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.6 - 2026-10-05
+
+### Added
+
+- QC results can be narrowed by gender, component and addon together, while
+  retaining column sorting. `CLEAR FILTERS` restores the complete scanned list;
+  `EXPORT QC CSV` exports the visible results.
+
+### Fixed
+
+- Applying optimisation or LOD generation keeps the QC list, filters, selected
+  item, sort and scroll position. Only the edited model is rechecked, and fixed
+  items remain visible as `OK` until the next QC scan.
+
 ## 1.8.5 - 2026-09-06
 
 ### Fixed

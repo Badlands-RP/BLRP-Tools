@@ -22,6 +22,14 @@ add-on drawable number and is deliberately read-only. The GTA location and
 active FiveM game build are read automatically from `CitizenFX.ini`.
 Search results show the number of indexed YTD textures available for each model.
 
+`SCAN REPO QC` lists models with QC warnings. Its Gender, Component and Addon
+filters work together (for example, Female + Hair + Addon 2), and column headers
+still sort the matching results. The result count shows visible/total models.
+`CLEAR FILTERS` restores the full list; `EXPORT QC CSV` exports the visible rows.
+Applying `OPTIMISE / LODS...` rechecks only the edited model and preserves the
+list, filters, selection, sort and scroll position. Resolved items stay in the
+list as `OK` until the next QC scan.
+
 Rockstar extraction only reads GTA V. Copies are written to the folder selected
 in the app (default: `D:\BLRP-Clothing-Exports`).
 

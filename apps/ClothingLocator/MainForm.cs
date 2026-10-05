@@ -33,6 +33,17 @@ internal sealed class MainForm : Form
     private readonly TextBox _businessSearch = CreateTextBox();
     private IReadOnlyList<string> _businessOptions = [];
     private readonly DataGridView _results = new();
+    private readonly ComboBox _qualityGender = CreateComboBox();
+    private readonly ComboBox _qualityComponent = CreateComboBox();
+    private readonly ComboBox _qualityPack = CreateComboBox();
+    private readonly RowStyle _qualityFilterRow = new(SizeType.Absolute, 0);
+    private readonly TableLayoutPanel _qualityFilters = new()
+    {
+        Dock = DockStyle.Fill, BackColor = Color.Transparent, Margin = Padding.Empty,
+        ColumnCount = 7, RowCount = 1, Visible = false
+    };
+    private bool _showingQualityResults;
+    private bool _updatingQualityFilters;
     private readonly Label _status = CreateLabel("READY", 9, AccentLight, FontStyle.Bold);
     private readonly Label _resultCount = CreateLabel("0 RESULTS", 9, TextMuted, FontStyle.Bold);
     private readonly BlrpProgress _progress = new();
@@ -317,7 +328,7 @@ internal sealed class MainForm : Form
     private Control BuildResultsCard()
     {
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8), Padding = new Padding(12) };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 9, RowCount = 3 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 9, RowCount = 4 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
@@ -328,6 +339,7 @@ internal sealed class MainForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        layout.RowStyles.Add(_qualityFilterRow);
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
         layout.Controls.Add(CreateLabel("RESULTS", 10, TextPrimary, FontStyle.Bold), 0, 0);
@@ -350,13 +362,41 @@ internal sealed class MainForm : Form
         layout.Controls.Add(_resultCount, 8, 0);
 
         ConfigureGrid();
-        layout.Controls.Add(_results, 0, 1);
+        Control qualityFilters = BuildQualityFilters();
+        layout.Controls.Add(qualityFilters, 0, 1);
+        layout.SetColumnSpan(qualityFilters, 9);
+        layout.Controls.Add(_results, 0, 2);
         layout.SetColumnSpan(_results, 9);
         Control outfitBar = BuildOutfitBar();
-        layout.Controls.Add(outfitBar, 0, 2);
+        layout.Controls.Add(outfitBar, 0, 3);
         layout.SetColumnSpan(outfitBar, 9);
         card.Controls.Add(layout);
         return card;
+    }
+
+    private Control BuildQualityFilters()
+    {
+        TableLayoutPanel layout = _qualityFilters;
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
+        layout.Controls.Add(CreateLabel("GENDER", 8, TextMuted, FontStyle.Bold), 0, 0);
+        layout.Controls.Add(_qualityGender, 1, 0);
+        layout.Controls.Add(CreateLabel("COMPONENT", 8, TextMuted, FontStyle.Bold), 2, 0);
+        layout.Controls.Add(_qualityComponent, 3, 0);
+        layout.Controls.Add(CreateLabel("ADDON", 8, TextMuted, FontStyle.Bold), 4, 0);
+        layout.Controls.Add(_qualityPack, 5, 0);
+        layout.Controls.Add(CreateButton("CLEAR FILTERS", (_, _) => ClearQualityFilters()), 6, 0);
+        foreach (ComboBox filter in new[] { _qualityGender, _qualityComponent, _qualityPack })
+        {
+            filter.Dock = DockStyle.Fill;
+            filter.SelectedIndexChanged += (_, _) => FilterQualityResults();
+        }
+        return layout;
     }
 
     private Control BuildOutfitBar()
@@ -588,11 +628,12 @@ internal sealed class MainForm : Form
 
         string[] headers = [.. _results.Columns.Cast<DataGridViewColumn>().Select(column => column.HeaderText), "QC DETAILS", "GIT DETAILS", "FULL PATH"];
         var lines = new List<string> { string.Join(',', headers.Select(CsvCell)) };
-        lines.AddRange(_results.Rows.Cast<DataGridViewRow>().Select(row => string.Join(',',
+        DataGridViewRow[] rows = _results.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToArray();
+        lines.AddRange(rows.Select(row => string.Join(',',
             row.Cells.Cast<DataGridViewCell>().Select(cell => CsvCell(cell.Value?.ToString() ?? string.Empty))
                 .Concat([CsvCell(row.Cells[8].ToolTipText), CsvCell(row.Cells[9].ToolTipText), CsvCell((row.Tag as ClothingEntry)?.FilePath ?? string.Empty)]))));
         File.WriteAllLines(dialog.FileName, lines, new UTF8Encoding(true));
-        SetStatus($"EXPORTED {_results.Rows.Count:N0} QC RESULT{(_results.Rows.Count == 1 ? string.Empty : "S")} TO {dialog.FileName}", false);
+        SetStatus($"EXPORTED {rows.Length:N0} QC RESULT{(rows.Length == 1 ? string.Empty : "S")} TO {dialog.FileName}", false);
     }
 
     internal static string CsvCell(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
@@ -607,24 +648,28 @@ internal sealed class MainForm : Form
             return;
         }
         bool ownsCloth;
-        try { ownsCloth = ClothingImporter.OwnsCloth(_rootPath.Text.Trim(), entry); }
+        ClothingCatalog catalog = _catalog!;
+        string root = catalog.RootPath;
+        try { ownsCloth = ClothingImporter.OwnsCloth(root, entry); }
         catch (Exception exception) { ShowError(exception.Message); return; }
 
         using var dialog = new LodReviewDialog(
             entry.FilePath,
-            _rootPath.Text.Trim(),
+            root,
             ownsCloth,
-            _catalog?.FindPreviewTexture(entry));
+            catalog.FindPreviewTexture(entry));
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         SetBusy(true, "REFRESHING CLOTHING AFTER OPTIMISATION...");
         try
         {
-            _catalog = await ClothingCatalog.LoadAsync(_rootPath.Text.Trim());
-            ClothingEntry? refreshed = _catalog.FindByGlobalIndex(
-                entry.Gender, entry.Component, _catalog.GetGlobalIndex(entry, entry.Component.DefaultOffset(entry.Gender)),
-                entry.Component.DefaultOffset(entry.Gender));
-            ShowResults(refreshed == null ? [] : [refreshed]);
+            ClothingEntry refreshed = catalog.RefreshModel(entry.FilePath);
+            ClothingModelQuality quality = await Task.Run(() => ClothingImporter.InspectModel(refreshed.FilePath, refreshed.TextureCount));
+            RefreshResultQuality(refreshed, quality);
             SetStatus($"REVIEWED OPTIMISATION APPLIED / BACKUP: {dialog.BackupPath}", false);
+        }
+        catch (Exception exception)
+        {
+            ShowError($"The optimisation was applied, but refreshing its QC result failed: {exception.Message}");
         }
         finally { SetBusy(false); }
     }
@@ -1429,6 +1474,7 @@ internal sealed class MainForm : Form
         IEnumerable<ClothingEntry> entries,
         IReadOnlyDictionary<string, ClothingModelQuality>? qualityByPath = null)
     {
+        _showingQualityResults = false;
         _selectedBaseEntry = null;
         _extractBaseFiles.Enabled = false;
         _replaceDrawable.Enabled = false;
@@ -1437,7 +1483,6 @@ internal sealed class MainForm : Form
         _openResultPath.Enabled = false;
         _openPreview.Enabled = false;
         _duplicateIntoCategory.Enabled = false;
-        _exportQuality.Enabled = qualityByPath != null && qualityByPath.Count > 0;
         _results.Rows.Clear();
         foreach (ClothingEntry entry in entries)
         {
@@ -1460,21 +1505,125 @@ internal sealed class MainForm : Form
                 quality.Summary,
                 git?.Hash ?? "—",
                 relativePath);
-            _results.Rows[rowIndex].Cells[8].ToolTipText = quality.Details;
-            _results.Rows[rowIndex].Cells[8].Style.ForeColor = quality.Summary == "OK"
-                ? Color.FromArgb(120, 220, 150)
-                : Color.FromArgb(255, 180, 50);
+            SetQualityCells(_results.Rows[rowIndex], quality);
             _results.Rows[rowIndex].Cells[9].ToolTipText = git?.Tooltip ?? "No committed Git history found for this file.";
             _results.Rows[rowIndex].Cells[10].ToolTipText = entry.FilePath;
             _results.Rows[rowIndex].Tag = entry;
         }
 
-        _resultCount.Text = $"{_results.Rows.Count} RESULT{(_results.Rows.Count == 1 ? string.Empty : "S")}";
+        _showingQualityResults = qualityByPath != null;
+        _qualityFilterRow.Height = _showingQualityResults ? 34 : 0;
+        _qualityFilters.Visible = _showingQualityResults;
+        if (_showingQualityResults)
+        {
+            ClothingEntry[] results = _results.Rows.Cast<DataGridViewRow>().Select(row => (ClothingEntry)row.Tag!).ToArray();
+            _updatingQualityFilters = true;
+            PopulateQualityFilter(_qualityGender, "ALL GENDERS", results.Select(entry => entry.Gender).Distinct().Order().Cast<object>());
+            PopulateQualityFilter(_qualityComponent, "ALL COMPONENTS", results.Select(entry => entry.Component.Label).Distinct().Order().Cast<object>());
+            PopulateQualityFilter(_qualityPack, "ALL ADDONS", results.Select(entry => entry.Pack).Distinct().Order().Cast<object>());
+            _updatingQualityFilters = false;
+            FilterQualityResults();
+        }
+        else
+        {
+            _exportQuality.Enabled = false;
+            _resultCount.Text = $"{_results.Rows.Count} RESULT{(_results.Rows.Count == 1 ? string.Empty : "S")}";
+        }
         UpdateResultActions();
+    }
+
+    private static void SetQualityCells(DataGridViewRow row, ClothingModelQuality quality)
+    {
+        row.Cells[7].Value = quality.HighPolygons;
+        row.Cells[8].Value = quality.Summary;
+        row.Cells[8].ToolTipText = quality.Details;
+        row.Cells[8].Style.ForeColor = quality.Summary == "OK"
+            ? Color.FromArgb(120, 220, 150)
+            : Color.FromArgb(255, 180, 50);
+    }
+
+    private static void PopulateQualityFilter(ComboBox filter, string all, IEnumerable<object> options)
+    {
+        object? selected = filter.SelectedItem;
+        filter.Items.Clear();
+        filter.Items.Add(all);
+        filter.Items.AddRange(options.ToArray());
+        filter.SelectedIndex = selected != null && filter.Items.Contains(selected) ? filter.Items.IndexOf(selected) : 0;
+    }
+
+    private void ClearQualityFilters()
+    {
+        _updatingQualityFilters = true;
+        _qualityGender.SelectedIndex = _qualityComponent.SelectedIndex = _qualityPack.SelectedIndex = 0;
+        _updatingQualityFilters = false;
+        FilterQualityResults();
+    }
+
+    private bool MatchesQualityFilters(ClothingEntry entry) =>
+        (_qualityGender.SelectedItem is not Gender gender || entry.Gender == gender) &&
+        (_qualityComponent.SelectedIndex <= 0 || entry.Component.Label == (string)_qualityComponent.SelectedItem!) &&
+        (_qualityPack.SelectedItem is not int pack || entry.Pack == pack);
+
+    private void FilterQualityResults()
+    {
+        if (!_showingQualityResults || _updatingQualityFilters) return;
+        if (_results.CurrentRow?.Tag is ClothingEntry current && !MatchesQualityFilters(current))
+        {
+            _results.CurrentCell = null;
+            _results.ClearSelection();
+        }
+        int visible = 0;
+        foreach (DataGridViewRow row in _results.Rows)
+        {
+            row.Visible = row.Tag is ClothingEntry entry && MatchesQualityFilters(entry);
+            if (row.Visible) visible++;
+        }
+        _resultCount.Text = $"{visible:N0}/{_results.Rows.Count:N0}";
+        _exportQuality.Enabled = visible > 0;
+        UpdateResultActions();
+    }
+
+    private void RefreshResultQuality(ClothingEntry entry, ClothingModelQuality quality)
+    {
+        DataGridViewRow? FindRow(string? path) => _results.Rows.Cast<DataGridViewRow>().FirstOrDefault(row =>
+            row.Tag is ClothingEntry item && item.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
+        DataGridViewRow? editedRow = FindRow(entry.FilePath);
+        if (editedRow == null) return;
+        string? selectedPath = SelectedResult()?.FilePath;
+        int columnIndex = _results.CurrentCell?.ColumnIndex ?? 0;
+        int firstDisplayed = _results.FirstDisplayedScrollingRowIndex;
+        int horizontalOffset = _results.HorizontalScrollingOffset;
+
+        editedRow.Tag = entry;
+        SetQualityCells(editedRow, quality);
+        if (_results.SortedColumn is { } column && _results.SortOrder != SortOrder.None)
+        {
+            _results.Sort(column, _results.SortOrder == SortOrder.Descending
+                ? System.ComponentModel.ListSortDirection.Descending
+                : System.ComponentModel.ListSortDirection.Ascending);
+        }
+        _results.ClearSelection();
+        if (FindRow(selectedPath) is { Visible: true } selected)
+        {
+            _results.CurrentCell = selected.Cells[columnIndex];
+            selected.Selected = true;
+        }
+        if (firstDisplayed >= 0)
+        {
+            DataGridViewRow[] visibleRows = _results.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToArray();
+            DataGridViewRow? top = visibleRows.FirstOrDefault(row => row.Index >= firstDisplayed) ?? visibleRows.LastOrDefault();
+            if (top != null) _results.FirstDisplayedScrollingRowIndex = top.Index;
+        }
+        _results.HorizontalScrollingOffset = horizontalOffset;
+        if (_showingQualityResults) FilterQualityResults();
+        else UpdateResultActions();
     }
 
     private void ShowBaseResult(BaseGameClothingEntry entry)
     {
+        _showingQualityResults = false;
+        _qualityFilterRow.Height = 0;
+        _qualityFilters.Visible = false;
         _selectedBaseEntry = entry;
         _extractBaseFiles.Enabled = true;
         _replaceDrawable.Enabled = false;
@@ -1865,12 +2014,99 @@ internal sealed class MainForm : Form
                form._blacklistExport.Text == "BLACKLIST EXPORT..." &&
                form._results.Columns[7].ValueType == typeof(long) &&
                polygonSortsNumerically &&
+               form.QualityResultsSelfTest() &&
                CsvCell("a,\"b") == "\"a,\"\"b\"" &&
                replaced &&
                outfit.Count == 2 &&
                outfit[0] == replacementTop &&
                form.Cursor != Cursors.WaitCursor &&
                !form._progress.Active;
+    }
+
+    private bool QualityResultsSelfTest()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"blrp-qc-results-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            for (int index = 0; index < 24; index++)
+                File.WriteAllBytes(Path.Combine(root, $"mp_f_freemode_01_mp_f_c_addons_ii^hair_{index:000}_u.ydd"), [1]);
+            foreach (string name in new[]
+            {
+                "mp_m_freemode_01_mp_m_c_addons_ii^hair_000_u.ydd",
+                "mp_f_freemode_01_mp_f_c_addons_ii^jbib_000_u.ydd",
+                "mp_f_freemode_01_mp_f_c_addons_i^hair_000_u.ydd"
+            }) File.WriteAllBytes(Path.Combine(root, name), [1]);
+            ClothingCatalog catalog = ClothingCatalog.LoadAsync(root).GetAwaiter().GetResult();
+            _catalog = catalog;
+            var qualities = catalog.Entries.Select((entry, index) => (entry.FilePath,
+                Quality: new ClothingModelQuality("NO MED / NO LOW", "Missing LODs", 30_000L + index)))
+                .ToDictionary(item => item.FilePath, item => item.Quality, StringComparer.OrdinalIgnoreCase);
+            ShowResults(catalog.Entries, qualities);
+            _ = _results.Handle;
+            PerformLayout();
+
+            _results.CurrentCell = _results.Rows.Cast<DataGridViewRow>()
+                .First(row => ((ClothingEntry)row.Tag!).Gender == Gender.Male).Cells[0];
+            _qualityGender.SelectedItem = Gender.Female;
+            _qualityComponent.SelectedItem = "HAIR";
+            _qualityPack.SelectedItem = 2;
+            DataGridViewRow[] visible = _results.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToArray();
+            bool combinedFiltersWork = visible.Length == 24 && _results.Rows.Count == 27 &&
+                visible.All(row => row.Tag is ClothingEntry { Gender: Gender.Female, Component.Code: "hair", Pack: 2 }) &&
+                SelectedResult()?.Gender != Gender.Male && _resultCount.Text == "24/27";
+            _results.Sort(_results.Columns[7], System.ComponentModel.ListSortDirection.Descending);
+            visible = _results.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).ToArray();
+            ClothingEntry edited = (ClothingEntry)visible[6].Tag!;
+            string topPath = ((ClothingEntry)visible[3].Tag!).FilePath;
+            _results.CurrentCell = visible[6].Cells[7];
+            _results.FirstDisplayedScrollingRowIndex = visible[3].Index;
+            _results.HorizontalScrollingOffset = 40;
+            int horizontalOffset = _results.HorizontalScrollingOffset;
+            Task.Run(() => catalog.FindDuplicatesAsync(edited.FilePath)).GetAwaiter().GetResult();
+            File.WriteAllBytes(edited.FilePath, [2]);
+            catalog.RefreshModel(edited.FilePath);
+            bool hashRefreshWorks = Task.Run(() => catalog.FindDuplicatesAsync(edited.FilePath)).GetAwaiter().GetResult().Count == 1;
+            File.WriteAllBytes(edited.FilePath, [2, 3]);
+            ClothingEntry refreshed = catalog.RefreshModel(edited.FilePath);
+            bool catalogRefreshWorks = refreshed.Length == 2 && catalog.FileCount == 27 &&
+                Task.Run(() => catalog.FindDuplicatesAsync(edited.FilePath)).GetAwaiter().GetResult().Count == 1;
+            RefreshResultQuality(refreshed, new ClothingModelQuality("OK", "Resolved LOD warnings", 4_000, 2_000, 800));
+            DataGridViewRow fixedRow = _results.Rows.Cast<DataGridViewRow>().Single(row => row.Tag is ClothingEntry item && item == refreshed);
+            bool refreshPreservesResults = _showingQualityResults && _qualityFilterRow.Height == 34 &&
+                _results.Rows.Count == 27 && _results.Rows.Cast<DataGridViewRow>().Count(row => row.Visible) == 24 &&
+                _qualityGender.SelectedItem is Gender.Female && (string)_qualityComponent.SelectedItem! == "HAIR" &&
+                _qualityPack.SelectedItem is 2 && SelectedResult() == refreshed &&
+                _results.CurrentCell?.ColumnIndex == 7 && _results.SortedColumn == _results.Columns[7] &&
+                _results.SortOrder == SortOrder.Descending && _exportQuality.Enabled &&
+                ((ClothingEntry)_results.Rows[_results.FirstDisplayedScrollingRowIndex].Tag!).FilePath == topPath &&
+                _results.HorizontalScrollingOffset == horizontalOffset &&
+                (long)fixedRow.Cells[7].Value == 4_000 && (string)fixedRow.Cells[8].Value == "OK" &&
+                fixedRow.Cells[8].ToolTipText == "Resolved LOD warnings" && fixedRow.Visible &&
+                _results.Rows.Cast<DataGridViewRow>().Where(row => row.Visible).Last() == fixedRow &&
+                _results.Rows.Cast<DataGridViewRow>().Count(row => (string)row.Cells[8].Value == "NO MED / NO LOW") == 26;
+            DataGridViewRow firstVisible = _results.Rows.Cast<DataGridViewRow>().First(row => row.Visible);
+            ClothingEntry firstEntry = (ClothingEntry)firstVisible.Tag!;
+            _results.CurrentCell = firstVisible.Cells[7];
+            _results.FirstDisplayedScrollingRowIndex = firstVisible.Index;
+            int firstVisibleIndex = firstVisible.Index;
+            RefreshResultQuality(firstEntry, new ClothingModelQuality("OK", "First row resolved", 3_000, 1_500, 600));
+            bool firstRowKeepsScrollPosition = _results.FirstDisplayedScrollingRowIndex == firstVisibleIndex &&
+                SelectedResult() == firstEntry && _results.Rows.Count == 27;
+            _qualityGender.SelectedItem = Gender.Male;
+            _qualityComponent.SelectedItem = "TOPS (JBIB)";
+            bool emptyFilterWorks = _resultCount.Text == "0/27" && !_exportQuality.Enabled &&
+                SelectedResult() == null && !_generateLods.Enabled;
+            ClearQualityFilters();
+            bool clearWorks = _resultCount.Text == "27/27" && _exportQuality.Enabled && fixedRow.Visible &&
+                _results.Rows.Cast<DataGridViewRow>().All(row => row.Visible);
+            ShowResults([refreshed]);
+            bool normalResultsWork = !_showingQualityResults && _qualityFilterRow.Height == 0 &&
+                _results.Rows.Count == 1 && _results.Rows[0].Visible && !_exportQuality.Enabled;
+            return combinedFiltersWork && hashRefreshWorks && catalogRefreshWorks && refreshPreservesResults && firstRowKeepsScrollPosition &&
+                emptyFilterWorks && clearWorks && normalResultsWork;
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     private void SetStatus(string text, bool warning)
