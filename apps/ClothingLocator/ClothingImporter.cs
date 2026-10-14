@@ -1340,7 +1340,12 @@ internal static class ClothingImporter
             importedPropDrawable != null && GetDiffuseTextures(importedPropDrawable)
                 .Any(texture => texture.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase)) &&
             importedPropTexture?.Name.Equals(propTextureName, StringComparison.OrdinalIgnoreCase) == true &&
-            ComponentMetadataXml(propImportPed) == componentXmlBeforePropChanges;
+            ComponentMetadataXml(propImportPed) == componentXmlBeforePropChanges &&
+            (propImportPed.VariationInfo?.PropInfo?.PropMetaData ?? [])
+                .Select(item => (item.Data.anchorId, item.Data.propId))
+                .SequenceEqual((propImportPed.VariationInfo?.PropInfo?.PropMetaData ?? [])
+                    .OrderBy(item => item.Data.anchorId).ThenBy(item => item.Data.propId)
+                    .Select(item => (item.Data.anchorId, item.Data.propId)));
         if (!propImportValid)
         {
             throw new InvalidDataException(
@@ -2335,6 +2340,12 @@ internal static class ClothingImporter
         {
             if (sourceProp != null) throw new InvalidDataException("The generated prop ID already exists in the source YMT.");
             sourceProps.AppendChild(sourceXml.ImportNode(candidateProp, true));
+            // YMTEditor resets prop IDs whenever the anchor changes. Keep each category together.
+            XmlNode[] orderedProps = sourceProps.SelectNodes("Item")!.Cast<XmlNode>()
+                .OrderBy(item => int.Parse(item.SelectSingleNode("anchorId")!.Attributes!["value"]!.Value))
+                .ThenBy(item => int.Parse(item.SelectSingleNode("propId")!.Attributes!["value"]!.Value))
+                .ToArray();
+            foreach (XmlNode prop in orderedProps) sourceProps.AppendChild(prop);
         }
         else
         {
@@ -2640,10 +2651,13 @@ internal static class ClothingImporter
         afterXml.LoadXml(MetaXml.GetXml(after.Meta));
         XmlNode[] oldPropNodes = beforeXml.SelectNodes("/CPedVariationInfo/propInfo/aPropMetaData/Item")?.Cast<XmlNode>().ToArray() ?? [];
         XmlNode[] newPropNodes = afterXml.SelectNodes("/CPedVariationInfo/propInfo/aPropMetaData/Item")?.Cast<XmlNode>().ToArray() ?? [];
-        for (int index = 0; index < oldPropNodes.Length; index++)
+        foreach (XmlNode oldProp in oldPropNodes)
         {
-            if (oldPropNodes[index].OuterXml != newPropNodes[index].OuterXml)
-                throw new InvalidDataException($"YMT validation detected a change to existing prop {index:000}. No files were changed.");
+            string anchorId = oldProp.SelectSingleNode("anchorId")!.Attributes!["value"]!.Value;
+            string propId = oldProp.SelectSingleNode("propId")!.Attributes!["value"]!.Value;
+            XmlNode? newProp = FindPropXml(afterXml, int.Parse(anchorId), int.Parse(propId));
+            if (oldProp.OuterXml != newProp?.OuterXml)
+                throw new InvalidDataException($"YMT validation detected a change to existing prop {anchorId}:{propId}. No files were changed.");
         }
 
         foreach (MCAnchorProps oldAnchor in before.VariationInfo?.PropInfo?.Anchors ?? [])

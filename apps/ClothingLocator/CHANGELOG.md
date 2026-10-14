@@ -2,6 +2,15 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.7 - 2026-10-15
+
+### Fixed
+
+- Prop imports keep YMT entries grouped by category and prop ID, preventing
+  YMTEditor from resetting IDs when saving a pack with recently imported props.
+- Import verification checks existing props by anchor and ID so grouping does
+  not bypass the check that unrelated metadata stays unchanged.
+
 ## 1.8.6 - 2026-10-05
 
 ### Added
