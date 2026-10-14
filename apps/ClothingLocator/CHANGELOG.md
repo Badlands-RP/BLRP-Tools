@@ -2,6 +2,18 @@
 
 This records the user-facing changes since BLRP Clothing Utility 1.4.2.
 
+## 1.8.8 - 2026-10-15
+
+### Fixed
+
+- Clothing numbers use the drawable counts registered in each addon's YMT,
+  preventing unused model files from shifting the following addon packs.
+- Male JBIB numbering uses the build-3095 base count of 524 with the actual
+  registered pack sizes. Jacket 625 now selects addon 1 drawable 101; the
+  previously verified addon 2-5 numbers retain their existing mappings.
+- Models outside the YMT's registered slots are excluded from the catalog,
+  preventing them from sharing a clothing number with the next addon.
+
 ## 1.8.7 - 2026-10-15
 
 ### Fixed

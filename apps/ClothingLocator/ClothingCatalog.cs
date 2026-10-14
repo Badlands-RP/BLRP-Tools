@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using CodeWalker.GameFiles;
 
 namespace BLRP.ClothingLocator;
 
@@ -36,7 +37,7 @@ internal static class ClothingComponents
         new ComponentDefinition(8, false, "accs", "UNDERSHIRTS (ACCS)", 207, 253),
         new ComponentDefinition(9, false, "task", "ARMOUR (TASK)", 62, 62),
         new ComponentDefinition(10, false, "decl", "DECALS (DECL)", 193, 209),
-        new ComponentDefinition(11, false, "jbib", "TOPS (JBIB)", 523, 565),
+        new ComponentDefinition(11, false, "jbib", "TOPS (JBIB)", 524, 565),
         new ComponentDefinition(0, true, "p_head", "HATS", 214, 213),
         new ComponentDefinition(1, true, "p_eyes", "GLASSES", 56, 58),
         new ComponentDefinition(2, true, "p_ears", "EARS", 42, 23),
@@ -73,10 +74,30 @@ internal sealed class ClothingCatalog
     private ClothingCatalog(string rootPath, List<ClothingEntry> entries)
     {
         RootPath = rootPath;
-        _entries = entries;
         _packSizes = entries
             .GroupBy(entry => (entry.Gender, entry.Component.Code, entry.Pack))
             .ToDictionary(group => group.Key, group => group.Max(entry => entry.RelativeIndex) + 1);
+        foreach (Gender gender in Enum.GetValues<Gender>())
+        {
+            string letter = gender == Gender.Male ? "m" : "f";
+            string[] packs = ["i", "ii", "iii", "iv", "v"];
+            for (int pack = 1; pack <= packs.Length; pack++)
+            {
+                string path = Path.Combine(rootPath, $"clothing_addon_{pack}", "stream",
+                    $"mp_{letter}_freemode_01_mp_{letter}_c_addons_{packs[pack - 1]}.ymt");
+                if (!File.Exists(path)) continue;
+                PedFile ped = RpfFile.GetResourceFile<PedFile>(File.ReadAllBytes(path))
+                    ?? throw new InvalidDataException("Unable to read YMT: " + path);
+                foreach (ComponentDefinition component in ClothingComponents.All)
+                {
+                    _packSizes[(gender, component.Code, pack)] = component.IsProp
+                        ? ped.VariationInfo?.PropInfo?.PropMetaData?.Count(item => item.Data.anchorId == component.Slot) ?? 0
+                        : ped.VariationInfo?.GetComponentData(component.Slot)?.DrawblData3?.Length ?? 0;
+                }
+            }
+        }
+        // Unregistered files must not consume an in-game slot or overlap the next pack.
+        _entries = entries.Where(entry => entry.RelativeIndex < GetPackSize(entry.Gender, entry.Component, entry.Pack)).ToList();
     }
 
     public string RootPath { get; }
@@ -338,7 +359,7 @@ internal sealed class ClothingCatalog
         ComponentDefinition jbib = ClothingComponents.ByCode["jbib"];
         bool basicResult = catalog.GetGlobalIndex(male, 178) == 291 &&
                            ReferenceEquals(catalog.FindByGlobalIndex(Gender.Male, male.Component, 291, 178), male) &&
-                           jbib.DefaultOffset(Gender.Male) == 523;
+                           jbib.DefaultOffset(Gender.Male) == 524;
         if (!basicResult || string.IsNullOrWhiteSpace(rootPath))
         {
             return basicResult;
@@ -353,14 +374,19 @@ internal sealed class ClothingCatalog
 
         foreach ((int global, int pack, int relative) in new[]
         {
+            (625, 1, 101),
+            (650, 1, 126),
+            (651, 2, 0),
             (751, 2, 100),
             (867, 3, 88),
+            (881, 3, 102),
             (1032, 4, 125),
             (1054, 5, 19)
         })
         {
             ClothingEntry? item = realCatalog.FindByGlobalIndex(Gender.Male, jbib, global, jbib.DefaultOffset(Gender.Male));
-            if (item is null || item.Pack != pack || item.RelativeIndex != relative)
+            if (item is null || item.Pack != pack || item.RelativeIndex != relative ||
+                realCatalog.GetGlobalIndex(item, jbib.DefaultOffset(Gender.Male)) != global)
             {
                 return false;
             }
