@@ -12,6 +12,7 @@ One Windows launcher and updater for BadlandsRP's internal desktop utilities.
 - **grzyClothTool** — builds, inspects, and previews GTA clothing packs.
 - **BadWalker** — the BadlandsRP CodeWalker fork for GTA maps, archives, models, and metadata.
 - **BLRP NavMesh** — generate pedestrian navigation for custom maps, inspect surfaces and review unresolved collision in a desktop workflow.
+- **Loading Screen Tool** — maintain numbered WebP backgrounds and export them to the active server folder.
 
 The [NavMesh desktop tool](apps/NavMesh/README.md) is available from the Hub. Its pilot outputs still await collision review and FiveM validation.
 
@@ -35,6 +36,7 @@ apps/
   PropertyMapper/
   PropertyMapPreview/
   NavMesh/
+  LoadingScreenTool/
 branding/
 shared/
 external/grzyClothTool/  (git submodule)

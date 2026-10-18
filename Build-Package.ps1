@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.38')
+param([string]$Version = '1.0.39')
 
 $ErrorActionPreference = 'Stop'
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'release'))
@@ -22,7 +22,8 @@ $projects = @(
     @{ Project = 'apps\LiveryTool\Badlands.LiveryTool.csproj'; Output = 'tools\LiveryTool'; SelfContained = $false },
     @{ Project = 'apps\MappingDeconflicter\YmapDeconflicter.csproj'; Output = 'tools\MappingDeconflicter'; SelfContained = $false },
     @{ Project = 'apps\PropertyMapper\BLRP.PropertyMapper.csproj'; Output = 'tools\PropertyMapper'; SelfContained = $false },
-    @{ Project = 'apps\NavMesh\BLRP.NavMesh.csproj'; Output = 'tools\NavMesh'; SelfContained = $false }
+    @{ Project = 'apps\NavMesh\BLRP.NavMesh.csproj'; Output = 'tools\NavMesh'; SelfContained = $false },
+    @{ Project = 'apps\LoadingScreenTool\BLRP.LoadingScreenTool.csproj'; Output = 'tools\LoadingScreenTool'; SelfContained = $false }
 )
 
 foreach ($item in $projects) {
@@ -34,6 +35,9 @@ foreach ($item in $projects) {
     dotnet @publishArguments
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $($item.Project)." }
 }
+
+$skiaSymbols = Join-Path $packageRoot 'tools\LoadingScreenTool\libSkiaSharp.pdb'
+if (Test-Path -LiteralPath $skiaSymbols) { Remove-Item -LiteralPath $skiaSymbols -Force }
 
 $grzyRoot = Join-Path $PSScriptRoot 'external\grzyClothTool'
 $grzyProject = Join-Path $grzyRoot 'grzyClothTool\grzyClothTool.csproj'

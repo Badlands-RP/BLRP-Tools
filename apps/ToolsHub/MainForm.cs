@@ -21,8 +21,8 @@ internal sealed class MainForm : Form
         Text = $"BLRP Tools v{Application.ProductVersion.Split('+')[0]}";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(880, 620);
-        ClientSize = new Size(980, 680);
+        MinimumSize = new Size(880, 700);
+        ClientSize = new Size(980, 760);
         BackColor = Background;
         ForeColor = Color.White;
         Font = new Font("Cascadia Mono", 9F);
@@ -56,10 +56,10 @@ internal sealed class MainForm : Form
         header.Controls.Add(Label("BADLANDSRP  /  SELECT A TOOL", 9, AccentLight, FontStyle.Bold), 1, 1);
         page.Controls.Add(header, 0, 0);
 
-        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 4 };
+        var tools = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2, RowCount = 5 };
         tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         tools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        for (int row = 0; row < 4; row++) tools.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+        for (int row = 0; row < 5; row++) tools.RowStyles.Add(new RowStyle(SizeType.Percent, 20F));
         tools.Controls.Add(ToolCard("ASSET STUDIO", "Weapon skins, cups, model previews and inventory images.", @"tools\AssetStudio\BLRP.AssetStudio.dll"), 0, 0);
         tools.Controls.Add(ToolCard("CLOTHING LOCATOR", "Find, preview and manage BadlandsRP clothing assets.", @"tools\ClothingLocator\BLRP.ClothingUtility.dll"), 1, 0);
         tools.Controls.Add(ToolCard("LIVERY TOOL", "Build and install vehicle liveries and metadata.", @"tools\LiveryTool\Badlands.LiveryTool.dll"), 0, 1);
@@ -68,6 +68,7 @@ internal sealed class MainForm : Form
         tools.Controls.Add(ToolCard("GRZY CLOTH TOOL", "Build, inspect and preview GTA clothing packs.", @"tools\grzyClothTool-outfit\grzyClothTool.exe"), 1, 2);
         tools.Controls.Add(ToolCard("BADWALKER", "View and edit GTA maps, archives, models and metadata.", @"tools\BadWalker\CodeWalker.exe"), 0, 3);
         tools.Controls.Add(ToolCard("NAVMESH", "Generate pedestrian navigation for custom maps and inspect bake results.", @"tools\NavMesh\BLRP.NavMesh.dll"), 1, 3);
+        tools.Controls.Add(ToolCard("LOADING SCREEN TOOL", "Number and convert backgrounds, then export them to the active server folder.", @"tools\LoadingScreenTool\BLRP.LoadingScreenTool.dll"), 0, 4);
         page.Controls.Add(tools, 0, 1);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 2 };
