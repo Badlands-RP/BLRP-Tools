@@ -24,6 +24,7 @@
   <ItemGroup>
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
     <PackageReference Include="MeshoptimizerSharp" Version="1.0.2" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
     <Compile Remove="release\**\*.cs" />
     <Content Include="..\..\branding\BLRP_Logo.png" Link="BLRP_Logo.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

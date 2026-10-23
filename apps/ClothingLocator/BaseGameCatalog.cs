@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using CodeWalker.GameFiles;
+using System.Numerics;
 
 namespace BLRP.ClothingLocator;
 
@@ -26,20 +27,50 @@ internal sealed class BaseGameCatalog
     private readonly GameFileCache _cache;
     private readonly Dictionary<(Gender Gender, int Component), List<CollectionData>> _collections;
     private readonly Dictionary<string, RpfFileEntry> _assets;
+    private readonly Dictionary<(Gender Gender, int Slot), List<PropCollectionData>> _props;
 
     private BaseGameCatalog(
         GtaInstallation installation,
         GameFileCache cache,
         Dictionary<(Gender Gender, int Component), List<CollectionData>> collections,
-        Dictionary<string, RpfFileEntry> assets)
+        Dictionary<string, RpfFileEntry> assets,
+        Dictionary<(Gender Gender, int Slot), List<PropCollectionData>> props)
     {
         Installation = installation;
         _cache = cache;
         _collections = collections;
         _assets = assets;
+        _props = props;
     }
 
     public GtaInstallation Installation { get; }
+
+    public Matrix4x4 GetPropTransform(Gender gender, int slot)
+    {
+        string model = gender == Gender.Male ? "mp_m_freemode_01" : "mp_f_freemode_01";
+        RpfFileEntry entry = _cache.GetYftEntry(JenkHash.GenHash(model))
+            ?? throw new InvalidDataException("The reference ped skeleton was not found: " + model);
+        Skeleton skeleton = _cache.RpfMan.GetFile<YftFile>(entry)?.Fragment?.Drawable?.Skeleton
+            ?? throw new InvalidDataException("Could not read the reference ped skeleton: " + model);
+        string boneName = slot switch { 6 => "SKEL_L_Hand", 7 => "SKEL_R_Hand", _ => "SKEL_Head" };
+        int index = Array.FindIndex(skeleton.Bones.Items, bone => bone.Name == boneName);
+        if (index < 0) throw new InvalidDataException("Missing attachment bone: " + boneName);
+        SharpDX.Matrix matrix = skeleton.Transformations[index];
+        matrix.Column4 = SharpDX.Vector4.UnitW;
+        int parent = skeleton.ParentIndices[index];
+        int remaining = skeleton.Transformations.Length;
+        while (parent >= 0 && remaining-- > 0)
+        {
+            SharpDX.Matrix next = skeleton.Transformations[parent];
+            next.Column4 = SharpDX.Vector4.UnitW;
+            matrix *= next;
+            parent = skeleton.ParentIndices[parent];
+        }
+        if (remaining < 0) throw new InvalidDataException("Cyclic reference ped skeleton.");
+        return new Matrix4x4(matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+            matrix.M21, matrix.M22, matrix.M23, matrix.M24, matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+            matrix.M41, matrix.M42, matrix.M43, matrix.M44);
+    }
 
     public static GtaInstallation DetectInstallation()
     {
@@ -74,12 +105,16 @@ internal sealed class BaseGameCatalog
         return new GtaInstallation(Path.GetFullPath(gtaRoot), build, GetDlcForBuild(build));
     }
 
-    public static Task<BaseGameCatalog> LoadAsync(CancellationToken cancellationToken = default)
+    public static Task<BaseGameCatalog> LoadAsync(CancellationToken cancellationToken = default, int? gameBuild = null)
     {
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
             GtaInstallation installation = DetectInstallation();
+            if (gameBuild is > 0)
+            {
+                installation = installation with { GameBuild = gameBuild.Value, DlcName = GetDlcForBuild(gameBuild.Value) };
+            }
             GTA5Keys.LoadFromPath(installation.RootPath, false, null);
 
             var errors = new List<string>();
@@ -139,14 +174,32 @@ internal sealed class BaseGameCatalog
                         MCPVComponentData? component = pedCollection.PedFile.VariationInfo?.GetComponentData(componentId);
                         if (component?.DrawblData3 is { Length: > 0 } drawables)
                         {
-                            list.Add(new CollectionData(pedCollection.Name, drawables));
+                            for (int index = 0; index < drawables.Length; index++)
+                            {
+                                drawables[index].ComponentType = componentId;
+                                drawables[index].DrawableIndex = index;
+                            }
+                            list.Add(new CollectionData(pedCollection.Name, drawables, pedCollection.PedFile.VariationInfo!.Data.dlcName.Hash));
                         }
                     }
                     collections[(gender, componentId)] = list;
                 }
             }
 
-            return new BaseGameCatalog(installation, cache, collections, assets);
+            var props = new Dictionary<(Gender, int), List<PropCollectionData>>();
+            foreach ((Gender gender, OrderedCollections source) in orderedCollections)
+            {
+                foreach (ComponentDefinition component in ClothingComponents.All.Where(item => item.IsProp))
+                {
+                    props[(gender, component.Slot)] = source.Values
+                        .Select(collection => new PropCollectionData(collection.Name,
+                            collection.PedFile.VariationInfo?.PropInfo?.PropMetaData?
+                                .Where(prop => prop.Data.anchorId == component.Slot).ToArray() ?? [],
+                            collection.PedFile.VariationInfo!.Data.dlcName.Hash))
+                        .Where(collection => collection.Props.Length > 0).ToList();
+                }
+            }
+            return new BaseGameCatalog(installation, cache, collections, assets, props);
         }, cancellationToken);
     }
 
@@ -206,9 +259,78 @@ internal sealed class BaseGameCatalog
     }
 
     public int GetDrawableCount(Gender gender, ComponentDefinition component) =>
-        component.IsProp || !_collections.TryGetValue((gender, component.Slot), out List<CollectionData>? collections)
-            ? 0
-            : collections.Sum(collection => collection.Drawables.Length);
+        component.IsProp
+            ? _props[(gender, component.Slot)].Sum(collection => collection.Props.Length)
+            : _collections[(gender, component.Slot)].Sum(collection => collection.Drawables.Length);
+
+    public byte[] GetReferenceHead(Gender gender)
+    {
+        CollectionData collection = _collections[(gender, 0)].First(item => item.Hash == 0);
+        MCPVDrawblData head = collection.Drawables[0];
+        var component = new ComponentDefinition(0, false, "head", "Head", 0, 0);
+        return PreviewSource(gender, component, 0, 0, collection.Name, head.GetDrawableName(), []).ReadModel();
+    }
+
+    public IEnumerable<ClothingPreviewSource> GetPreviewSources()
+    {
+        foreach (Gender gender in Enum.GetValues<Gender>())
+        {
+            foreach (ComponentDefinition component in ClothingComponents.All)
+            {
+                int globalIndex = 0;
+                if (component.IsProp)
+                {
+                    foreach (PropCollectionData collection in _props[(gender, component.Slot)])
+                    {
+                        foreach (MCPedPropMetaData prop in collection.Props)
+                        {
+                            string pedName = gender == Gender.Male ? "mp_m_freemode_01" : "mp_f_freemode_01";
+                            string assetCollection = collection.Name;
+                            if (assetCollection.EndsWith("_p", StringComparison.Ordinal) && assetCollection != pedName + "_p")
+                                assetCollection = assetCollection[..^2];
+                            if (!assetCollection.StartsWith(pedName + "_p", StringComparison.Ordinal))
+                                assetCollection = pedName + "_p" + assetCollection[pedName.Length..];
+                            string model = $"{component.Code}_{prop.Data.propId:000}";
+                            string[] textures = Enumerable.Range(0, prop.TexData?.Length ?? 0)
+                                .Select(index => $"{component.Code}_diff_{prop.Data.propId:000}_{(char)('a' + index)}").ToArray();
+                            yield return PreviewSource(gender, component, globalIndex++, prop.Data.propId, assetCollection, model, textures)
+                                with { CollectionHash = collection.Hash };
+                        }
+                    }
+                }
+                else
+                {
+                    foreach (CollectionData collection in _collections[(gender, component.Slot)])
+                    {
+                        foreach (MCPVDrawblData drawable in collection.Drawables)
+                        {
+                            string[] textures = Enumerable.Range(0, drawable.TexData?.Length ?? 0)
+                                .Select(drawable.GetTextureName).ToArray();
+                            yield return PreviewSource(gender, component, globalIndex++, drawable.DrawableIndex,
+                                collection.Name, drawable.GetDrawableName(), textures) with { CollectionHash = collection.Hash };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private ClothingPreviewSource PreviewSource(Gender gender, ComponentDefinition component, int globalIndex,
+        int relativeIndex, string collection, string model, string[] textures)
+    {
+        byte[] ReadAsset(string name)
+        {
+            if (!_assets.TryGetValue(AssetKey(collection, name), out RpfFileEntry? entry))
+                throw new FileNotFoundException($"GTA asset not found: {collection}/{name}");
+            byte[] bytes = entry.File.ExtractFile(entry);
+            if (entry is RpfResourceFileEntry resource)
+                bytes = ResourceBuilder.AddResourceHeader(resource, ResourceBuilder.Compress(bytes));
+            return bytes;
+        }
+        return new ClothingPreviewSource(gender, component, globalIndex, collection, relativeIndex, "Rockstar",
+            () => ReadAsset(model + ".ydd"), textures.Select((name, index) =>
+                new ClothingPreviewTexture(index, name, () => ReadAsset(name + ".ytd"))).ToArray());
+    }
 
     public IReadOnlyList<string> Extract(BaseGameClothingEntry entry, string outputDirectory)
     {
@@ -382,7 +504,8 @@ internal sealed class BaseGameCatalog
         return files.Count > 0 && files.All(path => new FileInfo(path).Length > 0);
     }
 
-    private sealed record CollectionData(string Name, MCPVDrawblData[] Drawables);
+    private sealed record CollectionData(string Name, MCPVDrawblData[] Drawables, uint Hash);
+    private sealed record PropCollectionData(string Name, MCPedPropMetaData[] Props, uint Hash);
     private sealed record PedCollection(string Name, PedFile PedFile);
 
     private sealed class OrderedCollections

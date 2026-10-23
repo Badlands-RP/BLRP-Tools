@@ -179,12 +179,13 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             BackColor = Color.Transparent,
-            ColumnCount = 2,
+            ColumnCount = 3,
             RowCount = 2,
             Padding = new Padding(4, 0, 0, 4)
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 46));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 188));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
@@ -199,6 +200,15 @@ internal sealed class MainForm : Form
         layout.SetRowSpan(logo, 2);
         layout.Controls.Add(CreateLabel("CLOTHING UTILITY", 18, TextPrimary, FontStyle.Bold), 1, 0);
         layout.Controls.Add(CreateLabel("BADLANDSRP  /  LOCATE  •  IMPORT  •  DUPLICATE  •  PREVIEW", 8, TextMuted, FontStyle.Bold), 1, 1);
+        Button export = CreateButton("BATCH PREVIEWS...", (_, _) =>
+        {
+            if (!Directory.Exists(_rootPath.Text.Trim())) { ShowError("Select the EUP source directory first."); return; }
+            using var dialog = new PreviewExportDialog(_rootPath.Text.Trim());
+            dialog.ShowDialog(this);
+        }, true);
+        export.Margin = new Padding(8, 8, 0, 8);
+        layout.Controls.Add(export, 2, 0);
+        layout.SetRowSpan(export, 2);
         return layout;
     }
 

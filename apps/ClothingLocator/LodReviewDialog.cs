@@ -1,8 +1,11 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using CodeWalker.GameFiles;
+using CodeWalker.Utils;
+using BCnEncoder.Decoder;
+using BCnEncoder.Shared.ImageFiles;
 
 namespace BLRP.ClothingLocator;
 
@@ -442,6 +445,8 @@ internal sealed class LodMeshPreview : Control
 internal sealed record LodVertex(Vector3 Position, Vector2 UV);
 internal sealed record LodTriangle(LodVertex A, LodVertex B, LodVertex C, LodPreviewTexture Texture);
 internal sealed record LodScreenVertex(float X, float Y, float Depth, Vector2 UV);
+internal enum LodRasterPass { Legacy, Opaque, Transparent }
+internal sealed record LodPreviewModelInfo(bool Placeholder, bool Skinned, bool Emissive, bool FrontMounted);
 
 internal sealed class LodPreviewTexture
 {
@@ -473,48 +478,153 @@ internal sealed class LodPreviewScene
     {
         using Bitmap image = Load(modelPath, ClothingPreviewLod.High, texturePath).Render(96, 96, -0.65f, 0.35f, 1f);
         int background = Color.FromArgb(14, 14, 30).ToArgb();
-        return Enumerable.Range(0, image.Width).Any(x =>
+        bool visible = Enumerable.Range(0, image.Width).Any(x =>
             Enumerable.Range(0, image.Height).Any(y => image.GetPixel(x, y).ToArgb() != background));
+        LodVertex Vertex(float x, float y, float z) => new(new Vector3(x, y, z), Vector2.Zero);
+        // A two-sided accessory must show its red front for a badge and blue
+        // back for a backpack, without relying on the empty-view fallback.
+        var accessory = new LodPreviewScene([
+            new(Vertex(-0.5f, -0.01f, 0), Vertex(0.5f, -0.01f, 0), Vertex(0, -0.01f, 1), SolidTexture(Color.Red)),
+            new(Vertex(0, 0.01f, 1), Vertex(0.5f, 0.01f, 0), Vertex(-0.5f, 0.01f, 0), SolidTexture(Color.Blue)),
+        ], new Vector3(0, 0, 0.5f), 1);
+        using Bitmap front = accessory.RenderThumbnail(64, 64, 5, frontMounted: true);
+        using Bitmap back = accessory.RenderThumbnail(64, 64, 5);
+        Color frontColor = front.GetPixel(32, 32), backColor = back.GetPixel(32, 32);
+        return visible && frontColor.R > frontColor.B && backColor.B > backColor.R
+            && front.GetPixel(0, 0).A == 0 && back.GetPixel(0, 0).A == 0;
     }
 
     public static LodPreviewScene Load(string path, ClothingPreviewLod lod, string? texturePath)
     {
-        var file = new YddFile(); file.Load(File.ReadAllBytes(path));
+        return Load(File.ReadAllBytes(path), lod,
+            texturePath != null ? File.ReadAllBytes(texturePath) : null);
+    }
+
+    internal static LodPreviewModelInfo InspectModel(byte[] modelBytes, bool checkAccessoryPosition = false)
+    {
+        var file = new YddFile();
+        file.Load(modelBytes);
+        DrawableModel[] models = (file.DrawableDict?.Drawables?.data_items ?? [])
+            .SelectMany(drawable => drawable.DrawableModels?.High ?? []).ToArray();
+        DrawableGeometry[] geometries = models.SelectMany(model => model.Geometries ?? []).ToArray();
+        bool skinned = models.Any(model => model.HasSkin != 0);
+        bool emissive = geometries.Any(geometry => geometry.Shader?.Name.ToString() == "ped_emissive");
+        SharpDX.Vector3[] positions = checkAccessoryPosition
+            ? geometries.SelectMany(geometry => Enumerable.Range(0, geometry.VertexData.VertexCount)
+                .Select(index => geometry.VertexData.GetVector3(index, 0))).ToArray() : [];
+        bool frontMounted = positions.Length > 0 && (positions.Min(point => point.Y) + positions.Max(point => point.Y)) / 2 < -0.01f;
+        if (geometries.Length != 1 || geometries[0].VertexData.VertexCount > 8
+            || geometries[0].VertexData.VertexCount < 4
+            || geometries[0].IndexBuffer?.Indices?.Length > 12) return new(false, skinned, emissive, frontMounted);
+        // Empty GTA slots use a tiny quad. Framing it as a garment produces
+        // an enlarged checkerboard or texture fragment.
+        SharpDX.Vector3[] points = Enumerable.Range(0, geometries[0].VertexData.VertexCount)
+            .Select(index => geometries[0].VertexData.GetVector3(index, 0)).Distinct().ToArray();
+        bool placeholder = points.Length <= 4
+            && points.Max(point => point.X) - points.Min(point => point.X) < 0.1f
+            && points.Max(point => point.Y) - points.Min(point => point.Y) < 0.1f
+            && points.Max(point => point.Z) - points.Min(point => point.Z) < 0.1f;
+        return new(placeholder, skinned, emissive, frontMounted);
+    }
+
+    internal LodPreviewScene WithReferenceHead(LodPreviewScene head)
+    {
+        Vector3 light = Vector3.Normalize(new Vector3(-0.4f, -0.8f, 0.6f));
+        LodTriangle ShadeHead(LodTriangle triangle)
+        {
+            Vector3 normal = Vector3.Cross(triangle.B.Position - triangle.A.Position, triangle.C.Position - triangle.A.Position);
+            float intensity = normal.LengthSquared() > 0.000000000001f ? MathF.Max(0, Vector3.Dot(Vector3.Normalize(normal), light)) : 0;
+            int shade = (int)(140 + 65 * intensity);
+            return triangle with { Texture = SolidTexture(Color.FromArgb(shade, shade - 4, shade - 8)) };
+        }
+        LodTriangle[] triangles = head._triangles.Select(ShadeHead)
+            .Concat(_triangles).ToArray();
+        Vector3[] points = triangles.SelectMany(triangle => new[] { triangle.A.Position, triangle.B.Position, triangle.C.Position }).ToArray();
+        Vector3 min = points.Aggregate(Vector3.Min), max = points.Aggregate(Vector3.Max);
+        Vector3 center = (min + max) / 2;
+        return new LodPreviewScene(triangles, center, points.Max(point => Vector3.Distance(center, point)));
+    }
+
+    public static LodPreviewScene Load(byte[] modelBytes, ClothingPreviewLod lod, byte[]? textureBytes, bool strict = false, Matrix4x4? attachment = null)
+    {
+        var file = new YddFile(); file.Load(modelBytes);
         var textures = new Dictionary<string, LodPreviewTexture>(StringComparer.OrdinalIgnoreCase);
-        if (texturePath != null && File.Exists(texturePath))
+        if (textureBytes != null)
         {
             var ytd = new YtdFile();
-            ytd.Load(File.ReadAllBytes(texturePath));
+            ytd.Load(textureBytes);
             foreach (Texture texture in ytd.TextureDict?.Textures?.data_items ?? [])
             {
                 try { textures[texture.Name] = DecodeTexture(texture); }
-                catch (NotSupportedException) { }
+                catch (NotSupportedException) when (!strict) { }
             }
         }
         LodPreviewTexture fallback = textures.Values.FirstOrDefault() ?? SolidTexture(Color.FromArgb(90, 205, 230));
+        LodPreviewTexture? selectedDiffuse = textures.Count == 1 ? textures.Values.Single() : null;
         var triangles = new List<LodTriangle>();
         Vector3 min = new(float.MaxValue), max = new(float.MinValue);
         foreach (Drawable drawable in file.DrawableDict?.Drawables?.data_items ?? [])
         {
+            foreach (Texture embedded in drawable.ShaderGroup?.TextureDictionary?.Textures?.data_items ?? [])
+            {
+                if (!textures.ContainsKey(embedded.Name)) textures[embedded.Name] = DecodeTexture(embedded);
+            }
             DrawableModel[] models = lod switch
             {
                 ClothingPreviewLod.High => drawable.DrawableModels?.High ?? [],
                 ClothingPreviewLod.Medium => drawable.DrawableModels?.Med ?? [],
                 _ => drawable.DrawableModels?.Low ?? []
             };
-            foreach (DrawableGeometry geometry in models.SelectMany(model => model.Geometries ?? []))
+            foreach (DrawableModel model in models)
             {
-                VertexData vertices = geometry.VertexData;
-                ushort[] indices = geometry.IndexBuffer?.Indices ?? [];
-                LodPreviewTexture texture = FindTexture(geometry.Shader, textures) ?? fallback;
-                for (int offset = 0; offset + 2 < indices.Length; offset += 3)
+                Matrix4x4 transform = (model.HasSkin == 0 ? ModelTransform(drawable.Skeleton, model.BoneIndex) : Matrix4x4.Identity)
+                    * (attachment ?? Matrix4x4.Identity);
+                foreach (DrawableGeometry geometry in model.Geometries ?? [])
                 {
-                    LodVertex a = ReadVertex(vertices, indices[offset]);
-                    LodVertex b = ReadVertex(vertices, indices[offset + 1]);
-                    LodVertex c = ReadVertex(vertices, indices[offset + 2]);
-                    min = Vector3.Min(min, Vector3.Min(a.Position, Vector3.Min(b.Position, c.Position)));
-                    max = Vector3.Max(max, Vector3.Max(a.Position, Vector3.Max(b.Position, c.Position)));
-                    triangles.Add(new LodTriangle(a, b, c, texture));
+                    VertexData vertices = geometry.VertexData;
+                    ushort[] indices = geometry.IndexBuffer?.Indices ?? [];
+                    LodPreviewTexture? resolved = selectedDiffuse ?? FindTexture(geometry.Shader, textures);
+                    // GTA applies the selected component YTD as the diffuse override.
+                    // Some custom models omit the sampler reference entirely.
+                    if (resolved == null && textures.Count == 1) resolved = textures.Values.Single();
+                    if (strict && resolved == null)
+                        throw new InvalidDataException("A diffuse material could not be resolved. No placeholder was exported.");
+                    LodPreviewTexture texture = resolved ?? fallback;
+                    string shaderName = geometry.Shader?.Name.ToString() ?? string.Empty;
+                    if (shaderName == "ped_emissive")
+                    {
+                        // This shader's diffuse alpha controls the glow, not
+                        // whether the sweater's fabric exists.
+                        texture = new LodPreviewTexture
+                        {
+                            Width = texture.Width, Height = texture.Height,
+                            Pixels = texture.Pixels.Select(color => color | unchecked((int)0xFF000000)).ToArray(),
+                        };
+                    }
+                    if (shaderName.Contains("hair", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var parameters = geometry.Shader?.ParametersList;
+                        int order = Array.FindIndex(parameters?.Hashes ?? [], hash => (uint)hash == JenkHash.GenHash("ordernumber"));
+                        if (order >= 0 && parameters!.Parameters[order].Data is SharpDX.Vector4 value && value.X > 0) continue;
+                        texture = new LodPreviewTexture
+                        {
+                            Width = texture.Width, Height = texture.Height,
+                            Pixels = texture.Pixels.Select(color =>
+                            {
+                                int shade = 16 + (((color >> 16) & 255) + 2 * ((color >> 8) & 255) + (color & 255)) / 16;
+                                return (color & unchecked((int)0xFF000000)) | (shade << 16) | (shade << 8) | shade;
+                            }).ToArray(),
+                        };
+                    }
+                    for (int offset = 0; offset + 2 < indices.Length; offset += 3)
+                    {
+                        LodVertex a = ReadVertex(vertices, indices[offset], transform);
+                        LodVertex b = ReadVertex(vertices, indices[offset + 1], transform);
+                        LodVertex c = ReadVertex(vertices, indices[offset + 2], transform);
+                        min = Vector3.Min(min, Vector3.Min(a.Position, Vector3.Min(b.Position, c.Position)));
+                        max = Vector3.Max(max, Vector3.Max(a.Position, Vector3.Max(b.Position, c.Position)));
+                        triangles.Add(new LodTriangle(a, b, c, texture));
+                    }
                 }
             }
         }
@@ -547,13 +657,77 @@ internal sealed class LodPreviewScene
         Marshal.Copy(pixels, 0, data.Scan0, pixels.Length); bitmap.UnlockBits(data); return bitmap;
     }
 
+    public Bitmap RenderThumbnail(int width, int height, int component = -1, bool isProp = false,
+        float yawOffset = 0, float pitchOffset = 0, bool frontMounted = false)
+    {
+        float yaw = -0.25f;
+        float pitch = 0.12f;
+        if (!isProp && component == 5 && !frontMounted) yaw += MathF.PI;
+        if (isProp && component == 2) yaw += MathF.PI / 2;
+        if (isProp && component is 6 or 7)
+        {
+            yaw -= MathF.PI / 2;
+            pitch = 0.35f;
+        }
+        if (isProp && component == 0) pitch = 0.5f;
+        yaw += yawOffset;
+        pitch += pitchOffset;
+        if (!isProp && component == 10)
+        {
+            Vector3 facing = _triangles.Aggregate(Vector3.Zero, (sum, triangle) =>
+                sum + Vector3.Cross(triangle.B.Position - triangle.A.Position, triangle.C.Position - triangle.A.Position));
+            if (facing.X * facing.X + facing.Y * facing.Y > 0.000001f)
+                yaw = MathF.Atan2(-facing.X, -facing.Y) + yawOffset;
+        }
+        Matrix4x4 rotation = Matrix4x4.CreateRotationZ(yaw) * Matrix4x4.CreateRotationX(pitch);
+        Vector3[] points = _triangles.SelectMany(triangle => new[] { triangle.A, triangle.B, triangle.C })
+            .Select(vertex => Vector3.Transform(vertex.Position - _center, rotation)).ToArray();
+        float minX = points.Min(point => point.X), maxX = points.Max(point => point.X);
+        float minZ = points.Min(point => point.Z), maxZ = points.Max(point => point.Z);
+        float scale = Math.Min(width * 0.86f / Math.Max(maxX - minX, 0.001f),
+            height * 0.86f / Math.Max(maxZ - minZ, 0.001f));
+        Vector3 center = new((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
+        var pixels = new int[width * height];
+        float[] depth = Enumerable.Repeat(float.PositiveInfinity, pixels.Length).ToArray();
+        var projected = new List<(LodScreenVertex A, LodScreenVertex B, LodScreenVertex C, LodPreviewTexture Texture)>();
+        foreach (LodTriangle triangle in _triangles)
+        {
+            Vector3 a = Vector3.Transform(triangle.A.Position - _center, rotation) - center;
+            Vector3 b = Vector3.Transform(triangle.B.Position - _center, rotation) - center;
+            Vector3 c = Vector3.Transform(triangle.C.Position - _center, rotation) - center;
+            projected.Add((Screen(a, triangle.A.UV, width, height, scale), Screen(b, triangle.B.UV, width, height, scale),
+                Screen(c, triangle.C.UV, width, height, scale), triangle.Texture));
+        }
+        foreach (var triangle in projected)
+            Rasterize(pixels, depth, width, height, triangle.A, triangle.B, triangle.C, triangle.Texture, true, LodRasterPass.Opaque);
+        // Glass and soft alpha must blend over the opaque surface behind them.
+        // Writing a transparent lens into the depth buffer hides the watch dial.
+        foreach (var triangle in projected.OrderByDescending(item => item.A.Depth + item.B.Depth + item.C.Depth))
+            Rasterize(pixels, depth, width, height, triangle.A, triangle.B, triangle.C, triangle.Texture, true, LodRasterPass.Transparent);
+        if (!pixels.Any(pixel => ((uint)pixel >> 24) > 0))
+        {
+            // Some bag components are one-sided panels. Prefer the outside of
+            // backpacks, but use the other side when that view has no pixels.
+            if (yawOffset == 0 && pitchOffset == 0)
+                return RenderThumbnail(width, height, component, isProp, MathF.PI, 0, frontMounted);
+            throw new InvalidDataException("The preview is fully transparent.");
+        }
+        var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        BitmapData data = bitmap.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        Marshal.Copy(pixels, 0, data.Scan0, pixels.Length);
+        bitmap.UnlockBits(data);
+        return bitmap;
+    }
+
     private static LodScreenVertex Screen(Vector3 point, Vector2 uv, int width, int height, float scale) =>
         new(width * 0.5f + point.X * scale, height * 0.5f - point.Z * scale, point.Y, uv);
 
     private static void Rasterize(int[] pixels, float[] depth, int width, int height,
-        LodScreenVertex a, LodScreenVertex b, LodScreenVertex c, LodPreviewTexture texture)
+        LodScreenVertex a, LodScreenVertex b, LodScreenVertex c, LodPreviewTexture texture, bool cullBackFaces = false,
+        LodRasterPass pass = LodRasterPass.Legacy)
     {
         float area = Edge(a, b, c.X, c.Y); if (Math.Abs(area) < 0.001f) return;
+        if (cullBackFaces && area < 0) return;
         int minX = Math.Clamp((int)MathF.Floor(Math.Min(a.X, Math.Min(b.X, c.X))), 0, width - 1);
         int maxX = Math.Clamp((int)MathF.Ceiling(Math.Max(a.X, Math.Max(b.X, c.X))), 0, width - 1);
         int minY = Math.Clamp((int)MathF.Floor(Math.Min(a.Y, Math.Min(b.Y, c.Y))), 0, height - 1);
@@ -574,18 +748,52 @@ internal sealed class LodPreviewScene
                 w0 * a.UV.Y + w1 * b.UV.Y + w2 * c.UV.Y);
             int alpha = (color >> 24) & 255;
             if (alpha < 16) continue;
+            if (pass == LodRasterPass.Opaque && alpha < 250) continue;
+            if (pass == LodRasterPass.Transparent && alpha >= 250) continue;
             int red = (int)(((color >> 16) & 255) * light);
             int green = (int)(((color >> 8) & 255) * light);
             int blue = (int)((color & 255) * light);
-            depth[index] = z;
-            pixels[index] = (alpha << 24) | (red << 16) | (green << 8) | blue;
+            if (pass == LodRasterPass.Transparent)
+            {
+                int previous = pixels[index];
+                float sourceAlpha = alpha / 255f, destinationAlpha = ((uint)previous >> 24) / 255f;
+                float combined = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
+                int Blend(int source, int destination) => (int)((source * sourceAlpha + destination * destinationAlpha * (1 - sourceAlpha)) / combined);
+                pixels[index] = ((int)(combined * 255) << 24) | (Blend(red, (previous >> 16) & 255) << 16)
+                    | (Blend(green, (previous >> 8) & 255) << 8) | Blend(blue, previous & 255);
+            }
+            else
+            {
+                depth[index] = z;
+                pixels[index] = (alpha << 24) | (red << 16) | (green << 8) | blue;
+            }
         }
     }
 
     private static float Edge(LodScreenVertex a, LodScreenVertex b, float x, float y) =>
         (x - a.X) * (b.Y - a.Y) - (y - a.Y) * (b.X - a.X);
 
-    private static LodVertex ReadVertex(VertexData data, int index)
+    private static Matrix4x4 ModelTransform(Skeleton? skeleton, int index)
+    {
+        if (skeleton?.Transformations == null || index >= skeleton.Transformations.Length) return Matrix4x4.Identity;
+        SharpDX.Matrix matrix = skeleton.Transformations[index];
+        matrix.Column4 = SharpDX.Vector4.UnitW;
+        int parent = skeleton.ParentIndices[index];
+        int remaining = skeleton.Transformations.Length;
+        while (parent >= 0 && remaining-- > 0)
+        {
+            SharpDX.Matrix next = skeleton.Transformations[parent];
+            next.Column4 = SharpDX.Vector4.UnitW;
+            matrix *= next;
+            parent = skeleton.ParentIndices[parent];
+        }
+        if (remaining < 0) throw new InvalidDataException("Cyclic skeleton hierarchy.");
+        return new Matrix4x4(matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+            matrix.M21, matrix.M22, matrix.M23, matrix.M24, matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+            matrix.M41, matrix.M42, matrix.M43, matrix.M44);
+    }
+
+    private static LodVertex ReadVertex(VertexData data, int index, Matrix4x4 transform)
     {
         SharpDX.Vector3 value = data.GetVector3(index, 0);
         Vector2 uv = Vector2.Zero;
@@ -602,7 +810,7 @@ internal sealed class LodPreviewScene
                 uv = new Vector2(full.X, full.Y);
             }
         }
-        return new LodVertex(new Vector3(value.X, value.Y, value.Z), uv);
+        return new LodVertex(Vector3.Transform(new Vector3(value.X, value.Y, value.Z), transform), uv);
     }
 
     private static LodPreviewTexture? FindTexture(ShaderFX? shader, Dictionary<string, LodPreviewTexture> textures)
@@ -612,8 +820,20 @@ internal sealed class LodPreviewScene
         for (int index = 0; index < parameters.Hashes.Length; index++)
         {
             if ((uint)parameters.Hashes[index] == DiffuseSampler &&
-                parameters.Parameters[index].Data is TextureBase reference &&
-                textures.TryGetValue(reference.Name, out LodPreviewTexture? texture)) return texture;
+                parameters.Parameters[index].Data is TextureBase reference)
+            {
+                if (textures.TryGetValue(reference.Name, out LodPreviewTexture? texture)) return texture;
+                // Clothing variants retain the model's original sampler name.
+                // Resolve that diffuse family against the selected YTD, rather
+                // than accidentally sampling a normal/specular map.
+                int marker = reference.Name.IndexOf("_diff_", StringComparison.OrdinalIgnoreCase);
+                if (marker >= 0)
+                {
+                    string family = reference.Name[..(marker + 5)];
+                    var variants = textures.Where(pair => pair.Key.StartsWith(family, StringComparison.OrdinalIgnoreCase)).ToArray();
+                    if (variants.Length == 1) return variants[0].Value;
+                }
+            }
         }
         for (int index = 0; index < parameters.Hashes.Length; index++)
         {
@@ -642,7 +862,30 @@ internal sealed class LodPreviewScene
             case TextureFormat.D3DFMT_A8R8G8B8:
                 for (int index = 0; index < pixels.Length; index++) pixels[index] = BitConverter.ToInt32(data, index * 4);
                 break;
-            default: throw new NotSupportedException();
+            case TextureFormat.D3DFMT_X8R8G8B8:
+                for (int index = 0; index < pixels.Length; index++) pixels[index] = BitConverter.ToInt32(data, index * 4) | unchecked((int)0xFF000000);
+                break;
+            case TextureFormat.D3DFMT_A8:
+                for (int index = 0; index < pixels.Length; index++) pixels[index] = (data[index] << 24) | 0xFFFFFF;
+                break;
+            case TextureFormat.D3DFMT_L8:
+                for (int index = 0; index < pixels.Length; index++) pixels[index] = unchecked((int)0xFF000000) | (data[index] << 16) | (data[index] << 8) | data[index];
+                break;
+            case TextureFormat.D3DFMT_A8B8G8R8:
+                for (int index = 0; index < pixels.Length; index++)
+                    pixels[index] = (data[index * 4 + 3] << 24) | (data[index * 4] << 16) | (data[index * 4 + 1] << 8) | data[index * 4 + 2];
+                break;
+            default:
+                using (var dds = new MemoryStream(DDSIO.GetDDSFile(texture)))
+                {
+                    var decoded = new BcDecoder().Decode(DdsFile.Load(dds));
+                    for (int index = 0; index < pixels.Length; index++)
+                    {
+                        var pixel = decoded[index];
+                        pixels[index] = (pixel.a << 24) | (pixel.r << 16) | (pixel.g << 8) | pixel.b;
+                    }
+                }
+                break;
         }
         return new LodPreviewTexture { Width = width, Height = height, Pixels = pixels };
     }
@@ -672,7 +915,9 @@ internal sealed class LodPreviewScene
             {
                 int x = blockX + pixelX, y = blockY + pixelY, index = pixelY * 4 + pixelX;
                 if (x >= width || y >= height) continue;
-                pixels[y * width + x] = (alpha[index] << 24) | (colors[(colorBits >> (2 * index)) & 3] & 0xFFFFFF);
+                int colorIndex = (int)((colorBits >> (2 * index)) & 3);
+                byte opacity = !dxt5 && c0 <= c1 && colorIndex == 3 ? (byte)0 : alpha[index];
+                pixels[y * width + x] = (opacity << 24) | (colors[colorIndex] & 0xFFFFFF);
             }
             offset += 8;
         }

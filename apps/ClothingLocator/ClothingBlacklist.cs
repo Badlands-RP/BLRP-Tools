@@ -5,6 +5,56 @@ namespace BLRP.ClothingLocator;
 
 internal static class ClothingBlacklist
 {
+    public static IReadOnlyDictionary<string, string> ReadPreviewRestrictions(string directory)
+    {
+        var restrictions = new Dictionary<string, string>();
+        const string literal = @"'(?<text>(?:\\.|[^'])*)'|""(?<double>(?:\\.|[^""])*)""|(?<boolean>true|false)";
+        foreach (Gender gender in Enum.GetValues<Gender>())
+        {
+            string model = gender == Gender.Male ? "mp_m_freemode_01" : "mp_f_freemode_01";
+            string path = Path.Combine(directory, model + ".lua");
+            string text = File.ReadAllText(path);
+            text = Regex.Replace(text, @"--\[(=*)\[.*?\]\1\]", string.Empty, RegexOptions.Singleline);
+            string[] lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            int start = FindTableStart(lines), end = FindBlockEnd(lines, start);
+            if (lines.Skip(end + 1).Any(line => !string.IsNullOrWhiteSpace(line.Split("--", 2)[0])))
+                throw new InvalidDataException("Blacklist code after the literal table is not supported: " + path);
+            string? category = null;
+            int? drawable = null;
+            for (int index = start + 1; index < end; index++)
+            {
+                string line = lines[index];
+                if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("--", StringComparison.Ordinal)) continue;
+                if (Regex.IsMatch(line, @"^\s*sex\s*=\s*'(male|female)'\s*,?\s*(--.*)?$")) continue;
+                Match categoryMatch = Regex.Match(line, @"^\s{2}\['(?<key>\d+|p\d+)'\]\s*=\s*\{\s*(--.*)?$");
+                if (categoryMatch.Success)
+                {
+                    category = categoryMatch.Groups["key"].Value;
+                    continue;
+                }
+                if (Regex.IsMatch(line, @"^\s{2}\},?\s*(--.*)?$")) { category = null; continue; }
+                if (Regex.IsMatch(line, @"^\s{4}\},?\s*(--.*)?$")) { drawable = null; continue; }
+                Match table = Regex.Match(line, @"^\s{4}\[(?<id>\d+)\]\s*=\s*\{\s*(--.*)?$");
+                if (category != null && table.Success)
+                {
+                    drawable = int.Parse(table.Groups["id"].Value);
+                    continue;
+                }
+                Match rule = Regex.Match(line, @"^(?<space>\s{4}|\s{6})\[(?<id>\d+)\]\s*=\s*(?:" + literal + @")\s*,?\s*(--.*)?$");
+                if (category == null || !rule.Success)
+                    throw new InvalidDataException($"Unsupported blacklist entry at {Path.GetFileName(path)}:{index + 1}; export stopped.");
+                bool textureRule = rule.Groups["space"].Value.Length == 6;
+                if (textureRule != drawable.HasValue) throw new InvalidDataException("Unexpected blacklist nesting: " + path);
+                if (rule.Groups["boolean"].Value == "false") continue;
+                int id = int.Parse(rule.Groups["id"].Value);
+                string key = $"{gender.ToString().ToLowerInvariant()}/{category}/{(textureRule ? drawable : id)}/{(textureRule ? id.ToString() : "*")}";
+                string value = rule.Groups["text"].Success ? rule.Groups["text"].Value : rule.Groups["double"].Value;
+                restrictions.Add(key, rule.Groups["boolean"].Value == "true" ? "!blocked" : UnescapeLua(value).Replace("\\\"", "\"", StringComparison.Ordinal));
+            }
+        }
+        return restrictions;
+    }
+
     public static IReadOnlyList<string> GetRestrictionNames(string rootPath)
     {
         if (!Directory.Exists(rootPath))
