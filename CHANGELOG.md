@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.40
+
+- Added Batch Previews to Clothing Utility, with saved folders, target build and export options.
+- Export Rockstar and custom clothing for both genders and every registered texture as transparent WebP previews. Unchanged clothing is cached; new or modified models and textures are regenerated.
+- Improved automatic framing, prop orientation, front-facing badges, empty-slot handling and facial-hair previews on a neutral reference head. Facial hair uses reviewed collection identities rather than geometry guesses.
+- Added Backblaze Update + Upload: upload unique images by content hash, skip matching remote files, retry transient failures and verify checksums and public downloads. Application keys are masked and are not saved in export settings.
+- Generate collection-based catalogue metadata for the updated clothing store. Images load individually from Backblaze instead of adding the complete image library to the FiveM resource download.
+
 ## v1.0.39
 
 - Added Loading Screen Tool to the Hub and release package.
