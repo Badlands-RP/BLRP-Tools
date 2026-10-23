@@ -5,6 +5,14 @@ namespace BLRP.ClothingLocator;
 internal sealed record PreviewExportSettings(string Root, string Output, string Blacklists, int GameBuild, int Size, bool IncludeRestricted,
     bool Upload = false, string BucketName = "", string PublicUrl = "");
 
+internal sealed class LatestPreviewProgress<T> : IProgress<T> where T : class
+{
+    private T? _latest;
+
+    public void Report(T value) => Interlocked.Exchange(ref _latest, value);
+    public T? Take() => Interlocked.Exchange(ref _latest, null);
+}
+
 internal sealed class PreviewExportDialog : Form
 {
     private readonly TextBox _output = new() { Dock = DockStyle.Fill };
@@ -32,6 +40,9 @@ internal sealed class PreviewExportDialog : Form
         _root = Path.GetFullPath(root);
         Text = "Batch clothing previews";
         StartPosition = FormStartPosition.CenterParent;
+        ShowInTaskbar = false;
+        MinimizeBox = false;
+        MaximizeBox = false;
         ClientSize = new Size(760, 680);
         MinimumSize = new Size(720, 710);
         BackColor = Color.FromArgb(20, 20, 40);
@@ -44,11 +55,11 @@ internal sealed class PreviewExportDialog : Form
         _size.Items.AddRange(new object[] { 128, 256, 384, 512 });
         _size.SelectedItem = 256;
         LoadSettings();
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 3, RowCount = 15 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 3, RowCount = 17 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
-        foreach (int height in new[] { 24, 34, 24, 34, 26, 34, 38, 30, 60, 24, 34, 64, 30, 24, 42 })
+        foreach (int height in new[] { 24, 34, 24, 34, 26, 34, 38, 30, 60, 24, 34, 50, 22, 30, 22, 24, 42 })
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
         layout.Controls.Add(new Label { Text = "Output folder", AutoSize = true }, 0, 0);
         layout.Controls.Add(_output, 0, 1); layout.SetColumnSpan(_output, 2);
@@ -75,21 +86,32 @@ internal sealed class PreviewExportDialog : Form
         layout.SetColumnSpan(layout.GetControlFromPosition(0, 9)!, 3);
         layout.Controls.Add(_applicationKey, 0, 10); layout.SetColumnSpan(_applicationKey, 3);
         layout.Controls.Add(_status, 0, 11); layout.SetColumnSpan(_status, 3);
-        layout.Controls.Add(_publicUrl, 0, 12); layout.SetColumnSpan(_publicUrl, 3);
-        layout.Controls.Add(_progress, 0, 13); layout.SetColumnSpan(_progress, 3);
-        layout.Controls.Add(_start, 0, 14);
-        layout.Controls.Add(_cancel, 2, 14);
+        layout.Controls.Add(new Label { Text = "Public preview URL (available after upload)", AutoSize = true }, 0, 12);
+        layout.SetColumnSpan(layout.GetControlFromPosition(0, 12)!, 3);
+        layout.Controls.Add(_publicUrl, 0, 13); layout.SetColumnSpan(_publicUrl, 3);
+        layout.Controls.Add(new Label { Text = "Progress", AutoSize = true }, 0, 14);
+        layout.Controls.Add(_progress, 0, 15); layout.SetColumnSpan(_progress, 3);
+        layout.Controls.Add(_start, 0, 16);
+        layout.Controls.Add(_cancel, 2, 16);
         Controls.Add(layout);
         _start.Click += async (_, _) => await ExportAsync();
         _upload.CheckedChanged += (_, _) => _start.Text = _upload.Checked ? "UPDATE + UPLOAD" : "EXPORT NEW / CHANGED";
         _start.Text = _upload.Checked ? "UPDATE + UPLOAD" : "EXPORT NEW / CHANGED";
-        _cancel.Click += (_, _) => { if (_cancellation != null) _cancellation.Cancel(); else Close(); };
+        _cancel.Click += (_, _) => { if (_cancellation != null) CancelExport(); else Close(); };
         FormClosing += (_, e) =>
         {
             if (_cancellation == null) return;
             e.Cancel = true;
-            _cancellation.Cancel();
+            CancelExport();
         };
+    }
+
+    private void CancelExport()
+    {
+        _cancellation?.Cancel();
+        _cancel.Enabled = false;
+        _cancel.Text = "Cancelling...";
+        _status.Text = "Cancelling. Waiting for the current operation to stop...";
     }
 
     private void LoadSettings()
@@ -145,45 +167,62 @@ internal sealed class PreviewExportDialog : Form
         _cancel.Text = "Cancel";
         _progress.Style = ProgressBarStyle.Marquee;
         _status.Text = "Indexing GTA archives and clothing metadata...";
-        var progress = new Progress<ClothingPreviewProgress>(value =>
+        var progress = new LatestPreviewProgress<ClothingPreviewProgress>();
+        var uploadProgress = new LatestPreviewProgress<PreviewUploadProgress>();
+        using var refresh = new System.Windows.Forms.Timer { Interval = 250 };
+        bool uploading = false;
+        refresh.Tick += (_, _) =>
         {
-            _progress.Style = ProgressBarStyle.Continuous;
-            _progress.Maximum = Math.Max(1, value.Total);
-            _progress.Value = Math.Min(value.Completed, _progress.Maximum);
-            _status.Text = $"{value.Completed:N0}/{value.Total:N0} · {value.Written:N0} rendered · {value.Unchanged:N0} unchanged · {value.Restricted:N0} restricted · {value.Failed:N0} errors";
-        });
+            if (token.IsCancellationRequested) return;
+            if (!uploading && progress.Take() is { } value)
+            {
+                _progress.Style = ProgressBarStyle.Continuous;
+                _progress.Maximum = Math.Max(1, value.Total);
+                _progress.Value = Math.Min(value.Completed, _progress.Maximum);
+                _status.Text = $"{value.Completed:N0}/{value.Total:N0} · {value.Written:N0} rendered · {value.Unchanged:N0} unchanged · {value.Restricted:N0} restricted · {value.Failed:N0} errors";
+            }
+            if (uploading && uploadProgress.Take() is { } uploaded)
+            {
+                _progress.Style = ProgressBarStyle.Continuous;
+                _progress.Maximum = Math.Max(1, uploaded.Total);
+                _progress.Value = Math.Min(uploaded.Completed, _progress.Maximum);
+                _status.Text = $"Upload {uploaded.Completed:N0}/{uploaded.Total:N0} · {uploaded.Uploaded:N0} uploaded · {uploaded.Unchanged:N0} unchanged";
+            }
+        };
+        refresh.Start();
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
             var settings = new PreviewExportSettings(_root, output, blacklistDirectory, build, size, !publicOnly, upload, bucket, _publicUrl.Text);
             File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings));
-            ClothingPreviewResult result = await ClothingPreviewExporter.RunAsync(_root, blacklistDirectory, output, build, size, publicOnly, progress, token);
+            ClothingPreviewResult result = await Task.Run(() =>
+                ClothingPreviewExporter.RunAsync(_root, blacklistDirectory, output, build, size, publicOnly, progress, token), token);
             _status.Text = $"Complete · {result.Written:N0} rendered · {result.Unchanged:N0} unchanged · {result.Restricted:N0} excluded · {result.Failed:N0} errors.\n{result.ManifestPath}";
             if (upload)
             {
+                uploading = true;
+                _progress.Style = ProgressBarStyle.Marquee;
                 _status.Text = "Checking existing Backblaze previews...";
-                var uploadProgress = new Progress<PreviewUploadProgress>(value =>
-                {
-                    _progress.Maximum = Math.Max(1, value.Total);
-                    _progress.Value = Math.Min(value.Completed, _progress.Maximum);
-                    _status.Text = $"Upload {value.Completed:N0}/{value.Total:N0} · {value.Uploaded:N0} uploaded · {value.Unchanged:N0} unchanged";
-                });
-                PreviewUploadResult uploaded = await BackblazePreviewUpload.RunAsync(output, bucket, keyId, applicationKey, uploadProgress, token);
+                PreviewUploadResult uploaded = await Task.Run(() =>
+                    BackblazePreviewUpload.RunAsync(output, bucket, keyId, applicationKey, uploadProgress, token), token);
                 _publicUrl.Text = uploaded.PublicUrl;
                 File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings with { PublicUrl = uploaded.PublicUrl }));
                 _status.Text = $"Complete · {uploaded.Uploaded:N0} uploaded · {uploaded.Unchanged:N0} unchanged · {result.Failed:N0} source texture errors.\nAdd setr clothing_preview_url \"URL below\" to the server config.";
             }
+            _progress.Value = _progress.Maximum;
         }
         catch (OperationCanceledException) { _status.Text = "Cancelled. Completed previews are cached; run again to resume."; }
         catch (Exception exception) { _status.Text = exception.Message; }
         finally
         {
+            refresh.Stop();
             _cancellation.Dispose();
             _cancellation = null;
             _start.Enabled = true;
             _output.Enabled = _blacklists.Enabled = _build.Enabled = _size.Enabled = _restricted.Enabled = true;
             _upload.Enabled = _bucket.Enabled = _keyId.Enabled = _applicationKey.Enabled = true;
             _cancel.Text = "Close";
+            _cancel.Enabled = true;
             _progress.Style = ProgressBarStyle.Continuous;
         }
     }

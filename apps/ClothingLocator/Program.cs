@@ -8,7 +8,7 @@ internal static class Program
         if (args.Length == 2 && args[0] == "--batch-previews")
         {
             ApplicationConfiguration.Initialize();
-            Application.Run(new PreviewExportDialog(args[1]));
+            Application.Run(new PreviewExportDialog(args[1]) { ShowInTaskbar = true });
             return 0;
         }
         if (args.Length == 4 && args[0] == "--preview-export-self-test")

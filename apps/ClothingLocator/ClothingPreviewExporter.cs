@@ -394,6 +394,12 @@ internal static class ClothingPreviewExporter
             {
                 if (!success) throw new InvalidOperationException(message);
             }
+            var latestProgress = new LatestPreviewProgress<ClothingPreviewProgress>();
+            Parallel.For(0, 100000, index => latestProgress.Report(new(index, 100000, 0, index, 0, 0)));
+            var finalProgress = new ClothingPreviewProgress(100000, 100000, 0, 100000, 0, 0);
+            latestProgress.Report(finalProgress);
+            Check(latestProgress.Take() == finalProgress && latestProgress.Take() == null,
+                "Rapid progress reports must collapse to one latest snapshot, not queue UI callbacks.");
             ClothingPreviewSource Accessory(Gender gender, string collection, string code, int relative) =>
                 Source(9000, []) with { Gender = gender, Collection = collection,
                     Component = ClothingComponents.ByCode[code], RelativeDrawable = relative };

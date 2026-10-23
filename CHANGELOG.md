@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.41
+
+- Fixed the Batch Previews window becoming unresponsive under rapid progress updates. Export and upload work run outside the UI thread, and the window displays the latest progress at most four times per second.
+- Keep the owned export dialog attached to the Clothing Utility window instead of presenting a separate taskbar entry. Standalone batch-preview windows remain accessible from the taskbar.
+- Show an explicit cancelling state and check cancellation while indexing custom textures.
+- Label the public preview URL and progress bar. Clothing Utility is now v1.9.1.
+
 ## v1.0.40
 
 - Added Batch Previews to Clothing Utility, with saved folders, target build and export options.

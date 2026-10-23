@@ -128,6 +128,7 @@ internal sealed class ClothingCatalog
             var textureCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (string filePath in Directory.EnumerateFiles(fullRoot, "*.ytd", SearchOption.AllDirectories))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string? key = GetTextureKey(filePath);
                 if (key != null)
                 {
@@ -137,6 +138,7 @@ internal sealed class ClothingCatalog
 
             for (int index = 0; index < entries.Count; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ClothingEntry entry = entries[index];
                 entries[index] = entry with { TextureCount = textureCounts.GetValueOrDefault(GetModelTextureKey(entry)) };
             }
