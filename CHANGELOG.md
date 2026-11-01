@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.0.43
+
+- Fixed Loading Screen Tool tab colors so labels stay readable on the dark background.
+- Replaced broad patch copying with brush and small preset masks using local inpainting. Only marked pixels change, and masks covering over 2.5% of an image are rejected.
+- Added Preview Removal, Show Original, Clear Mask, and Save Changes controls. Previewing does not modify project images; saving checks that originals have not changed.
+- Image backups now keep their original file extensions so they can be opened directly.
+
 ## v1.0.42
 
 - Added a separate size check and resize button in Loading Screen Tool. It center crops project images to 1920×1080, lists changed files and their previous dimensions, and keeps originals in `.blrp-image-backups`.

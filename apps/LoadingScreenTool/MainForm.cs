@@ -12,6 +12,7 @@ internal sealed class MainForm : Form
     private readonly Label _status = new() { Dock = DockStyle.Fill, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft };
     private readonly TextBox _changes = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
     private CleanupTab? _cleanup;
+    private bool _cleanupLoaded;
     private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BadlandsRP", "LoadingScreenTool", "settings.json");
 
@@ -49,7 +50,8 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var page = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
+        var page = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1,
+            RowCount = 8, BackColor = BackColor, ForeColor = ForeColor };
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
@@ -84,11 +86,28 @@ internal sealed class MainForm : Form
         _changes.BackColor = Color.FromArgb(25, 25, 52);
         _changes.ForeColor = Color.White;
         page.Controls.Add(_changes, 0, 7);
-        var tabs = new TabControl { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(new TabPage("PROCESS + EXPORT") { Controls = { page } });
+        var tabs = new TabControl { Dock = DockStyle.Fill, DrawMode = TabDrawMode.OwnerDrawFixed,
+            BackColor = BackColor, ForeColor = ForeColor };
+        tabs.TabPages.Add(new TabPage("PROCESS + EXPORT") { BackColor = BackColor, ForeColor = ForeColor,
+            UseVisualStyleBackColor = false, Controls = { page } });
         _cleanup = new CleanupTab(() => _project.Text.Trim()) { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(new TabPage("REMOVE UI ELEMENTS") { Controls = { _cleanup } });
-        tabs.SelectedIndexChanged += (_, _) => { if (tabs.SelectedIndex == 1) _cleanup?.RefreshImages(); };
+        tabs.TabPages.Add(new TabPage("REMOVE UI ELEMENTS") { BackColor = BackColor, ForeColor = ForeColor,
+            UseVisualStyleBackColor = false, Controls = { _cleanup } });
+        tabs.DrawItem += (_, e) =>
+        {
+            bool selected = e.Index == tabs.SelectedIndex;
+            using var background = new SolidBrush(selected ? Color.FromArgb(25, 25, 52) : BackColor);
+            e.Graphics.FillRectangle(background, e.Bounds);
+            TextRenderer.DrawText(e.Graphics, tabs.TabPages[e.Index].Text, Font, e.Bounds,
+                selected ? Color.LightSkyBlue : Color.Gainsboro,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        };
+        tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (tabs.SelectedIndex != 1 || _cleanupLoaded) return;
+            _cleanup?.RefreshImages();
+            _cleanupLoaded = true;
+        };
         Controls.Add(tabs);
     }
 

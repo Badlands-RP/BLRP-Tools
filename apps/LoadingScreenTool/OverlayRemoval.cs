@@ -1,64 +1,59 @@
+using System.Runtime.InteropServices;
+using OpenCvSharp;
 using SkiaSharp;
 
 namespace BLRP.LoadingScreenTool;
 
+internal sealed record MaskCircle(float X, float Y, float Radius);
+internal sealed record OverlayMask(SKRect? Rectangle, IReadOnlyList<MaskCircle> Circles);
+
 internal static class OverlayRemoval
 {
-    // Copy a nearby clean patch whose edge best matches the target's surroundings.
-    // This works well for small HUD overlays against scenery; the UI asks for visual review.
-    internal static SKBitmap FillFromNearby(SKBitmap source, SKRect normalized)
+    internal static SKBitmap Inpaint(SKBitmap source, OverlayMask selection)
     {
-        int x = Math.Clamp((int)Math.Floor(normalized.Left * source.Width), 0, source.Width - 1);
-        int y = Math.Clamp((int)Math.Floor(normalized.Top * source.Height), 0, source.Height - 1);
-        int right = Math.Clamp((int)Math.Ceiling(normalized.Right * source.Width), x + 1, source.Width);
-        int bottom = Math.Clamp((int)Math.Ceiling(normalized.Bottom * source.Height), y + 1, source.Height);
-        int width = right - x, height = bottom - y;
-        int bestX = -1, bestY = -1;
-        double bestScore = double.PositiveInfinity;
-        foreach (int distance in new[] { 1, 2, 3 })
-        foreach (var (dx, dy) in new[] { (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1),
-                     (1, -1), (-1, 1), (1, 1) })
+        using SKImage image = SKImage.FromBitmap(source);
+        using SKData data = image.Encode(SKEncodedImageFormat.Png, 100) ??
+            throw new InvalidDataException("Could not prepare image for cleanup.");
+        using Mat original = Cv2.ImDecode(data.ToArray(), ImreadModes.Color);
+        using var mask = new Mat(source.Height, source.Width, MatType.CV_8UC1, Scalar.Black);
+        if (selection.Rectangle is SKRect rectangle)
         {
-            int sx = x + dx * width * distance;
-            int sy = y + dy * height * distance;
-            if (sx < 0 || sy < 0 || sx + width > source.Width || sy + height > source.Height) continue;
-            double score = BorderScore(source, x, y, sx, sy, width, height);
-            if (score >= bestScore) continue;
-            bestScore = score;
-            bestX = sx;
-            bestY = sy;
+            int left = Math.Clamp((int)Math.Floor(rectangle.Left * source.Width), 0, source.Width - 1);
+            int top = Math.Clamp((int)Math.Floor(rectangle.Top * source.Height), 0, source.Height - 1);
+            int right = Math.Clamp((int)Math.Ceiling(rectangle.Right * source.Width), left + 1, source.Width);
+            int bottom = Math.Clamp((int)Math.Ceiling(rectangle.Bottom * source.Height), top + 1, source.Height);
+            Cv2.Rectangle(mask, new OpenCvSharp.Rect(left, top, right - left, bottom - top), Scalar.White, -1);
         }
-        if (bestX < 0) throw new InvalidOperationException("The selected area is too large to fill from nearby pixels.");
+        foreach (MaskCircle circle in selection.Circles)
+        {
+            int x = Math.Clamp((int)Math.Round(circle.X * source.Width), 0, source.Width - 1);
+            int y = Math.Clamp((int)Math.Round(circle.Y * source.Height), 0, source.Height - 1);
+            int radius = Math.Max(1, (int)Math.Round(circle.Radius * source.Width));
+            Cv2.Circle(mask, new OpenCvSharp.Point(x, y), radius, Scalar.White, -1);
+        }
+        int count = Cv2.CountNonZero(mask);
+        if (count == 0) throw new InvalidOperationException("Paint a small area over the overlay first.");
+        if (count > source.Width * source.Height * 0.025)
+            throw new InvalidOperationException("The marked area covers more than 2.5% of the image. Use a smaller brush or selection.");
+
+        using var inpainted = new Mat();
+        Cv2.Inpaint(original, mask, inpainted, 3, InpaintTypes.Telea);
+        if (!Cv2.ImEncode(".png", inpainted, out byte[] png))
+            throw new InvalidDataException("Could not prepare the cleanup preview.");
+        using SKBitmap restored = SKBitmap.Decode(png) ?? throw new InvalidDataException("Could not read cleanup preview.");
 
         var output = new SKBitmap(source.Width, source.Height);
-        using (var canvas = new SKCanvas(output))
+        using (var canvas = new SKCanvas(output)) canvas.DrawBitmap(source, 0, 0, SKSamplingOptions.Default);
+        byte[] maskBytes = new byte[source.Width * source.Height];
+        Marshal.Copy(mask.Data, maskBytes, 0, maskBytes.Length);
+        for (int y = 0; y < source.Height; y++)
+        for (int x = 0; x < source.Width; x++)
         {
-            canvas.DrawBitmap(source, 0, 0, SKSamplingOptions.Default);
-            canvas.DrawBitmap(source, new SKRect(bestX, bestY, bestX + width, bestY + height),
-                new SKRect(x, y, right, bottom), SKSamplingOptions.Default);
-            canvas.Flush();
+            if (maskBytes[y * source.Width + x] == 0) continue;
+            SKColor old = source.GetPixel(x, y);
+            SKColor fill = restored.GetPixel(x, y);
+            output.SetPixel(x, y, new SKColor(fill.Red, fill.Green, fill.Blue, old.Alpha));
         }
         return output;
     }
-
-    private static double BorderScore(SKBitmap image, int x, int y, int sx, int sy, int width, int height)
-    {
-        double total = 0;
-        int count = 0;
-        for (int i = 0; i < 16; i++)
-        {
-            int px = x + i * (width - 1) / 15;
-            int qx = sx + i * (width - 1) / 15;
-            if (y > 0) { total += Difference(image.GetPixel(px, y - 1), image.GetPixel(qx, sy)); count++; }
-            if (y + height < image.Height) { total += Difference(image.GetPixel(px, y + height), image.GetPixel(qx, sy + height - 1)); count++; }
-            int py = y + i * (height - 1) / 15;
-            int qy = sy + i * (height - 1) / 15;
-            if (x > 0) { total += Difference(image.GetPixel(x - 1, py), image.GetPixel(sx, qy)); count++; }
-            if (x + width < image.Width) { total += Difference(image.GetPixel(x + width, py), image.GetPixel(sx + width - 1, qy)); count++; }
-        }
-        return total / Math.Max(1, count);
-    }
-
-    private static int Difference(SKColor a, SKColor b) =>
-        Math.Abs(a.Red - b.Red) + Math.Abs(a.Green - b.Green) + Math.Abs(a.Blue - b.Blue);
 }

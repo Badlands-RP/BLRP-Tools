@@ -20,6 +20,7 @@ internal static class LoadingScreenWorkflow
     internal sealed record ExportResult(int Copied, int Removed);
     internal sealed record ImageChange(string Name, int OldWidth, int OldHeight);
     internal sealed record ResizeResult(IReadOnlyList<ImageChange> Changed, int AlreadyCorrect);
+    internal sealed record PreviewEdit(string Name, string OriginalHash, byte[] Png);
 
     internal static ResizeResult ResizeAll(string projectFolder)
     {
@@ -57,26 +58,50 @@ internal static class LoadingScreenWorkflow
         .OrderBy(path => int.Parse(Path.GetFileNameWithoutExtension(path)))
         .ToArray();
 
-    // Coordinates are fractions of the image, so a selection can be applied to multiple sizes.
-    internal static IReadOnlyList<string> RemoveOverlay(string projectFolder, IEnumerable<string> selectedNames, SKRect selection)
+    // Preview generation does not modify the project. The mask is shared across selected images.
+    internal static IReadOnlyList<PreviewEdit> PreviewRemoval(string projectFolder, IEnumerable<string> selectedNames,
+        OverlayMask selection)
     {
         string folder = ExistingFolder(projectFolder);
-        if (selection.Left < 0 || selection.Top < 0 || selection.Right > 1 || selection.Bottom > 1 ||
-            selection.Width <= 0 || selection.Height <= 0)
-            throw new ArgumentOutOfRangeException(nameof(selection), "Select an area inside the image.");
-        var changed = new List<string>();
+        var previews = new List<PreviewEdit>();
         foreach (string name in selectedNames.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!TryNumber(name, out _) || !string.Equals(name, Path.GetFileName(name), StringComparison.Ordinal))
                 throw new InvalidOperationException("Choose numbered WebPs from the project image list.");
             string path = Path.Combine(folder, name);
             if (!File.Exists(path)) throw new FileNotFoundException("Selected image was removed.", path);
+            string originalHash = Hash(path);
             using SKBitmap source = SKBitmap.Decode(path) ?? throw new InvalidDataException("Could not read image: " + path);
-            using SKBitmap output = OverlayRemoval.FillFromNearby(source, selection);
-            SaveEditedImage(path, output);
-            changed.Add(name);
+            using SKBitmap output = OverlayRemoval.Inpaint(source, selection);
+            using SKImage image = SKImage.FromBitmap(output);
+            using SKData png = image.Encode(SKEncodedImageFormat.Png, 100) ??
+                throw new InvalidDataException("Could not encode preview: " + path);
+            if (Hash(path) != originalHash)
+                throw new InvalidOperationException(name + " changed while generating the preview. Try again.");
+            previews.Add(new PreviewEdit(name, originalHash, png.ToArray()));
         }
-        return changed;
+        return previews;
+    }
+
+    internal static IReadOnlyList<string> SaveRemoval(string projectFolder, IReadOnlyCollection<PreviewEdit> previews)
+    {
+        string folder = ExistingFolder(projectFolder);
+        if (previews.Count == 0) throw new InvalidOperationException("Preview an edit before saving it.");
+        foreach (PreviewEdit preview in previews)
+        {
+            if (!TryNumber(preview.Name, out _) || !string.Equals(preview.Name, Path.GetFileName(preview.Name), StringComparison.Ordinal))
+                throw new InvalidOperationException("Preview includes an invalid image name.");
+            string path = Path.Combine(folder, preview.Name);
+            if (!File.Exists(path) || Hash(path) != preview.OriginalHash)
+                throw new InvalidOperationException(preview.Name + " changed since the preview. Refresh and preview again.");
+        }
+        foreach (PreviewEdit preview in previews)
+        {
+            string path = Path.Combine(folder, preview.Name);
+            using SKBitmap output = SKBitmap.Decode(preview.Png) ?? throw new InvalidDataException("Could not read preview: " + preview.Name);
+            SaveEditedImage(path, output);
+        }
+        return previews.Select(preview => preview.Name).ToArray();
     }
 
     private static void SaveEditedImage(string path, SKBitmap bitmap)
@@ -84,8 +109,9 @@ internal static class LoadingScreenWorkflow
         string folder = Path.GetDirectoryName(path)!;
         string backupFolder = Path.Combine(folder, ".blrp-image-backups");
         Directory.CreateDirectory(backupFolder);
-        string backup = Path.Combine(backupFolder, Path.GetFileName(path) + "." +
-            DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + Guid.NewGuid().ToString("N") + ".bak");
+        string backup = Path.Combine(backupFolder, Path.GetFileNameWithoutExtension(path) + "." +
+            DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + Guid.NewGuid().ToString("N") +
+            Path.GetExtension(path));
         string temp = Path.Combine(folder, ".blrp-image-edit-" + Guid.NewGuid().ToString("N"));
         try
         {

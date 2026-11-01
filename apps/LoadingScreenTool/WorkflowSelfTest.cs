@@ -37,9 +37,27 @@ internal static class WorkflowSelfTest
                 Check(sizeCheck.Width == 1920 && sizeCheck.Height == 1080);
             Check(LoadingScreenWorkflow.ResizeAll(project).Changed.Count == 0);
             Check(LoadingScreenWorkflow.Process(project).Added == 0);
-            var cleaned = LoadingScreenWorkflow.RemoveOverlay(project, ["1.webp"], new SKRect(0.01f, 0.01f, 0.05f, 0.05f));
-            Check(cleaned.Count == 1);
-            Check(Directory.EnumerateFiles(Path.Combine(project, ".blrp-image-backups")).Count() >= 4);
+            string editPath = Path.Combine(project, "1.webp");
+            byte[] beforePreview = File.ReadAllBytes(editPath);
+            var preview = LoadingScreenWorkflow.PreviewRemoval(project, ["1.webp"],
+                new OverlayMask(new SKRect(0.01f, 0.01f, 0.05f, 0.05f), []));
+            Check(preview.Count == 1 && beforePreview.SequenceEqual(File.ReadAllBytes(editPath)));
+            Check(LoadingScreenWorkflow.SaveRemoval(project, preview).Count == 1);
+            var backups = Directory.EnumerateFiles(Path.Combine(project, ".blrp-image-backups")).ToArray();
+            Check(backups.Length >= 4 && backups.All(path =>
+                Path.GetExtension(path).Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+                Path.GetExtension(path).Equals(".png", StringComparison.OrdinalIgnoreCase)));
+            using (var fixture = new SKBitmap(200, 100))
+            {
+                fixture.Erase(SKColors.Blue);
+                using (var canvas = new SKCanvas(fixture))
+                using (var paint = new SKPaint { Color = SKColors.White })
+                    canvas.DrawRect(new SKRect(86, 26, 94, 34), paint);
+                using SKBitmap restored = OverlayRemoval.Inpaint(fixture,
+                    new OverlayMask(null, [new MaskCircle(0.45f, 0.30f, 0.05f)]));
+                Check(IsNear(restored.GetPixel(90, 30), SKColors.Blue));
+                Check(restored.GetPixel(10, 10) == fixture.GetPixel(10, 10));
+            }
             return true;
         }
         catch (Exception error)
@@ -75,4 +93,9 @@ internal static class WorkflowSelfTest
     {
         if (!condition) throw new InvalidOperationException("Loading Screen Tool self-test failed.");
     }
+
+    private static bool IsNear(SKColor actual, SKColor expected) =>
+        Math.Abs(actual.Red - expected.Red) <= 6 &&
+        Math.Abs(actual.Green - expected.Green) <= 6 &&
+        Math.Abs(actual.Blue - expected.Blue) <= 6;
 }
