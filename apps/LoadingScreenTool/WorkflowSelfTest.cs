@@ -31,6 +31,15 @@ internal static class WorkflowSelfTest
             Check(exported.Copied == 2 && exported.Removed == 1);
             Check(!File.Exists(Path.Combine(active, "4.webp")) && File.Exists(Path.Combine(active, "keep.txt")));
             Check(IsColor(Path.Combine(active, "2.webp"), SKColors.Blue));
+            var resized = LoadingScreenWorkflow.ResizeAll(project);
+            Check(resized.Changed.Count == 3 && resized.AlreadyCorrect == 0);
+            using (SKBitmap sizeCheck = SKBitmap.Decode(Path.Combine(project, "1.webp"))!)
+                Check(sizeCheck.Width == 1920 && sizeCheck.Height == 1080);
+            Check(LoadingScreenWorkflow.ResizeAll(project).Changed.Count == 0);
+            Check(LoadingScreenWorkflow.Process(project).Added == 0);
+            var cleaned = LoadingScreenWorkflow.RemoveOverlay(project, ["1.webp"], new SKRect(0.01f, 0.01f, 0.05f, 0.05f));
+            Check(cleaned.Count == 1);
+            Check(Directory.EnumerateFiles(Path.Combine(project, ".blrp-image-backups")).Count() >= 4);
             return true;
         }
         catch (Exception error)

@@ -6,4 +6,8 @@ Open this tool from BLRP Tools Hub. Choose the exact folder containing the image
 
 **Export to active folder** copies the project's numbered WebPs to the linked active folder and removes numbered WebPs there that are no longer in the project. Other files in the active folder are left alone. Process the project folder first when its numbering has gaps.
 
+**Check + resize** scans supported images in the project folder and center crops any image with dimensions other than 1920×1080. It lists each changed file and its original dimensions for review. Original files are backed up under `.blrp-image-backups`. Previously processed source images remain recorded, so resizing them does not add duplicate numbered WebPs on the next process run. GIF resizing uses a single decoded frame.
+
+**Remove UI elements** is a separate tab for numbered WebPs. Select one or more images, choose a FiveM watermark or FPS corner preset, or drag a custom rectangle on the preview. The tool replaces that area with the best matching nearby image patch. Review every result before exporting; complex backgrounds may need manual editing. Originals are retained under `.blrp-image-backups`.
+
 Run the offline workflow check with `BLRP.LoadingScreenTool.dll --self-test` through `dotnet`.

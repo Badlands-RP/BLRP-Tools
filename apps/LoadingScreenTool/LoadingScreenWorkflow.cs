@@ -18,6 +18,104 @@ internal static class LoadingScreenWorkflow
 
     internal sealed record ProcessResult(int Existing, int Added, int Total);
     internal sealed record ExportResult(int Copied, int Removed);
+    internal sealed record ImageChange(string Name, int OldWidth, int OldHeight);
+    internal sealed record ResizeResult(IReadOnlyList<ImageChange> Changed, int AlreadyCorrect);
+
+    internal static ResizeResult ResizeAll(string projectFolder)
+    {
+        string folder = ExistingFolder(projectFolder);
+        var changed = new List<ImageChange>();
+        int correct = 0;
+        Ledger ledger = ReadLedger(folder);
+        foreach (string path in Directory.EnumerateFiles(folder).Where(path => ImageExtensions.Contains(Path.GetExtension(path)))
+                     .OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        {
+            using SKBitmap source = SKBitmap.Decode(path) ?? throw new InvalidDataException("Could not read image: " + path);
+            if (source.Width == 1920 && source.Height == 1080) { correct++; continue; }
+            using var resized = new SKBitmap(1920, 1080);
+            using (var canvas = new SKCanvas(resized))
+            {
+                canvas.Clear(SKColors.Black);
+                float scale = Math.Max(1920f / source.Width, 1080f / source.Height);
+                float width = source.Width * scale, height = source.Height * scale;
+                canvas.DrawBitmap(source, new SKRect((1920 - width) / 2, (1080 - height) / 2,
+                    (1920 + width) / 2, (1080 + height) / 2),
+                    new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
+                canvas.Flush();
+            }
+            SaveEditedImage(path, resized);
+            string name = Path.GetFileName(path);
+            if (ledger.ProcessedSources.ContainsKey(name)) ledger.ProcessedSources[name] = Hash(path);
+            changed.Add(new ImageChange(name, source.Width, source.Height));
+        }
+        if (changed.Count > 0) WriteLedger(folder, ledger);
+        return new ResizeResult(changed, correct);
+    }
+
+    internal static IReadOnlyList<string> ProjectImages(string projectFolder) => Directory.EnumerateFiles(ExistingFolder(projectFolder))
+        .Where(path => TryNumber(Path.GetFileName(path), out _))
+        .OrderBy(path => int.Parse(Path.GetFileNameWithoutExtension(path)))
+        .ToArray();
+
+    // Coordinates are fractions of the image, so a selection can be applied to multiple sizes.
+    internal static IReadOnlyList<string> RemoveOverlay(string projectFolder, IEnumerable<string> selectedNames, SKRect selection)
+    {
+        string folder = ExistingFolder(projectFolder);
+        if (selection.Left < 0 || selection.Top < 0 || selection.Right > 1 || selection.Bottom > 1 ||
+            selection.Width <= 0 || selection.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(selection), "Select an area inside the image.");
+        var changed = new List<string>();
+        foreach (string name in selectedNames.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!TryNumber(name, out _) || !string.Equals(name, Path.GetFileName(name), StringComparison.Ordinal))
+                throw new InvalidOperationException("Choose numbered WebPs from the project image list.");
+            string path = Path.Combine(folder, name);
+            if (!File.Exists(path)) throw new FileNotFoundException("Selected image was removed.", path);
+            using SKBitmap source = SKBitmap.Decode(path) ?? throw new InvalidDataException("Could not read image: " + path);
+            using SKBitmap output = OverlayRemoval.FillFromNearby(source, selection);
+            SaveEditedImage(path, output);
+            changed.Add(name);
+        }
+        return changed;
+    }
+
+    private static void SaveEditedImage(string path, SKBitmap bitmap)
+    {
+        string folder = Path.GetDirectoryName(path)!;
+        string backupFolder = Path.Combine(folder, ".blrp-image-backups");
+        Directory.CreateDirectory(backupFolder);
+        string backup = Path.Combine(backupFolder, Path.GetFileName(path) + "." +
+            DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "." + Guid.NewGuid().ToString("N") + ".bak");
+        string temp = Path.Combine(folder, ".blrp-image-edit-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using SKImage image = SKImage.FromBitmap(bitmap);
+            if (Path.GetExtension(path).Equals(".gif", StringComparison.OrdinalIgnoreCase))
+            {
+                using SKData png = image.Encode(SKEncodedImageFormat.Png, 100) ??
+                    throw new InvalidDataException("Could not encode image: " + path);
+                using var memory = new MemoryStream(png.ToArray());
+                using var frame = System.Drawing.Image.FromStream(memory);
+                frame.Save(temp, System.Drawing.Imaging.ImageFormat.Gif);
+            }
+            else
+            {
+                SKEncodedImageFormat format = Path.GetExtension(path).ToLowerInvariant() switch
+                {
+                    ".png" => SKEncodedImageFormat.Png,
+                    ".jpg" or ".jpeg" => SKEncodedImageFormat.Jpeg,
+                    ".bmp" => SKEncodedImageFormat.Bmp,
+                    _ => SKEncodedImageFormat.Webp
+                };
+                using SKData data = image.Encode(format, format == SKEncodedImageFormat.Png ? 100 : 90) ??
+                    throw new InvalidDataException("Could not encode image: " + path);
+                using (FileStream stream = File.Create(temp)) data.SaveTo(stream);
+            }
+            File.Copy(path, backup);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
+    }
 
     internal static ProcessResult Process(string projectFolder)
     {

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.42
+
+- Added a separate size check and resize button in Loading Screen Tool. It center crops project images to 1920×1080, lists changed files and their previous dimensions, and keeps originals in `.blrp-image-backups`.
+- Added a UI removal tab with numbered WebP selection, common FiveM watermark and FPS corner presets, and a draggable custom area. Selected areas are filled from nearby image content; originals are backed up for visual review.
+
 ## v1.0.41
 
 - Fixed the Batch Previews window becoming unresponsive under rapid progress updates. Export and upload work run outside the UI thread, and the window displays the latest progress at most four times per second.

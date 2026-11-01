@@ -7,8 +7,11 @@ internal sealed class MainForm : Form
     private readonly TextBox _project = new() { Dock = DockStyle.Fill };
     private readonly TextBox _active = new() { Dock = DockStyle.Fill };
     private readonly Button _process = new() { Text = "PROCESS IMAGES", Dock = DockStyle.Fill, Height = 40 };
+    private readonly Button _resize = new() { Text = "CHECK + RESIZE TO 1920×1080", Dock = DockStyle.Fill, Height = 40 };
     private readonly Button _export = new() { Text = "EXPORT TO ACTIVE FOLDER", Dock = DockStyle.Fill, Height = 40 };
     private readonly Label _status = new() { Dock = DockStyle.Fill, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly TextBox _changes = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical };
+    private CleanupTab? _cleanup;
     private static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BadlandsRP", "LoadingScreenTool", "settings.json");
 
@@ -19,8 +22,8 @@ internal sealed class MainForm : Form
         Text = "Loading Screen Tool";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(720, 410);
-        ClientSize = new Size(820, 460);
+        MinimumSize = new Size(780, 540);
+        ClientSize = new Size(960, 660);
         Font = new Font("Cascadia Mono", 9F);
         BackColor = Color.FromArgb(12, 12, 28);
         ForeColor = Color.White;
@@ -36,6 +39,7 @@ internal sealed class MainForm : Form
             var result = LoadingScreenWorkflow.Process(project);
             return $"Ready: {result.Total} numbered WebPs. Kept {result.Existing} in order; added {result.Added}.";
         });
+        _resize.Click += async (_, _) => await ResizeAsync();
         _export.Click += async (_, _) => await RunAsync((project, active) =>
         {
             var result = LoadingScreenWorkflow.Export(project, active);
@@ -45,13 +49,14 @@ internal sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var page = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 7 };
+        var page = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 8 };
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
         page.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        page.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
         page.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         page.Controls.Add(new Label { Text = "LOADING SCREEN TOOL", Dock = DockStyle.Fill, Font = new Font(Font, FontStyle.Bold),
             ForeColor = Color.LightSkyBlue, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
@@ -59,22 +64,57 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleLeft }, 0, 1);
         page.Controls.Add(FolderRow("PROJECT IMAGE FOLDER", _project), 0, 2);
         page.Controls.Add(FolderRow("ACTIVE SERVER FOLDER", _active), 0, 3);
-        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(0, 8, 0, 8) };
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Padding = new Padding(0, 8, 0, 8) };
+        for (int i = 0; i < 3; i++) actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
         StyleButton(_process);
+        StyleButton(_resize);
         StyleButton(_export);
         _process.Margin = new Padding(0, 0, 8, 0);
+        _resize.Margin = new Padding(4, 0, 4, 0);
         _export.Margin = new Padding(8, 0, 0, 0);
         actions.Controls.Add(_process, 0, 0);
-        actions.Controls.Add(_export, 1, 0);
+        actions.Controls.Add(_resize, 1, 0);
+        actions.Controls.Add(_export, 2, 0);
         page.Controls.Add(actions, 0, 4);
         _status.Text = "Process keeps the order of existing numbered WebPs and appends new images.";
         _status.ForeColor = Color.LightSkyBlue;
         page.Controls.Add(_status, 0, 5);
         page.Controls.Add(new Label { Text = "Supported: PNG, JPEG, BMP, GIF, WebP. To remove an image, delete its numbered WebP. Export syncs numbered WebPs only.",
             Dock = DockStyle.Fill, ForeColor = Color.Gainsboro, TextAlign = ContentAlignment.TopLeft }, 0, 6);
-        Controls.Add(page);
+        _changes.BackColor = Color.FromArgb(25, 25, 52);
+        _changes.ForeColor = Color.White;
+        page.Controls.Add(_changes, 0, 7);
+        var tabs = new TabControl { Dock = DockStyle.Fill };
+        tabs.TabPages.Add(new TabPage("PROCESS + EXPORT") { Controls = { page } });
+        _cleanup = new CleanupTab(() => _project.Text.Trim()) { Dock = DockStyle.Fill };
+        tabs.TabPages.Add(new TabPage("REMOVE UI ELEMENTS") { Controls = { _cleanup } });
+        tabs.SelectedIndexChanged += (_, _) => { if (tabs.SelectedIndex == 1) _cleanup?.RefreshImages(); };
+        Controls.Add(tabs);
+    }
+
+    private async Task ResizeAsync()
+    {
+        string project = _project.Text.Trim();
+        SaveSettings();
+        _process.Enabled = _resize.Enabled = _export.Enabled = false;
+        _status.Text = "Checking image sizes...";
+        try
+        {
+            var result = await Task.Run(() => LoadingScreenWorkflow.ResizeAll(project));
+            string summary = $"Resized {result.Changed.Count} images to 1920×1080; {result.AlreadyCorrect} already matched.";
+            _changes.Text = result.Changed.Count == 0 ? "No images changed." :
+                string.Join(Environment.NewLine, result.Changed.Select(change =>
+                    $"{change.Name}: {change.OldWidth}×{change.OldHeight} → 1920×1080"));
+            _status.Text = summary;
+            MessageBox.Show(this, summary + " Review the changed files listed below before export.",
+                "Loading Screen Tool", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception error)
+        {
+            _status.Text = "Resize failed: " + error.Message;
+            MessageBox.Show(this, error.Message, "Loading Screen Tool", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { _process.Enabled = _resize.Enabled = _export.Enabled = true; }
     }
 
     private Control FolderRow(string title, TextBox field)
@@ -111,7 +151,7 @@ internal sealed class MainForm : Form
         string project = _project.Text.Trim();
         string active = _active.Text.Trim();
         SaveSettings();
-        _process.Enabled = _export.Enabled = false;
+        _process.Enabled = _resize.Enabled = _export.Enabled = false;
         _status.Text = "Working...";
         try
         {
@@ -124,7 +164,7 @@ internal sealed class MainForm : Form
             _status.Text = "Operation failed: " + error.Message;
             MessageBox.Show(this, error.Message, "Loading Screen Tool", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        finally { _process.Enabled = _export.Enabled = true; }
+        finally { _process.Enabled = _resize.Enabled = _export.Enabled = true; }
     }
 
     private static void StyleButton(Button button)
