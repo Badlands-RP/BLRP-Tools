@@ -45,8 +45,8 @@ internal sealed class PreviewExportDialog : Form
         MaximizeBox = false;
         ClientSize = new Size(760, 680);
         MinimumSize = new Size(720, 710);
-        BackColor = Color.FromArgb(20, 20, 40);
-        ForeColor = Color.White;
+        BackColor = SystemColors.Control;
+        ForeColor = SystemColors.ControlText;
         Font = new Font("Segoe UI", 9);
         string parent = Path.GetDirectoryName(_root)!;
         string store = Path.Combine(parent, "BadlandsRP", "resources", "blrp_clothingstore", "nui");
