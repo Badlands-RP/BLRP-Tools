@@ -68,6 +68,7 @@ internal sealed class ClothingCatalog
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private readonly List<ClothingEntry> _entries;
+    private readonly Dictionary<(Gender Gender, string Component, int Pack, int Index), ClothingEntry> _missing = new();
     private readonly Dictionary<(Gender Gender, string Component, int Pack), int> _packSizes;
     private readonly ConcurrentDictionary<string, string> _hashCache = new(StringComparer.OrdinalIgnoreCase);
 
@@ -77,6 +78,7 @@ internal sealed class ClothingCatalog
         _packSizes = entries
             .GroupBy(entry => (entry.Gender, entry.Component.Code, entry.Pack))
             .ToDictionary(group => group.Key, group => group.Max(entry => entry.RelativeIndex) + 1);
+        var installed = entries.Select(entry => (entry.Gender, entry.Component.Code, entry.Pack, entry.RelativeIndex)).ToHashSet();
         foreach (Gender gender in Enum.GetValues<Gender>())
         {
             string letter = gender == Gender.Male ? "m" : "f";
@@ -90,9 +92,23 @@ internal sealed class ClothingCatalog
                     ?? throw new InvalidDataException("Unable to read YMT: " + path);
                 foreach (ComponentDefinition component in ClothingComponents.All)
                 {
-                    _packSizes[(gender, component.Code, pack)] = component.IsProp
-                        ? ped.VariationInfo?.PropInfo?.PropMetaData?.Count(item => item.Data.anchorId == component.Slot) ?? 0
-                        : ped.VariationInfo?.GetComponentData(component.Slot)?.DrawblData3?.Length ?? 0;
+                    int[] textures = component.IsProp
+                        ? (ped.VariationInfo?.PropInfo?.PropMetaData ?? [])
+                            .Where(item => item.Data.anchorId == component.Slot)
+                            .OrderBy(item => item.Data.propId).Select(item => item.TexData?.Length ?? 0).ToArray()
+                        : (ped.VariationInfo?.GetComponentData(component.Slot)?.DrawblData3 ?? [])
+                            .Select(item => item.TexData?.Length ?? 0).ToArray();
+                    _packSizes[(gender, component.Code, pack)] = textures.Length;
+                    for (int index = 0; index < textures.Length; index++)
+                    {
+                        if (textures[index] == 0 || installed.Contains((gender, component.Code, pack, index))) continue;
+                        string collection = Path.GetFileNameWithoutExtension(path);
+                        if (component.IsProp) collection = collection.Replace("_01_mp_", "_01_p_mp_", StringComparison.Ordinal);
+                        string model = $"{collection}^{component.Code}_{index:000}{(component.IsProp ? "" : "_u")}.ydd";
+                        _missing[(gender, component.Code, pack, index)] =
+                            new ClothingEntry(Path.Combine(Path.GetDirectoryName(path)!, collection, component.Code, model),
+                                0, gender, component, pack, index);
+                    }
                 }
             }
         }
@@ -115,18 +131,24 @@ internal sealed class ClothingCatalog
             }
 
             var entries = new List<ClothingEntry>();
-            foreach (string filePath in Directory.EnumerateFiles(fullRoot, "*.ydd", SearchOption.AllDirectories))
+            string[] streams = Enumerable.Range(1, 5)
+                .Select(pack => Path.Combine(fullRoot, $"clothing_addon_{pack}", "stream"))
+                .Where(Directory.Exists)
+                .ToArray();
+            foreach (string filePath in EnumerateAssets(fullRoot, streams, "*.ydd"))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 ClothingEntry? entry = TryParse(filePath);
-                if (entry != null)
+                if (entry != null && (streams.Length == 0 ||
+                    filePath.StartsWith(Path.Combine(fullRoot, $"clothing_addon_{entry.Pack}", "stream") +
+                        Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
                 {
                     entries.Add(entry);
                 }
             }
 
             var textureCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (string filePath in Directory.EnumerateFiles(fullRoot, "*.ytd", SearchOption.AllDirectories))
+            foreach (string filePath in EnumerateAssets(fullRoot, streams, "*.ytd"))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 string? key = GetTextureKey(filePath);
@@ -147,11 +169,26 @@ internal sealed class ClothingCatalog
         }, cancellationToken);
     }
 
+    private static IEnumerable<string> EnumerateAssets(string root, string[] streams, string pattern) =>
+        streams.Length == 0
+            ? Directory.EnumerateFiles(root, pattern)
+            : streams.SelectMany(stream => EnumerateStreamFiles(stream, pattern));
+
+    internal static IEnumerable<string> EnumerateStreamFiles(string stream, string pattern) =>
+        Directory.Exists(stream)
+            ? Directory.EnumerateFiles(stream, pattern, new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
+            })
+            : [];
+
     public ClothingEntry? FindByGlobalIndex(
         Gender gender,
         ComponentDefinition component,
         int globalIndex,
-        int baseOffset)
+        int baseOffset,
+        bool includeMissing = false)
     {
         int collectionIndex = globalIndex - baseOffset;
         if (collectionIndex < 0)
@@ -164,11 +201,12 @@ internal sealed class ClothingCatalog
             int packSize = GetPackSize(gender, component, pack);
             if (collectionIndex < packSize)
             {
-                return _entries.FirstOrDefault(entry =>
+                ClothingEntry? match = _entries.FirstOrDefault(entry =>
                     entry.Gender == gender &&
                     entry.Component.Code.Equals(component.Code, StringComparison.OrdinalIgnoreCase) &&
                     entry.Pack == pack &&
                     entry.RelativeIndex == collectionIndex);
+                return match ?? (includeMissing ? _missing.GetValueOrDefault((gender, component.Code, pack, collectionIndex)) : null);
             }
 
             collectionIndex -= packSize;

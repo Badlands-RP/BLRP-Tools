@@ -21,6 +21,11 @@ Enter the item being searched under `CLOTHING #`. `AUTO START` shows the first
 add-on drawable number and is deliberately read-only. The GTA location and
 active FiveM game build are read automatically from `CitizenFX.ini`.
 Search results show the number of indexed YTD textures available for each model.
+For an EUP repository, the scan uses the addon stream folders and skips backup
+copies. `PREVIEW SELECTED` pages through the model's matching YTDs.
+Turn on `KEEP LOCAL BACKUPS` to retain originals in
+`.clothing-locator-backups`. This preference is off by default and is saved
+for the next launch.
 
 `SCAN REPO QC` lists models with QC warnings. Its Gender, Component and Addon
 filters work together (for example, Female + Hair + Addon 2), and column headers
@@ -34,14 +39,18 @@ Rockstar extraction only reads GTA V. Copies are written to the folder selected
 in the app (default: `D:\BLRP-Clothing-Exports`).
 
 `IMPORT MODEL...` accepts one `.ydd` or `.ydr` model plus its `.ytd` textures.
-It assigns the next safe filename, writes the files into the correct gender and
-component directory, and appends the drawable to the existing addon YMT. A
-target selector lists each safe addon pack, its next relative slot, remaining
-capacity, and the resulting in-game clothing number. The
+It assigns the next safe filename and writes the files into the correct gender
+and component directory. The target selector shows the available slot, addon
+pack, and in-game clothing number. Imports can fill a deleted slot or append a
+drawable to the existing addon YMT. The
 tool warns as a component approaches the 128-drawable YMT limit and refuses to
-create a new global addon pack automatically. Existing YMT files are backed up
-under `.clothing-locator-backups` before modification. Components and props are
-both supported.
+create a new global addon pack automatically. Components and props are both
+supported.
+
+`DELETE ITEM...` removes the selected item's streamed files and updates the
+YMT slot for reuse. It also works on a result marked `MISSING YDD`.
+Other clothing numbers stay stable. Any existing blacklist for the deleted
+number still applies if you reuse it.
 
 Both normal OpenIV-style `RSC7` assets and raw decompressed resources produced
 by older versions of the locator are accepted.
@@ -55,7 +64,7 @@ Texture letters are assigned in YMT order while the race suffix is preserved
 `IMPORT TEXTURE...` adds one or more YTDs to an existing custom component.
 Select a custom result/YDD, or enter its in-game clothing number, then choose
 the source YTDs. The tool assigns each next texture letter, renames the internal
-textures, updates the drawable's YMT texture data, and backs up the YMT first.
+textures and updates the drawable's YMT texture data.
 
 Choose a business under `DRAWABLE BLACKLIST FOR MODEL / DUPLICATE IMPORTS` to
 restrict the complete new drawable. Texture imports open a separate assignment
@@ -64,6 +73,7 @@ a different business, with an `APPLY TO ALL` shortcut. If the whole drawable is
 already restricted, per-texture choices are disabled because the drawable rule
 takes precedence. `REFRESH BUSINESSES` downloads the current custom-business
 names from the Panel's public endpoint and caches them for offline use.
+To restrict an item already in the pack, select it and use `BLACKLIST ITEM...`.
 
 Use `BLACKLIST EXPORT...` after scanning the EUP directory to collect a group's
 custom clothing for bulk editing. Choosing a group lists every matching model;
@@ -72,8 +82,7 @@ includes only the YTD indices assigned to that group. Extract selected rows to
 an editable folder or save every result as one ZIP. Exports preserve the files'
 repository-relative paths and include `blrp-clothing-export.json`. Use
 `REIMPORT...` with an edited ZIP, or select that manifest inside an extracted
-folder, to replace every listed YDD/YTD under its original name. The originals
-are backed up under `.clothing-locator-backups` before replacement. Double-click
+folder, to replace every listed YDD/YTD under its original name. Double-click
 an export result or use `PREVIEW SELECTED` to inspect it in the normal clothing
 viewer; texture-level results prefer the matching restricted YTD.
 
@@ -93,14 +102,14 @@ need additional companion assets and cannot be copied safely by metadata alone.
 Use `REPLACE ITEM...` on an indexed custom model to replace the complete item
 with a new `.ydd`/`.ydr` and all of its new `.ytd` textures while retaining the
 existing clothing ID and blacklist. The replacement assets and YMT texture
-metadata are retargeted to the selected slot. The previous YDD, YTDs, and YMT
-are backed up before the files are swapped.
+metadata are retargeted to the selected slot and validated before the files
+are swapped.
 
 Select any indexed custom item and use `YMT SETTINGS...` to edit the audio and
 drawable/prop flags supported by grzyClothTool. Props also expose their render
 mode. `FEET` can enable or adjust heel height from 0 to 3; `P_HEAD` can enable
-Cut/Scale Hair from 0 to 1. Saving backs up the component YMT and, for heels or
-head props, repairs or creates the creature-metadata YMT named by the addon's
+Cut/Scale Hair from 0 to 1. For heels or head props, saving also updates
+the creature-metadata YMT named by the addon's
 SHOP_PED_APPAREL metadata. Hair must be rigged to `MH_Hair_Scale` for the hat
 setting to affect it; 1.0 fully hides compatible hair.
 

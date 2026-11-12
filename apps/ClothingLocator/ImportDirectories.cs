@@ -8,28 +8,44 @@ internal sealed class ImportDirectories
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BLRP-Tools", "clothing-import-folders.json");
     public string? Model { get; set; }
     public string? Texture { get; set; }
+    public bool KeepBackups { get; set; }
     private static ImportDirectories? _current;
+    private static ImportDirectories Current => _current ??= Load(SettingsPath);
+
+    public static bool KeepLocalBackups
+    {
+        get => Current.KeepBackups;
+        set
+        {
+            Current.KeepBackups = value;
+            Save();
+        }
+    }
 
     public static DialogResult Show(OpenFileDialog dialog, IWin32Window owner, bool texture = false)
     {
-        _current ??= Load(SettingsPath);
-        dialog.InitialDirectory = _current.Resolve(texture, dialog.InitialDirectory);
+        dialog.InitialDirectory = Current.Resolve(texture, dialog.InitialDirectory);
         dialog.RestoreDirectory = true;
         var result = dialog.ShowDialog(owner);
         if (result != DialogResult.OK) return result;
-        if (texture) _current.Texture = Path.GetDirectoryName(dialog.FileName);
-        else _current.Model = Path.GetDirectoryName(dialog.FileName);
+        if (texture) Current.Texture = Path.GetDirectoryName(dialog.FileName);
+        else Current.Model = Path.GetDirectoryName(dialog.FileName);
+        Save();
+        return result;
+    }
+
+    private static void Save()
+    {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
-            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(_current));
+            File.WriteAllText(SettingsPath, JsonSerializer.Serialize(Current));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Keep the selection for this session if settings cannot be written.
-            System.Diagnostics.Trace.WriteLine($"Could not save import folder: {ex.Message}");
+            System.Diagnostics.Trace.WriteLine($"Could not save clothing preferences: {ex.Message}");
         }
-        return result;
     }
 
     private string Resolve(bool texture, string fallback) =>

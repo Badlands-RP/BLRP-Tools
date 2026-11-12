@@ -89,21 +89,27 @@ internal static class ClothingLodGenerator
         return new ClothingLodResult(candidatePath, before, after, highRatio.HasValue);
     }
 
-    public static string Apply(string sourcePath, string candidatePath, string rootPath, bool allowHighChanges = false)
+    public static string? Apply(string sourcePath, string candidatePath, string rootPath, bool allowHighChanges = false)
     {
         YddFile source = Load(sourcePath);
         YddFile candidate = Load(candidatePath);
         ValidateHigh(source, candidate, allowHighChanges);
         ValidateMaterialBindings(source, candidate);
         ValidateIndices(candidate);
-        string backupDirectory = Path.Combine(rootPath, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"), "lod-generation");
-        Directory.CreateDirectory(backupDirectory);
-        string backupPath = Path.Combine(backupDirectory, Path.GetFileName(sourcePath));
-        File.Copy(sourcePath, backupPath, false);
-        string temporary = sourcePath + ".blrp-lod-applying";
-        File.Copy(candidatePath, temporary, true);
-        File.Move(temporary, sourcePath, true);
-        return backupPath;
+        using var backup = new ClothingBackup(rootPath);
+        string relative = Path.Combine("lod-generation", Path.GetFileName(sourcePath));
+        backup.Save(sourcePath, relative);
+        string temporary = sourcePath + "." + Guid.NewGuid().ToString("N") + ".blrp-lod-applying";
+        try
+        {
+            File.Copy(candidatePath, temporary);
+            File.Move(temporary, sourcePath, true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
+        return backup.RetainedDirectory is { } directory ? Path.Combine(directory, relative) : null;
     }
 
     public static IReadOnlyList<string> Export(string sourcePath, string candidatePath, string outputPath, bool allowHighChanges = false)

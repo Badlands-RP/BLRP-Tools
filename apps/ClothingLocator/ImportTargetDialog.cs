@@ -46,8 +46,8 @@ internal sealed class ImportTargetDialog : Form
         foreach (ClothingImportPlan plan in plans)
         {
             _targets.Items.Add(
-                $"ADDON {plan.Pack}   NEXT SLOT {plan.PackDrawableIndex:000}   " +
-                $"{plan.RemainingSlots,3} FREE AFTER   CLOTHING #{plan.GlobalIndex}");
+                $"ADDON {plan.Pack}   {(plan.ReusesSlot ? "REUSE" : "NEXT")} SLOT {plan.PackDrawableIndex:000}   " +
+                $"{plan.RemainingSlots,3} APPEND SLOTS LEFT   CLOTHING #{plan.GlobalIndex}");
         }
         _targets.SelectedIndexChanged += (_, _) => UpdateDetails();
         _targets.DoubleClick += (_, _) => Confirm();

@@ -15,7 +15,7 @@ internal sealed class ClothingPreviewDialog : Form
 {
     private readonly LodMeshPreview _preview = new() { Dock = DockStyle.Fill };
 
-    public ClothingPreviewDialog(string modelPath, string? texturePath)
+    public ClothingPreviewDialog(string modelPath, IReadOnlyList<string> texturePaths)
     {
         Text = "BLRP Clothing Preview";
         StartPosition = FormStartPosition.CenterParent;
@@ -26,25 +26,60 @@ internal sealed class ClothingPreviewDialog : Form
         Font = new Font("Consolas", 9F);
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), RowCount = 2 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(16), RowCount = 3, ColumnCount = 1 };
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, texturePaths.Count > 1 ? 38 : 0));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.Controls.Add(new Label
+        var fileLabel = new Label
         {
-            Text = $"{Path.GetFileName(modelPath)}  /  {(texturePath == null ? "NO MATCHING YTD" : Path.GetFileName(texturePath))}",
             Dock = DockStyle.Fill,
             AutoEllipsis = true,
             ForeColor = Color.FromArgb(135, 206, 235),
             Font = new Font(Font, FontStyle.Bold)
-        });
-        layout.Controls.Add(_preview, 0, 1);
+        };
+        layout.Controls.Add(fileLabel, 0, 0);
+        var previous = new Button { Text = "Previous", AutoSize = true, Enabled = false };
+        var next = new Button { Text = "Next", AutoSize = true, Enabled = false };
+        var position = new Label { AutoSize = true, Margin = new Padding(8, 8, 8, 0) };
+        var navigation = new FlowLayoutPanel { Dock = DockStyle.Fill, Visible = texturePaths.Count > 1 };
+        navigation.Controls.AddRange([previous, position, next]);
+        layout.Controls.Add(navigation, 0, 1);
+        layout.Controls.Add(_preview, 0, 2);
         Controls.Add(layout);
 
-        Shown += async (_, _) =>
+        int index = 0;
+        async Task ShowTextureAsync(int target)
         {
-            try { await _preview.LoadAsync(modelPath, ClothingPreviewLod.High, texturePath); }
-            catch (Exception exception) { MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-        };
+            previous.Enabled = next.Enabled = false;
+            string? texture = texturePaths.ElementAtOrDefault(target);
+            index = target;
+            position.Text = $"Texture {index + 1}/{texturePaths.Count}";
+            string description = $"{Path.GetFileName(modelPath)}  /  {(texture == null ? "NO MATCHING YTD" : Path.GetFileName(texture))}";
+            fileLabel.Text = description;
+            try
+            {
+                await _preview.LoadAsync(modelPath, ClothingPreviewLod.High, texture, resetView: false);
+            }
+            catch (Exception exception)
+            {
+                if (!IsDisposed)
+                {
+                    fileLabel.Text = $"PREVIEW FAILED  /  {description}";
+                    MessageBox.Show(this, exception.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+            finally
+            {
+                if (!IsDisposed)
+                {
+                    previous.Enabled = target > 0;
+                    next.Enabled = target + 1 < texturePaths.Count;
+                }
+            }
+        }
+        previous.Click += async (_, _) => await ShowTextureAsync(index - 1);
+        next.Click += async (_, _) => await ShowTextureAsync(index + 1);
+        Shown += async (_, _) => await ShowTextureAsync(0);
     }
 }
 
@@ -394,10 +429,12 @@ internal sealed class LodMeshPreview : Control
         MouseWheel += (_, e) => { _zoom = Math.Clamp(_zoom * (e.Delta > 0 ? 1.12f : 0.89f), 0.25f, 4f); RenderInteractive(); };
     }
 
-    public async Task LoadAsync(string path, ClothingPreviewLod lod, string? texturePath)
+    public async Task LoadAsync(string path, ClothingPreviewLod lod, string? texturePath, bool resetView = true)
     {
-        _scene = await Task.Run(() => LodPreviewScene.Load(path, lod, texturePath));
-        _yaw = -0.65f; _pitch = 0.35f; _zoom = 1f;
+        LodPreviewScene scene = await Task.Run(() => LodPreviewScene.Load(path, lod, texturePath));
+        if (IsDisposed) return;
+        _scene = scene;
+        if (resetView) { _yaw = -0.65f; _pitch = 0.35f; _zoom = 1f; }
         Render();
     }
 

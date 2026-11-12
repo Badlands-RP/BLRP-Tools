@@ -50,6 +50,8 @@ internal sealed class MainForm : Form
     private readonly Dictionary<(Gender Gender, string Component), int> _offsets = new();
     private readonly Button _extractBaseFiles;
     private readonly Button _replaceDrawable;
+    private readonly Button _deleteDrawable;
+    private readonly Button _blacklistDrawable;
     private readonly Button _editYmtSettings;
     private readonly Button _copyResultPath;
     private readonly Button _openResultPath;
@@ -89,6 +91,9 @@ internal sealed class MainForm : Form
         _extractBaseFiles.Enabled = false;
         _replaceDrawable = CreateButton("REPLACE ITEM...", async (_, _) => await ReplaceDrawableAsync(), true);
         _replaceDrawable.Enabled = false;
+        _deleteDrawable = CreateButton("DELETE ITEM...", async (_, _) => await DeleteDrawableAsync());
+        _blacklistDrawable = CreateButton("BLACKLIST ITEM...", async (_, _) => await BlacklistDrawableAsync(), true);
+        _deleteDrawable.Enabled = _blacklistDrawable.Enabled = false;
         _editYmtSettings = CreateButton("YMT SETTINGS...", async (_, _) => await EditYmtSettingsAsync(), true);
         _editYmtSettings.Enabled = false;
         _copyResultPath = CreateButton("COPY PATH", CopyResultPath);
@@ -228,7 +233,18 @@ internal sealed class MainForm : Form
 
         var label = CreateLabel("EUP SOURCE DIRECTORY", 8, AccentLight, FontStyle.Bold);
         layout.Controls.Add(label, 0, 0);
-        layout.SetColumnSpan(label, 5);
+        layout.SetColumnSpan(label, 3);
+        var keepBackups = new CheckBox
+        {
+            Text = "KEEP LOCAL BACKUPS",
+            Checked = ImportDirectories.KeepLocalBackups,
+            Dock = DockStyle.Fill,
+            ForeColor = AccentLight,
+            Margin = new Padding(4, 0, 0, 0)
+        };
+        keepBackups.CheckedChanged += (_, _) => ImportDirectories.KeepLocalBackups = keepBackups.Checked;
+        layout.Controls.Add(keepBackups, 3, 0);
+        layout.SetColumnSpan(keepBackups, 2);
         _rootPath.Dock = DockStyle.Fill;
         layout.Controls.Add(_rootPath, 0, 1);
         layout.Controls.Add(CreateButton("BROWSE", BrowseRoot), 1, 1);
@@ -338,7 +354,7 @@ internal sealed class MainForm : Form
     private Control BuildResultsCard()
     {
         var card = new BlrpCard(CardTop, CardBottom, Accent) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8), Padding = new Padding(12) };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 9, RowCount = 4 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Color.Transparent, ColumnCount = 9, RowCount = 5 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
@@ -348,6 +364,7 @@ internal sealed class MainForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(_qualityFilterRow);
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -370,15 +387,19 @@ internal sealed class MainForm : Form
         _resultCount.Dock = DockStyle.Fill;
         _resultCount.TextAlign = ContentAlignment.MiddleRight;
         layout.Controls.Add(_resultCount, 8, 0);
+        _deleteDrawable.Margin = new Padding(4, 1, 4, 5);
+        _blacklistDrawable.Margin = new Padding(4, 1, 4, 5);
+        layout.Controls.Add(_deleteDrawable, 1, 1);
+        layout.Controls.Add(_blacklistDrawable, 3, 1);
 
         ConfigureGrid();
         Control qualityFilters = BuildQualityFilters();
-        layout.Controls.Add(qualityFilters, 0, 1);
+        layout.Controls.Add(qualityFilters, 0, 2);
         layout.SetColumnSpan(qualityFilters, 9);
-        layout.Controls.Add(_results, 0, 2);
+        layout.Controls.Add(_results, 0, 3);
         layout.SetColumnSpan(_results, 9);
         Control outfitBar = BuildOutfitBar();
-        layout.Controls.Add(outfitBar, 0, 3);
+        layout.Controls.Add(outfitBar, 0, 4);
         layout.SetColumnSpan(outfitBar, 9);
         card.Controls.Add(layout);
         return card;
@@ -675,7 +696,7 @@ internal sealed class MainForm : Form
             ClothingEntry refreshed = catalog.RefreshModel(entry.FilePath);
             ClothingModelQuality quality = await Task.Run(() => ClothingImporter.InspectModel(refreshed.FilePath, refreshed.TextureCount));
             RefreshResultQuality(refreshed, quality);
-            SetStatus($"REVIEWED OPTIMISATION APPLIED / BACKUP: {dialog.BackupPath}", false);
+            SetStatus("REVIEWED OPTIMISATION APPLIED" + BackupStatus(dialog.BackupPath), false);
         }
         catch (Exception exception)
         {
@@ -879,7 +900,7 @@ internal sealed class MainForm : Form
                 decimal.ToInt32(_clothingNumber.Value),
                 component.DefaultOffset(SelectedGender));
         }
-        if (target == null)
+        if (target == null || !File.Exists(target.FilePath))
         {
             ShowError("The entered clothing number is not a custom EUP model. Locate or select a custom YDD first.");
             return;
@@ -1076,7 +1097,8 @@ internal sealed class MainForm : Form
                 this,
                 $"Replace the complete {target.Component.Code.ToUpperInvariant()} clothing #{globalIndex} with:\n" +
                 $"{Path.GetFileName(modelDialog.FileName)} + {textureDialog.FileNames.Length} texture(s)?\n\n" +
-                "The clothing ID and blacklist stay unchanged. The old YDD, YTDs, and YMT will be backed up first.",
+                "The clothing ID and blacklist stay unchanged." +
+                (ImportDirectories.KeepLocalBackups ? " The old YDD, YTDs, and YMT will be backed up first." : string.Empty),
                 "Replace clothing item",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Warning) != DialogResult.OK)
@@ -1087,7 +1109,7 @@ internal sealed class MainForm : Form
         try
         {
             SetBusy(true, $"REPLACING {target.Component.Code.ToUpperInvariant()} #{globalIndex}...");
-            string backupPath = await Task.Run(() => ClothingImporter.ReplaceClothing(
+            string? backupPath = await Task.Run(() => ClothingImporter.ReplaceClothing(
                 _catalog.RootPath,
                 target,
                 modelDialog.FileName,
@@ -1100,7 +1122,67 @@ internal sealed class MainForm : Form
                 globalIndex,
                 target.Component.DefaultOffset(target.Gender));
             ShowResults(refreshed == null ? [] : [refreshed]);
-            SetStatus($"REPLACED {target.Component.Code.ToUpperInvariant()} #{globalIndex} / {textureDialog.FileNames.Length} TEXTURES / BACKUP: {Path.GetFileName(backupPath)}", false);
+            SetStatus($"REPLACED {target.Component.Code.ToUpperInvariant()} #{globalIndex} / {textureDialog.FileNames.Length} TEXTURES" +
+                BackupStatus(backupPath), false);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    private async Task DeleteDrawableAsync()
+    {
+        if (_catalog == null || SelectedResult() is not { } target || _progress.Active) return;
+        string root = _catalog.RootPath;
+        int number = _catalog.GetGlobalIndex(target, target.Component.DefaultOffset(target.Gender));
+        if (MessageBox.Show(this,
+                $"Delete {target.Gender} {target.Component.Label} #{number}?\n\n" +
+                "The tool removes the streamed files and updates the YMT so this number is available for a future import. " +
+                (ImportDirectories.KeepLocalBackups ? "Original files will be backed up. " : string.Empty) +
+                "Existing blacklist rules still apply to this number.",
+                "Delete clothing item", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+
+        SetBusy(true, $"DELETING CLOTHING #{number}...");
+        Enabled = false;
+        try
+        {
+            string? backup = await Task.Run(() => ClothingImporter.DeleteClothing(root, target));
+            _catalog = await ClothingCatalog.LoadAsync(root);
+            _outfit.RemoveAll(item => item == target || item.FilePath.Equals(target.FilePath, StringComparison.OrdinalIgnoreCase));
+            RefreshOutfit();
+            ShowResults([]);
+            SetStatus($"DELETED #{number} / SLOT AVAILABLE FOR IMPORT" + BackupStatus(backup), false);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        finally
+        {
+            Enabled = true;
+            SetBusy(false);
+        }
+    }
+
+    private async Task BlacklistDrawableAsync()
+    {
+        if (_catalog == null || SelectedResult() is not { } target || !File.Exists(target.FilePath) || _progress.Active) return;
+        string root = _catalog.RootPath;
+        int number = _catalog.GetGlobalIndex(target, target.Component.DefaultOffset(target.Gender));
+        string? business = BlacklistGroupPicker.Pick(this, _businessOptions, SelectedBusiness,
+            $"Blacklist {target.Gender} {target.Component.Label} #{number}");
+        if (business == null) return;
+        SetBusy(true, $"BLACKLISTING CLOTHING #{number}...");
+        try
+        {
+            await Task.Run(() => ClothingBlacklist.AddDrawable(root, target.Gender, target.Component, number, business));
+            SetStatus($"BLACKLISTED #{number} / {business}", false);
         }
         catch (Exception exception)
         {
@@ -1310,7 +1392,7 @@ internal sealed class MainForm : Form
                 target.Component.DefaultOffset(target.Gender));
             ShowResults(refreshed == null ? [] : [refreshed]);
             SetStatus(
-                $"UPDATED {target.Component.Code.ToUpperInvariant()} #{globalIndex} / BACKUP: {Path.GetFileName(result.BackupDirectory)}" +
+                $"UPDATED {target.Component.Code.ToUpperInvariant()} #{globalIndex}" + BackupStatus(result.BackupDirectory) +
                 (result.CreatureMetadataPath == null ? string.Empty : $" / {Path.GetFileName(result.CreatureMetadataPath)}"),
                 false);
         }
@@ -1437,7 +1519,7 @@ internal sealed class MainForm : Form
             return;
         }
 
-        ClothingEntry? match = _catalog!.FindByGlobalIndex(SelectedGender, component, index, baseOffset);
+        ClothingEntry? match = _catalog!.FindByGlobalIndex(SelectedGender, component, index, baseOffset, includeMissing: true);
         if (match is null)
         {
             ShowResults(Array.Empty<ClothingEntry>());
@@ -1446,7 +1528,8 @@ internal sealed class MainForm : Form
         }
 
         ShowResults(new[] { match });
-        SetStatus($"FOUND CLOTHING NUMBER {index}", false);
+        bool missing = !File.Exists(match.FilePath);
+        SetStatus(missing ? $"CLOTHING #{index} HAS A YMT ENTRY BUT NO STREAMED MODEL" : $"FOUND CLOTHING NUMBER {index}", missing);
     }
 
     private async Task LocateDuplicatesAsync()
@@ -1488,6 +1571,7 @@ internal sealed class MainForm : Form
         _selectedBaseEntry = null;
         _extractBaseFiles.Enabled = false;
         _replaceDrawable.Enabled = false;
+        _deleteDrawable.Enabled = _blacklistDrawable.Enabled = false;
         _editYmtSettings.Enabled = false;
         _copyResultPath.Enabled = false;
         _openResultPath.Enabled = false;
@@ -1501,7 +1585,9 @@ internal sealed class MainForm : Form
             string slot = entry.Component.IsProp ? $"PROP {entry.Component.Slot}" : entry.Component.Slot.ToString();
             string relativePath = Path.GetRelativePath(_catalog.RootPath, entry.FilePath);
             ClothingModelQuality quality = qualityByPath?.GetValueOrDefault(entry.FilePath)
-                ?? ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
+                ?? (File.Exists(entry.FilePath)
+                    ? ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount)
+                    : new ClothingModelQuality("MISSING YDD", "This slot still has YMT metadata. Delete Item can make it reusable."));
             _gitHistory.TryGetValue(Path.GetFullPath(entry.FilePath), out GitFileChange? git);
             int rowIndex = _results.Rows.Add(
                 entry.Gender.ToString().ToUpperInvariant(),
@@ -1637,6 +1723,7 @@ internal sealed class MainForm : Form
         _selectedBaseEntry = entry;
         _extractBaseFiles.Enabled = true;
         _replaceDrawable.Enabled = false;
+        _deleteDrawable.Enabled = _blacklistDrawable.Enabled = false;
         _editYmtSettings.Enabled = false;
         _copyResultPath.Enabled = false;
         _openResultPath.Enabled = false;
@@ -1674,8 +1761,10 @@ internal sealed class MainForm : Form
         _copyResultPath.Enabled = entry != null && File.Exists(entry.FilePath);
         _openResultPath.Enabled = entry != null && File.Exists(entry.FilePath);
         _replaceDrawable.Enabled = entry is { Component.IsProp: false } && File.Exists(entry.FilePath);
+        _deleteDrawable.Enabled = entry != null;
+        _blacklistDrawable.Enabled = entry != null && File.Exists(entry.FilePath);
         _editYmtSettings.Enabled = entry != null && File.Exists(entry.FilePath);
-        _duplicateIntoCategory.Enabled = entry is { Component.IsProp: false };
+        _duplicateIntoCategory.Enabled = entry is { Component.IsProp: false } && File.Exists(entry.FilePath);
         _generateLods.Enabled = entry != null &&
             File.Exists(entry.FilePath) &&
             Path.GetExtension(entry.FilePath).Equals(".ydd", StringComparison.OrdinalIgnoreCase);
@@ -1795,7 +1884,7 @@ internal sealed class MainForm : Form
     {
         if (_outfit.Count == 0 && SelectedResult() is { } selected)
         {
-            using var dialog = new ClothingPreviewDialog(selected.FilePath, _catalog?.FindPreviewTexture(selected));
+            using var dialog = new ClothingPreviewDialog(selected.FilePath, _catalog?.FindTextures(selected) ?? []);
             dialog.ShowDialog(this);
             return;
         }
@@ -2039,14 +2128,18 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(root);
         try
         {
+            string firstStream = Path.Combine(root, "clothing_addon_1", "stream");
+            string secondStream = Path.Combine(root, "clothing_addon_2", "stream");
+            Directory.CreateDirectory(firstStream);
+            Directory.CreateDirectory(secondStream);
             for (int index = 0; index < 24; index++)
-                File.WriteAllBytes(Path.Combine(root, $"mp_f_freemode_01_mp_f_c_addons_ii^hair_{index:000}_u.ydd"), [1]);
-            foreach (string name in new[]
-            {
-                "mp_m_freemode_01_mp_m_c_addons_ii^hair_000_u.ydd",
-                "mp_f_freemode_01_mp_f_c_addons_ii^jbib_000_u.ydd",
-                "mp_f_freemode_01_mp_f_c_addons_i^hair_000_u.ydd"
-            }) File.WriteAllBytes(Path.Combine(root, name), [1]);
+                File.WriteAllBytes(Path.Combine(secondStream, $"mp_f_freemode_01_mp_f_c_addons_ii^hair_{index:000}_u.ydd"), [1]);
+            File.WriteAllBytes(Path.Combine(secondStream, "mp_m_freemode_01_mp_m_c_addons_ii^hair_000_u.ydd"), [1]);
+            File.WriteAllBytes(Path.Combine(secondStream, "mp_f_freemode_01_mp_f_c_addons_ii^jbib_000_u.ydd"), [1]);
+            File.WriteAllBytes(Path.Combine(firstStream, "mp_f_freemode_01_mp_f_c_addons_i^hair_000_u.ydd"), [1]);
+            string backup = Path.Combine(root, ".clothing-locator-backups", "lod-generation");
+            Directory.CreateDirectory(backup);
+            File.WriteAllBytes(Path.Combine(backup, "mp_f_freemode_01_mp_f_c_addons_ii^hair_000_u.ydd"), [2]);
             ClothingCatalog catalog = ClothingCatalog.LoadAsync(root).GetAwaiter().GetResult();
             _catalog = catalog;
             var qualities = catalog.Entries.Select((entry, index) => (entry.FilePath,
@@ -2143,6 +2236,9 @@ internal sealed class MainForm : Form
             return exception.Message;
         }
     }
+
+    private static string BackupStatus(string? path) =>
+        path == null ? string.Empty : $" / BACKUP: {Path.GetFileName(path)}";
 
     private static string BlacklistStatus(string? business, string? error) => business == null
         ? string.Empty

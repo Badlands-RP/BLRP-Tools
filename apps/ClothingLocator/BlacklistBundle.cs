@@ -19,7 +19,7 @@ internal sealed record BlacklistAssetSearchResult(
     int UnresolvedDrawables,
     int MissingTextures);
 
-internal sealed record BlacklistImportResult(int FileCount, string BackupDirectory);
+internal sealed record BlacklistImportResult(int FileCount, string? BackupDirectory);
 
 internal sealed record BlacklistBundleManifest(int Version, string Group, DateTime CreatedUtc, string[] Files);
 
@@ -229,11 +229,9 @@ internal static class BlacklistBundle
                 })
                 .ToArray();
 
-            string backupRoot = Path.Combine(
-                fullRoot,
-                ".clothing-locator-backups",
-                DateTime.Now.ToString("yyyyMMdd-HHmmssfff") + "-blacklist-reimport-" + Guid.NewGuid().ToString("N")[..6]);
+            using var backup = new ClothingBackup(fullRoot, needsRollback: true);
             string[] temporaryFiles = replacements.Select(item => item.Target + "." + Guid.NewGuid().ToString("N") + ".blrp-importing").ToArray();
+            int applied = 0;
             try
             {
                 for (int index = 0; index < replacements.Length; index++)
@@ -243,15 +241,18 @@ internal static class BlacklistBundle
 
                 foreach (var replacement in replacements)
                 {
-                    string backup = Path.Combine(backupRoot, replacement.Relative);
-                    Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
-                    File.Copy(replacement.Target, backup, false);
+                    backup.Save(replacement.Target, replacement.Relative);
                 }
 
-                for (int index = 0; index < replacements.Length; index++)
+                for (; applied < replacements.Length; applied++)
                 {
-                    File.Move(temporaryFiles[index], replacements[index].Target, true);
+                    File.Move(temporaryFiles[applied], replacements[applied].Target, true);
                 }
+            }
+            catch
+            {
+                for (int index = 0; index < applied; index++) backup.Restore(replacements[index].Target);
+                throw;
             }
             finally
             {
@@ -261,7 +262,7 @@ internal static class BlacklistBundle
                 }
             }
 
-            return new BlacklistImportResult(replacements.Length, backupRoot);
+            return new BlacklistImportResult(replacements.Length, backup.RetainedDirectory);
         }
         finally
         {
@@ -430,7 +431,9 @@ internal static class BlacklistBundle
             return zipImport.FileCount == 4 &&
                 imported.FileCount == 4 &&
                 File.ReadAllText(firstModel) == "first-edited" &&
-                File.ReadAllText(Path.Combine(imported.BackupDirectory, Path.GetRelativePath(root, firstModel))) == "first-original";
+                (ImportDirectories.KeepLocalBackups
+                    ? imported.BackupDirectory is { } backup && File.ReadAllText(Path.Combine(backup, Path.GetRelativePath(root, firstModel))) == "first-original"
+                    : imported.BackupDirectory == null && !Directory.Exists(Path.Combine(root, ".clothing-locator-backups")));
         }
         finally
         {

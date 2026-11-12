@@ -243,8 +243,9 @@ internal sealed class BlacklistBundleDialog : Form
     private void PreviewSelected()
     {
         if (_grid.SelectedRows.Count != 1 || _grid.SelectedRows[0].Tag is not BlacklistAssetItem item) return;
-        string? texturePath = item.Files.Skip(1).FirstOrDefault() ?? _catalog.FindPreviewTexture(item.Entry);
-        using var dialog = new ClothingPreviewDialog(item.Entry.FilePath, texturePath);
+        string[] textures = item.Files.Skip(1).ToArray();
+        using var dialog = new ClothingPreviewDialog(item.Entry.FilePath,
+            textures.Length > 0 ? textures : _catalog.FindTextures(item.Entry));
         dialog.ShowDialog(this);
     }
 
@@ -340,7 +341,8 @@ internal sealed class BlacklistBundleDialog : Form
         Imported = true;
         MessageBox.Show(
             this,
-            $"Reimported {result.FileCount} clothing file{(result.FileCount == 1 ? string.Empty : "s")}.\n\nBackup: {result.BackupDirectory}",
+            $"Reimported {result.FileCount} clothing file{(result.FileCount == 1 ? string.Empty : "s")}." +
+            (result.BackupDirectory is { } backup ? $"\n\nBackup: {backup}" : string.Empty),
             "Reimport complete",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);

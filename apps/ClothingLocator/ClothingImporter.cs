@@ -32,15 +32,16 @@ internal sealed record ClothingImportPlan(
     CPedPropMetaData? PropTemplate = null,
     bool CopyRawAssets = false)
 {
-    public int CountAfterImport => ExistingCount + 1;
+    public bool ReusesSlot => PackDrawableIndex < ExistingCount;
+    public int CountAfterImport => ExistingCount + (ReusesSlot ? 0 : 1);
     public int RemainingSlots => ClothingImporter.MaxDrawablesPerType - CountAfterImport;
 }
 
 internal sealed record ClothingTextureImportResult(string TexturePath, int TextureCount, string Compression);
-internal sealed record ClothingMetadataUpdateResult(string BackupDirectory, string CreatureMetadataPath);
+internal sealed record ClothingMetadataUpdateResult(string? BackupDirectory, string CreatureMetadataPath);
 internal sealed record ShoeSettings(float HeelHeight, string ShoeSound);
 internal sealed record YmtSettings(string Audio, uint Flags, string RenderFlag, float HeelHeight, float HairScale);
-internal sealed record YmtSettingsUpdateResult(string BackupDirectory, string? CreatureMetadataPath);
+internal sealed record YmtSettingsUpdateResult(string? BackupDirectory, string? CreatureMetadataPath);
 internal sealed record YmtFlagOption(uint Value, string Name)
 {
     public override string ToString() => Name;
@@ -162,8 +163,9 @@ internal static class ClothingImporter
 
         int lastUsedPack = packData.Where(item => item.Count > 0).Select(item => item.Pack).DefaultIfEmpty(packData[0].Pack).Max();
         var targets = packData
-            .Where(item => item.Pack >= lastUsedPack && item.Count < MaxDrawablesPerType)
-            .OrderBy(item => item.Pack)
+            .Select(item => (Pack: item, Vacant: FindVacantSlot(item.YmtPath, item.Ped, component)))
+            .Where(item => item.Vacant >= 0 || (item.Pack.Pack >= lastUsedPack && item.Pack.Count < MaxDrawablesPerType))
+            .OrderBy(item => item.Vacant < 0)
             .ToArray();
         if (targets.Length == 0)
         {
@@ -173,9 +175,9 @@ internal static class ClothingImporter
         }
 
         var plans = new List<ClothingImportPlan>();
-        foreach (var target in targets)
+        foreach (var (target, vacant) in targets)
         {
-            int relativeIndex = target.Count;
+            int relativeIndex = vacant >= 0 ? vacant : target.Count;
             string drawableSuffix = hasSkin ? "r" : "u";
             string modelBaseName = $"{component.Code}_{relativeIndex:000}_{drawableSuffix}";
             string modelFileName = $"{target.Collection}^{modelBaseName}.ydd";
@@ -245,8 +247,11 @@ internal static class ClothingImporter
         }
 
         int lastUsedPack = packData.Where(item => item.Count > 0).Select(item => item.Pack).DefaultIfEmpty(packData[0].Pack).Max();
-        var targets = packData.Where(item => item.Pack >= lastUsedPack && item.Count < MaxDrawablesPerType && item.Total < byte.MaxValue)
-            .OrderBy(item => item.Pack).ToArray();
+        var targets = packData
+            .Select(item => (Pack: item, Vacant: FindVacantSlot(item.YmtPath, item.Ped, component)))
+            .Where(item => item.Vacant >= 0 ||
+                (item.Pack.Pack >= lastUsedPack && item.Pack.Count < MaxDrawablesPerType && item.Pack.Total < byte.MaxValue))
+            .OrderBy(item => item.Vacant < 0).ToArray();
         if (targets.Length == 0)
         {
             throw new InvalidOperationException($"{gender} {component.Code.ToUpperInvariant()} has no available prop slots in the addon YMT files.");
@@ -259,9 +264,9 @@ internal static class ClothingImporter
         if (template.audioId.Hash == 0) template.audioId = JenkHash.GenHash("none");
         string[] sourceTextures = texturePaths.Select(Path.GetFullPath).OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         var plans = new List<ClothingImportPlan>();
-        foreach (var target in targets)
+        foreach (var (target, vacant) in targets)
         {
-            int relativeIndex = target.Count;
+            int relativeIndex = vacant >= 0 ? vacant : target.Count;
             string propCollection = target.Collection.Replace("_01_mp_", "_01_p_mp_", StringComparison.Ordinal);
             string modelFileName = $"{propCollection}^{component.Code}_{relativeIndex:000}.ydd";
             string[] textureFileNames = sourceTextures.Select((_, index) =>
@@ -350,7 +355,13 @@ internal static class ClothingImporter
                 ? BuildDuplicateTexture(path, textureAssetNames[index])
                 : BuildTexture(path))
             .ToArray();
-        byte[] ymtBytes = plan.Component.IsProp
+        string collectionDirectory = Path.Combine(Path.GetDirectoryName(plan.YmtPath)!, plan.CollectionName);
+        byte[] ymtBytes = plan.ReusesSlot
+            ? (plan.Component.IsProp
+                ? UpdatePropSlot(plan.PedFile, plan.Component.Slot, plan.PackDrawableIndex, plan.TexturePaths.Count)
+                : ReplaceComponentDrawable(plan.PedFile, plan.CollectionName, collectionDirectory, plan.Component.Slot,
+                    plan.PackDrawableIndex, plan.HasSkin, plan.TexturePaths, plan.DrawableTemplate, plan.ComponentInfoTemplate))
+            : plan.Component.IsProp
             ? AppendPropDrawable(plan.PedFile, plan.CollectionName, Path.Combine(Path.GetDirectoryName(plan.YmtPath)!, plan.CollectionName),
                 plan.Component.Slot, plan.PackDrawableIndex, plan.TexturePaths.Count, plan.PropTemplate ?? new CPedPropMetaData())
             : AppendComponentDrawable(
@@ -362,29 +373,30 @@ internal static class ClothingImporter
                 plan.TexturePaths,
                 plan.DrawableTemplate,
                 plan.ComponentInfoTemplate);
-        ValidateAppendPreservesExisting(plan.PedFile, ymtBytes, plan);
+        if (plan.ReusesSlot)
+            ValidateSlotUpdate(plan.PedFile, ymtBytes, plan.Component, plan.PackDrawableIndex, plan.TexturePaths.Count);
+        else
+            ValidateAppendPreservesExisting(plan.PedFile, ymtBytes, plan);
         (string Path, byte[] Bytes)? creatureMetadata = plan.Component.Code.Equals("feet", StringComparison.OrdinalIgnoreCase)
-            ? BuildCreatureMetadata(plan.RootPath, plan.Gender, plan.Pack)
+            ? BuildCreatureMetadata(plan.RootPath, plan.Gender, plan.Pack, plan.YmtPath, replacementYmt: ymtBytes)
             : null;
 
         string modelTarget = Path.Combine(plan.TargetDirectory, plan.ModelFileName);
         string[] textureTargets = plan.TextureFileNames.Select(name => Path.Combine(plan.TargetDirectory, name)).ToArray();
         string[] allTargets = [modelTarget, .. textureTargets];
-        string? collision = allTargets.FirstOrDefault(File.Exists);
+        if (MetaXml.GetXml(LoadPedFile(plan.YmtPath).Meta) != MetaXml.GetXml(plan.PedFile.Meta))
+            throw new IOException("The YMT changed after choosing an import slot. Select the import target again.");
+        string? collision = FindSlotFiles(plan.YmtPath, plan.Component, plan.PackDrawableIndex).FirstOrDefault()
+            ?? allTargets.FirstOrDefault(File.Exists);
         if (collision != null)
         {
             throw new IOException("Import target already exists: " + collision);
         }
 
         Directory.CreateDirectory(plan.TargetDirectory);
-        string backupRoot = Path.Combine(plan.RootPath, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
-        Directory.CreateDirectory(backupRoot);
-        File.Copy(plan.YmtPath, Path.Combine(backupRoot, Path.GetFileName(plan.YmtPath)), false);
-        bool creatureExisted = creatureMetadata is { } existingCreature && File.Exists(existingCreature.Path);
-        if (creatureExisted)
-        {
-            File.Copy(creatureMetadata!.Value.Path, Path.Combine(backupRoot, Path.GetFileName(creatureMetadata.Value.Path)), false);
-        }
+        using var backup = new ClothingBackup(plan.RootPath, needsRollback: true);
+        backup.Save(plan.YmtPath);
+        if (creatureMetadata is { } originalCreature) backup.Save(originalCreature.Path);
 
         var written = new List<string>();
         string temporaryYmt = plan.YmtPath + ".blrp-importing";
@@ -425,19 +437,168 @@ internal static class ClothingImporter
             }
             if (written.Contains(plan.YmtPath, StringComparer.OrdinalIgnoreCase))
             {
-                File.Copy(Path.Combine(backupRoot, Path.GetFileName(plan.YmtPath)), plan.YmtPath, true);
+                backup.Restore(plan.YmtPath);
             }
             if (creatureMetadata is { } failedCreature && written.Contains(failedCreature.Path, StringComparer.OrdinalIgnoreCase))
             {
-                string creatureBackup = Path.Combine(backupRoot, Path.GetFileName(failedCreature.Path));
-                if (creatureExisted) File.Copy(creatureBackup, failedCreature.Path, true);
-                else File.Delete(failedCreature.Path);
+                backup.Restore(failedCreature.Path);
             }
             throw;
         }
     }
 
-    public static string ReplaceClothing(
+    private static int FindVacantSlot(string ymtPath, PedFile ped, ComponentDefinition component)
+    {
+        IEnumerable<int> vacant = component.IsProp
+            ? (ped.VariationInfo?.PropInfo?.PropMetaData ?? [])
+                .Where(item => item.Data.anchorId == component.Slot && (item.TexData?.Length ?? 0) == 0)
+                .Select(item => (int)item.Data.propId).Order()
+            : (GetDrawables(ped, component.Slot) ?? [])
+                .Select((item, index) => (item, index))
+                .Where(item => (item.item.TexData?.Length ?? 0) == 0)
+                .Select(item => item.index);
+        return vacant.FirstOrDefault(index => !FindSlotFiles(ymtPath, component, index).Any(), -1);
+    }
+
+    private static IEnumerable<string> FindSlotFiles(string ymtPath, ComponentDefinition component, int index)
+    {
+        string collection = Path.GetFileNameWithoutExtension(ymtPath);
+        if (component.IsProp) collection = collection.Replace("_01_mp_", "_01_p_mp_", StringComparison.Ordinal);
+        string prefix = $"{collection}^{component.Code}";
+        string model = $"{prefix}_{index:000}";
+        string texture = $"{prefix}_diff_{index:000}_";
+        string stream = Path.GetDirectoryName(ymtPath)!;
+        return ClothingCatalog.EnumerateStreamFiles(stream, $"{prefix}_*").Where(path =>
+        {
+            string stem = Path.GetFileNameWithoutExtension(path);
+            return Path.GetExtension(path).ToLowerInvariant() switch
+            {
+                ".ydd" or ".yld" => stem.Equals(model, StringComparison.OrdinalIgnoreCase) ||
+                    stem.Equals(model + "_u", StringComparison.OrdinalIgnoreCase) ||
+                    stem.Equals(model + "_r", StringComparison.OrdinalIgnoreCase),
+                ".ytd" => stem.StartsWith(texture, StringComparison.OrdinalIgnoreCase),
+                _ => false
+            };
+        });
+    }
+
+    public static string? DeleteClothing(string rootPath, ClothingEntry target)
+    {
+        string ymtPath = GetYmtPath(rootPath, target);
+        string[] assets = FindSlotFiles(ymtPath, target.Component, target.RelativeIndex).ToArray();
+        string[] models = assets.Where(path => Path.GetExtension(path).Equals(".ydd", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (models.Length > 1 || (models.Length == 1 && !models[0].Equals(target.FilePath, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("The streamed model for this slot is ambiguous or has moved. Rescan the EUP folder before deleting.");
+
+        PedFile before = LoadPedFile(ymtPath);
+        string collection = Path.GetFileNameWithoutExtension(ymtPath);
+        byte[] bytes = target.Component.IsProp
+            ? UpdatePropSlot(before, target.Component.Slot, target.RelativeIndex, 0)
+            : ReplaceComponentDrawable(before, collection, Path.Combine(Path.GetDirectoryName(ymtPath)!, collection),
+                target.Component.Slot, target.RelativeIndex, false, []);
+        ValidateSlotUpdate(before, bytes, target.Component, target.RelativeIndex, 0);
+
+        var updates = new Dictionary<string, byte[]> { [ymtPath] = bytes };
+        YmtSettings settings = GetYmtSettings(rootPath, target);
+        if (settings.HeelHeight != 0 || settings.HairScale != 0)
+        {
+            var creature = BuildCreatureMetadata(rootPath, target.Gender, target.Pack, ymtPath, replacementYmt: bytes);
+            updates.Add(creature.Path, creature.Bytes);
+        }
+
+        using var backup = new ClothingBackup(rootPath, needsRollback: true);
+        foreach (string path in assets.Concat(updates.Keys))
+            backup.Save(path, Path.GetRelativePath(rootPath, path));
+
+        var changed = new List<string>();
+        string temporary = "." + Guid.NewGuid().ToString("N") + ".blrp-deleting";
+        try
+        {
+            foreach (var update in updates) File.WriteAllBytes(update.Key + temporary, update.Value);
+            foreach (string path in assets)
+            {
+                File.Delete(path);
+                changed.Add(path);
+            }
+            foreach (string path in updates.Keys)
+            {
+                File.Move(path + temporary, path, true);
+                changed.Add(path);
+            }
+        }
+        catch
+        {
+            foreach (string path in changed) backup.Restore(path);
+            throw;
+        }
+        finally
+        {
+            foreach (string path in updates.Keys) File.Delete(path + temporary);
+        }
+        return backup.RetainedDirectory;
+    }
+
+    private static byte[] UpdatePropSlot(PedFile ped, int anchorId, int propId, int textureCount)
+    {
+        XmlDocument document = new();
+        document.LoadXml(MetaXml.GetXml(ped.Meta));
+        XmlNode prop = FindPropXml(document, anchorId, propId)
+            ?? throw new InvalidDataException("The selected prop has no matching YMT entry.");
+        if (textureCount == 0)
+        {
+            prop.SelectSingleNode("audioId")!.InnerText = "none";
+            prop.SelectSingleNode("expressionMods")!.InnerText = "0 0 0 0 0";
+            prop.SelectSingleNode("renderFlags")!.InnerText = "";
+            foreach (string name in new[] { "propFlags", "flags", "stickyness" })
+                ((XmlElement)prop.SelectSingleNode(name)!).SetAttribute("value", "0");
+        }
+
+        var textures = (XmlElement)prop.SelectSingleNode("texData")!;
+        textures.RemoveAll();
+        textures.SetAttribute("itemType", "CPedPropTexData");
+        for (int index = 0; index < textureCount; index++)
+        {
+            XmlElement item = document.CreateElement("Item");
+            item.InnerXml = $"<inclusions>0</inclusions><exclusions>0</exclusions><texId value=\"{index}\" /><distribution value=\"255\" />";
+            textures.AppendChild(item);
+        }
+
+        string anchorName = ((eAnchorPoints)anchorId).ToString();
+        XmlNode counts = document.SelectSingleNode($"/CPedVariationInfo/propInfo/aAnchors/Item[anchor='{anchorName}']/props")
+            ?? throw new InvalidDataException("The selected prop has no matching YMT anchor.");
+        string[] values = counts.InnerText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (propId >= values.Length) throw new InvalidDataException("The prop's YMT anchor is missing the selected index.");
+        values[propId] = textureCount.ToString();
+        counts.InnerText = string.Join(' ', values);
+        return XmlMeta.GetRSCData(document);
+    }
+
+    private static void ValidateSlotUpdate(PedFile before, byte[] bytes, ComponentDefinition component, int index, int textureCount)
+    {
+        PedFile after = RpfFile.GetResourceFile<PedFile>(bytes)
+            ?? throw new InvalidDataException("The updated YMT could not be read back.");
+        if (component.IsProp)
+        {
+            MCPedPropMetaData[] props = after.VariationInfo?.PropInfo?.PropMetaData ?? [];
+            MCPedPropMetaData? prop = props.SingleOrDefault(item => item.Data.anchorId == component.Slot && item.Data.propId == index);
+            byte[]? anchor = after.VariationInfo?.PropInfo?.Anchors?
+                .SingleOrDefault(item => (int)item.Data.anchor == component.Slot)?.Props;
+            if (prop != null && (prop.TexData?.Length ?? 0) == textureCount &&
+                anchor != null && index < anchor.Length && anchor[index] == textureCount &&
+                ComponentMetadataXml(before) == ComponentMetadataXml(after) &&
+                PropMetadataXml(before, component.Slot, index, includeAnchors: false) ==
+                PropMetadataXml(after, component.Slot, index, includeAnchors: false)) return;
+        }
+        else
+        {
+            MCPVDrawblData[]? drawables = GetDrawables(after, component.Slot);
+            if (drawables != null && drawables.Length == GetDrawables(before, component.Slot)?.Length &&
+                index < drawables.Length && (drawables[index].TexData?.Length ?? 0) == textureCount) return;
+        }
+        throw new InvalidDataException("The updated YMT did not preserve the expected clothing slot layout.");
+    }
+
+    public static string? ReplaceClothing(
         string rootPath,
         ClothingEntry target,
         string sourceModelPath,
@@ -511,13 +672,9 @@ internal static class ClothingImporter
             hasSkin,
             textureLayout.Select(texture => texture.Path).ToArray());
 
-        string backupRoot = Path.Combine(fullRoot, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
-        Directory.CreateDirectory(backupRoot);
+        using var backup = new ClothingBackup(fullRoot, needsRollback: true);
         string[] oldPaths = [targetPath, ymtPath, .. oldTexturePaths];
-        foreach (string oldPath in oldPaths)
-        {
-            File.Copy(oldPath, Path.Combine(backupRoot, Path.GetFileName(oldPath)), false);
-        }
+        foreach (string oldPath in oldPaths) backup.Save(oldPath);
 
         string temporaryModel = targetPath + ".blrp-replacing";
         string temporaryYmt = ymtPath + ".blrp-replacing";
@@ -541,7 +698,7 @@ internal static class ClothingImporter
             {
                 File.Delete(obsoleteTexture);
             }
-            return backupRoot;
+            return backup.RetainedDirectory;
         }
         catch
         {
@@ -549,10 +706,7 @@ internal static class ClothingImporter
             {
                 if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
             }
-            foreach (string oldPath in oldPaths)
-            {
-                File.Copy(Path.Combine(backupRoot, Path.GetFileName(oldPath)), oldPath, true);
-            }
+            foreach (string oldPath in oldPaths) backup.Restore(oldPath);
             foreach (string newTexture in textureTargets.Except(oldTexturePaths, StringComparer.OrdinalIgnoreCase))
             {
                 if (File.Exists(newTexture)) File.Delete(newTexture);
@@ -685,15 +839,9 @@ internal static class ClothingImporter
                 target.Component.Code == "p_head" ? settings.HairScale : 0)
             : null;
 
-        string backupRoot = Path.Combine(fullRoot, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
-        Directory.CreateDirectory(backupRoot);
-        string ymtBackup = Path.Combine(backupRoot, Path.GetFileName(ymtPath));
-        File.Copy(ymtPath, ymtBackup, false);
-        bool creatureExisted = creatureMetadata is { } creature && File.Exists(creature.Path);
-        string? creatureBackup = creatureMetadata is { } creatureToBackUp
-            ? Path.Combine(backupRoot, Path.GetFileName(creatureToBackUp.Path))
-            : null;
-        if (creatureExisted) File.Copy(creatureMetadata!.Value.Path, creatureBackup!, false);
+        using var backup = new ClothingBackup(fullRoot, needsRollback: true);
+        backup.Save(ymtPath);
+        if (creatureMetadata is { } originalCreature) backup.Save(originalCreature.Path);
 
         string temporaryYmt = ymtPath + ".blrp-metadata";
         string? temporaryCreature = creatureMetadata?.Path + ".blrp-metadata";
@@ -703,18 +851,14 @@ internal static class ClothingImporter
             if (creatureMetadata is { } updatedCreature) File.WriteAllBytes(temporaryCreature!, updatedCreature.Bytes);
             File.Move(temporaryYmt, ymtPath, true);
             if (creatureMetadata is { } writtenCreature) File.Move(temporaryCreature!, writtenCreature.Path, true);
-            return new YmtSettingsUpdateResult(backupRoot, creatureMetadata?.Path);
+            return new YmtSettingsUpdateResult(backup.RetainedDirectory, creatureMetadata?.Path);
         }
         catch
         {
             if (File.Exists(temporaryYmt)) File.Delete(temporaryYmt);
             if (temporaryCreature != null && File.Exists(temporaryCreature)) File.Delete(temporaryCreature);
-            File.Copy(ymtBackup, ymtPath, true);
-            if (creatureMetadata is { } failedCreature)
-            {
-                if (creatureExisted) File.Copy(creatureBackup!, failedCreature.Path, true);
-                else if (File.Exists(failedCreature.Path)) File.Delete(failedCreature.Path);
-            }
+            backup.Restore(ymtPath);
+            if (creatureMetadata is { } failedCreature) backup.Restore(failedCreature.Path);
             throw;
         }
     }
@@ -745,24 +889,19 @@ internal static class ClothingImporter
     {
         string fullRoot = Path.GetFullPath(rootPath);
         (string creaturePath, byte[] creatureBytes) = BuildCreatureMetadata(fullRoot, gender, pack);
-        string backupRoot = Path.Combine(fullRoot, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
-        Directory.CreateDirectory(backupRoot);
-        bool creatureExisted = File.Exists(creaturePath);
-        string creatureBackup = Path.Combine(backupRoot, Path.GetFileName(creaturePath));
-        if (creatureExisted) File.Copy(creaturePath, creatureBackup, false);
+        using var backup = new ClothingBackup(fullRoot);
+        backup.Save(creaturePath);
 
         string temporaryCreature = creaturePath + ".blrp-metadata";
         try
         {
             File.WriteAllBytes(temporaryCreature, creatureBytes);
             File.Move(temporaryCreature, creaturePath, true);
-            return new ClothingMetadataUpdateResult(backupRoot, creaturePath);
+            return new ClothingMetadataUpdateResult(backup.RetainedDirectory, creaturePath);
         }
         catch
         {
             if (File.Exists(temporaryCreature)) File.Delete(temporaryCreature);
-            if (creatureExisted) File.Copy(creatureBackup, creaturePath, true);
-            else if (File.Exists(creaturePath)) File.Delete(creaturePath);
             throw;
         }
     }
@@ -857,13 +996,12 @@ internal static class ClothingImporter
             ? AppendPropTexture(ped, collection, collectionDirectory, target.Component.Slot, target.RelativeIndex)
             : AppendComponentTexture(ped, collection, collectionDirectory, target.Component.Slot, target.RelativeIndex, suffix);
 
-        string backupRoot = Path.Combine(fullRoot, ".clothing-locator-backups", DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
-        Directory.CreateDirectory(backupRoot);
-        File.Copy(ymtPath, Path.Combine(backupRoot, Path.GetFileName(ymtPath)), false);
+        using var backup = new ClothingBackup(fullRoot);
+        backup.Save(ymtPath);
+        string temporaryYmt = ymtPath + ".blrp-importing";
         try
         {
             File.WriteAllBytes(textureTarget, textureBytes);
-            string temporaryYmt = ymtPath + ".blrp-importing";
             File.WriteAllBytes(temporaryYmt, ymtBytes);
             File.Move(temporaryYmt, ymtPath, true);
             return new ClothingTextureImportResult(textureTarget, textureCount + 1, FormatName(format));
@@ -871,6 +1009,7 @@ internal static class ClothingImporter
         catch
         {
             if (File.Exists(textureTarget)) File.Delete(textureTarget);
+            File.Delete(temporaryYmt);
             throw;
         }
     }
@@ -1096,7 +1235,7 @@ internal static class ClothingImporter
                 item.Element("pedCompID")?.Attribute("value")?.Value == "0x6" &&
                 item.Element("pedCompVarIndex")?.Attribute("value")?.Value == $"0x{racePlan.PackDrawableIndex:X}" &&
                 item.Element("pedCompExpressionIndex")?.Attribute("value")?.Value == "0x4") &&
-            File.Exists(Path.Combine(heelUpdate.BackupDirectory, Path.GetFileName(racePlan.YmtPath))) &&
+            HasExpectedBackup(heelUpdate.BackupDirectory, racePlan.YmtPath) &&
             (GetDrawables(LoadPedFile(racePlan.YmtPath), raceComponent.Slot)?.Length ?? 0) ==
                 (GetDrawables(racePlan.PedFile, raceComponent.Slot)?.Length ?? 0) + 1;
 
@@ -1221,7 +1360,7 @@ internal static class ClothingImporter
             duplicatePlan.Pack,
             duplicatePlan.PackDrawableIndex,
             duplicateTextureTargets.Length);
-        string replacementBackup = ReplaceClothing(
+        string? replacementBackup = ReplaceClothing(
             fixtureRoot,
             replacementTarget,
             raceModel,
@@ -1250,13 +1389,15 @@ internal static class ClothingImporter
                 StringComparison.OrdinalIgnoreCase))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        bool replacementValid = File.ReadAllBytes(Path.Combine(replacementBackup, Path.GetFileName(duplicateModelTarget)))
+        bool replacementBackupValid = replacementBackup == null ? !ImportDirectories.KeepLocalBackups :
+            File.ReadAllBytes(Path.Combine(replacementBackup, Path.GetFileName(duplicateModelTarget)))
                 .SequenceEqual(modelBeforeReplacement) &&
             File.ReadAllBytes(Path.Combine(replacementBackup, Path.GetFileName(duplicatePlan.YmtPath)))
                 .SequenceEqual(ymtBeforeReplacement) &&
             duplicateTextureTargets.Select((path, index) =>
                 File.ReadAllBytes(Path.Combine(replacementBackup, Path.GetFileName(path)))
-                    .SequenceEqual(texturesBeforeReplacement[index])).All(valid => valid) &&
+                    .SequenceEqual(texturesBeforeReplacement[index])).All(valid => valid);
+        bool replacementValid = replacementBackupValid &&
             replacementModel?.Name.Equals(duplicateModelName, StringComparison.OrdinalIgnoreCase) == true &&
             replacementYdd.DrawableDict?.Hashes is [var replacementHash] &&
             replacementHash == JenkHash.GenHash(duplicateModelName.ToLowerInvariant()) &&
@@ -1398,7 +1539,7 @@ internal static class ClothingImporter
                 ReadHexValue(item.Element("pedPropID")) == 0 &&
                 ReadHexValue(item.Element("pedPropVarIndex")) == propPlan.PackDrawableIndex &&
                 ReadHexValue(item.Element("pedPropExpressionIndex")) == 0) &&
-            File.Exists(Path.Combine(propSettingsUpdate.BackupDirectory, Path.GetFileName(propPlan.YmtPath)));
+            HasExpectedBackup(propSettingsUpdate.BackupDirectory, propPlan.YmtPath);
         if (!propSettingsValid)
         {
             throw new InvalidDataException(
@@ -1438,11 +1579,15 @@ internal static class ClothingImporter
                drawables[0].Name.Equals(sourceDrawableName, StringComparison.OrdinalIgnoreCase) &&
                textures.Length == 1 &&
                textures[0].Name.Equals(sourceTextureName, StringComparison.OrdinalIgnoreCase) &&
-               Directory.EnumerateFiles(
-                   Path.Combine(fixtureRoot, ".clothing-locator-backups"),
-                   "*.ymt",
-                   SearchOption.AllDirectories).Any();
+               (ImportDirectories.KeepLocalBackups
+                   ? Directory.EnumerateFiles(Path.Combine(fixtureRoot, ".clothing-locator-backups"), "*.ymt", SearchOption.AllDirectories).Any()
+                   : !Directory.Exists(Path.Combine(fixtureRoot, ".clothing-locator-backups")));
     }
+
+    private static bool HasExpectedBackup(string? directory, string original) =>
+        ImportDirectories.KeepLocalBackups
+            ? directory != null && File.Exists(Path.Combine(directory, Path.GetFileName(original)))
+            : directory == null;
 
     private static string ComponentMetadataXml(PedFile ped)
     {
@@ -1452,13 +1597,15 @@ internal static class ClothingImporter
             (document.SelectSingleNode("/CPedVariationInfo/compInfos")?.OuterXml ?? string.Empty);
     }
 
-    private static string PropMetadataXml(PedFile ped, int excludedAnchorId, int excludedPropId)
+    private static string PropMetadataXml(PedFile ped, int excludedAnchorId, int excludedPropId, bool includeAnchors = true)
     {
         XmlDocument document = new();
         document.LoadXml(MetaXml.GetXml(ped.Meta));
         XmlNode? excluded = FindPropXml(document, excludedAnchorId, excludedPropId);
         excluded?.ParentNode?.RemoveChild(excluded);
-        return document.SelectSingleNode("/CPedVariationInfo/propInfo")?.OuterXml ?? string.Empty;
+        XmlNode? info = document.SelectSingleNode("/CPedVariationInfo/propInfo");
+        if (!includeAnchors && info?.SelectSingleNode("aAnchors") is { } anchors) info.RemoveChild(anchors);
+        return info?.OuterXml ?? string.Empty;
     }
 
     private static ClothingEntry FindDuplicateSelfTestSource(string sourceRoot)
@@ -1944,15 +2091,17 @@ internal static class ClothingImporter
         int componentId,
         int drawableIndex,
         bool hasSkin,
-        IReadOnlyList<string> texturePaths) => RebuildComponent(
+        IReadOnlyList<string> texturePaths,
+        MCPVDrawblData? drawableTemplate = null,
+        MCComponentInfo? componentInfoTemplate = null) => RebuildComponent(
             ped,
             collectionName,
             collectionDirectory,
             componentId,
             hasSkin,
             texturePaths,
-            null,
-            null,
+            drawableTemplate,
+            componentInfoTemplate,
             null,
             null,
             drawableIndex,
@@ -2107,7 +2256,7 @@ internal static class ClothingImporter
                     MCPVDrawblData existingDrawable = existingComponent.DrawblData3[drawableIndex];
                     if (componentIndex == targetComponentIndex && replacementTargetIndex == drawableIndex)
                     {
-                        var replacement = new CPVDrawblData { propMask = (byte)(hasSkin ? 17 : 1) };
+                        CPVDrawblData replacement = drawableTemplate?.Data ?? new CPVDrawblData { propMask = (byte)(hasSkin ? 17 : 1) };
                         replacement.aTexData = AddTextureDataArray(mb, CreateTextureData(texturePaths, hasSkin));
                         drawables.Add(replacement);
                         continue;
@@ -2912,7 +3061,8 @@ internal static class ClothingImporter
         int updatedRelativeIndex = -1,
         float updatedHeelHeight = 0,
         int updatedPropIndex = -1,
-        float updatedHairScale = 0)
+        float updatedHairScale = 0,
+        byte[]? replacementYmt = null)
     {
         string addonRoot = Path.Combine(rootPath, $"clothing_addon_{pack}");
         string streamRoot = Path.Combine(addonRoot, "stream");
@@ -2943,9 +3093,11 @@ internal static class ClothingImporter
 
             string ymtPath = Path.Combine(streamRoot, Path.GetFileNameWithoutExtension(metaPath) + ".ymt");
             if (!File.Exists(ymtPath)) continue;
-            PedFile ped = LoadPedFile(ymtPath);
             bool isUpdatedYmt = updatedYmtPath != null &&
                 Path.GetFullPath(ymtPath).Equals(Path.GetFullPath(updatedYmtPath), StringComparison.OrdinalIgnoreCase);
+            PedFile ped = isUpdatedYmt && replacementYmt != null
+                ? RpfFile.GetResourceFile<PedFile>(replacementYmt) ?? throw new InvalidDataException("Could not read the updated YMT.")
+                : LoadPedFile(ymtPath);
             foreach (MCComponentInfo info in ped.VariationInfo?.CompInfos ?? [])
             {
                 if (info.Data.pedXml_compIdx != 6) continue;
@@ -2960,6 +3112,7 @@ internal static class ClothingImporter
             foreach (XmlNode prop in ymtXml.SelectNodes(
                          "/CPedVariationInfo/propInfo/aPropMetaData/Item[anchorId/@value='0']")?.Cast<XmlNode>() ?? [])
             {
+                if (prop.SelectSingleNode("texData/Item") == null) continue;
                 if (!int.TryParse((prop.SelectSingleNode("propId") as XmlElement)?.GetAttribute("value"), out int propIndex))
                     continue;
                 hatIndices.Add(propIndex);

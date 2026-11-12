@@ -236,13 +236,18 @@ internal static class ClothingBlacklist
                 $"Clothing #{globalIndex} is already blacklisted as a whole drawable. It was not overwritten.");
         }
 
-        string backupRoot = Path.Combine(
-            fullRoot,
-            ".clothing-locator-backups",
-            DateTime.Now.ToString("yyyyMMdd-HHmmssfff") + "-" + Guid.NewGuid().ToString("N")[..6]);
-        Directory.CreateDirectory(backupRoot);
-        File.Copy(path, Path.Combine(backupRoot, fileName), false);
-        File.WriteAllText(path, string.Join(newline, lines), new UTF8Encoding(false));
+        using var backup = new ClothingBackup(fullRoot);
+        backup.Save(path);
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".blrp-blacklisting";
+        try
+        {
+            File.WriteAllText(temporary, string.Join(newline, lines), new UTF8Encoding(false));
+            File.Move(temporary, path, true);
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
     }
 
     private static int FindLine(
@@ -342,9 +347,8 @@ internal static class ClothingBlacklist
                result.Contains("[400] = 'Bob\\'s Burgers',", StringComparison.Ordinal) &&
                result.Contains("[401] = {", StringComparison.Ordinal) &&
                result.Contains("[2] = 'Aces and Eights',", StringComparison.Ordinal) &&
-               Directory.EnumerateFiles(
-                   Path.Combine(root, ".clothing-locator-backups"),
-                   "*.lua",
-                   SearchOption.AllDirectories).Count() == 2;
+               (ImportDirectories.KeepLocalBackups
+                   ? Directory.EnumerateFiles(Path.Combine(root, ".clothing-locator-backups"), "*.lua", SearchOption.AllDirectories).Count() == 2
+                   : !Directory.Exists(Path.Combine(root, ".clothing-locator-backups")));
     }
 }

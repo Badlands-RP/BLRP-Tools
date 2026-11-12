@@ -2,7 +2,7 @@ namespace BLRP.ClothingLocator;
 
 internal static class BlacklistGroupPicker
 {
-    public static string? Pick(IWin32Window owner, IEnumerable<string> restrictions, string? current)
+    public static string? Pick(IWin32Window owner, IEnumerable<string> restrictions, string? current, string? itemTitle = null)
     {
         string[] options = restrictions
             .Append(current ?? string.Empty)
@@ -15,7 +15,7 @@ internal static class BlacklistGroupPicker
 
         using var form = new Form
         {
-            Text = "Combine blacklist groups",
+            Text = itemTitle ?? "Combine blacklist groups",
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false,
@@ -69,7 +69,8 @@ internal static class BlacklistGroupPicker
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
         layout.Controls.Add(new Label
         {
-            Text = "SELECT TWO OR MORE GROUPS\nAccess is granted when any selected group matches.",
+            Text = (itemTitle == null ? "SELECT TWO OR MORE GROUPS" : "SELECT ONE OR MORE GROUPS") +
+                "\nAccess is granted when any selected group matches.",
             Dock = DockStyle.Fill,
             ForeColor = Color.FromArgb(135, 206, 235),
             Font = new Font("Cascadia Mono", 9F, FontStyle.Bold)
@@ -78,14 +79,15 @@ internal static class BlacklistGroupPicker
         layout.Controls.Add(list, 0, 2);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
-        var combine = CreateButton("COMBINE", Color.FromArgb(100, 149, 237));
+        var combine = CreateButton(itemTitle == null ? "COMBINE" : "BLACKLIST", Color.FromArgb(100, 149, 237));
         var cancel = CreateButton("CANCEL", Color.FromArgb(40, 40, 80));
         string? result = null;
         combine.Click += (_, _) =>
         {
-            if (chosen.Count < 2)
+            if (chosen.Count < (itemTitle == null ? 2 : 1))
             {
-                MessageBox.Show(form, "Select at least two groups.", "BLRP Clothing Utility", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(form, itemTitle == null ? "Select at least two groups." : "Select at least one group.",
+                    "BLRP Clothing Utility", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             result = Combine(chosen);

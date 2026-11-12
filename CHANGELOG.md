@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.45
+
+- Clothing Locator opens and previews the streamed model and textures for each clothing number. LOD and other backup copies are skipped.
+- Use **Delete Item** to remove streamed files and free a custom YMT slot for reuse, including slots with a missing YDD. Other clothing numbers stay stable.
+- Use **Previous** and **Next** in **Preview Selected** to browse texture variants. Use **Blacklist Item** to restrict clothing that is already in the pack.
+- **Keep Local Backups** is off by default. Enable it to retain originals in `.clothing-locator-backups`. Temporary rollback copies still protect edits that update multiple files.
+
+## v1.0.44
+
+- Improved readability in Clothing Utility's Batch Previews window.
+
 ## v1.0.43
 
 - Fixed Loading Screen Tool tab colors so labels stay readable on the dark background.
