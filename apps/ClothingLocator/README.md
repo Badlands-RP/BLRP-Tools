@@ -21,6 +21,15 @@ Enter the item being searched under `CLOTHING #`. `AUTO START` shows the first
 add-on drawable number and is deliberately read-only. The GTA location and
 active FiveM game build are read automatically from `CitizenFX.ini`.
 Search results show the number of indexed YTD textures available for each model.
+When `MODEL QC` shows `CHECK TEXTURES`, hover over the cell for the affected
+files and maps. QC flags maps over 2048 pixels on either side, uncompressed
+formats, and files with over 16 MiB of graphics allocation. It checks companion
+YTDs and textures embedded in the YDD.
+
+`AUTO-OPTIMISE TEXTURES TO 2K` is checked by default for imports, replacements,
+and duplicates. It optimizes incoming YTDs, preserves their aspect ratio, and
+uses DXT1 for opaque pixels or DXT5 when alpha is present. Embedded textures
+are flagged for review.
 For an EUP repository, the scan uses the addon stream folders and skips backup
 copies. `PREVIEW SELECTED` pages through the model's matching YTDs.
 Turn on `KEEP LOCAL BACKUPS` to retain originals in

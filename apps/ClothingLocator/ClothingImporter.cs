@@ -7,6 +7,7 @@ using BCnEncoder.Shared;
 using BCnEncoder.Shared.ImageFiles;
 using CodeWalker.GameFiles;
 using CodeWalker.Utils;
+using SkiaSharp;
 
 namespace BLRP.ClothingLocator;
 
@@ -30,7 +31,8 @@ internal sealed record ClothingImportPlan(
     MCPVDrawblData? DrawableTemplate = null,
     MCComponentInfo? ComponentInfoTemplate = null,
     CPedPropMetaData? PropTemplate = null,
-    bool CopyRawAssets = false)
+    bool CopyRawAssets = false,
+    bool OptimizeTextures = false)
 {
     public bool ReusesSlot => PackDrawableIndex < ExistingCount;
     public int CountAfterImport => ExistingCount + (ReusesSlot ? 0 : 1);
@@ -51,11 +53,13 @@ internal sealed record ClothingModelQuality(
     string Details,
     long? HighPolygons = null,
     long? MediumPolygons = null,
-    long? LowPolygons = null);
+    long? LowPolygons = null,
+    IReadOnlyList<string>? TextureWarnings = null);
 
 internal static class ClothingImporter
 {
     public const int MaxDrawablesPerType = 128;
+    private const int MaxTextureDimension = 2048;
     public static IReadOnlyList<string> ShoeSounds { get; } = Array.AsReadOnly(new[]
     {
         "none",
@@ -352,8 +356,8 @@ internal static class ClothingImporter
             : BuildModel(plan);
         byte[][] textureBytes = plan.TexturePaths
             .Select((path, index) => plan.CopyRawAssets || plan.Component.IsProp
-                ? BuildDuplicateTexture(path, textureAssetNames[index])
-                : BuildTexture(path))
+                ? BuildDuplicateTexture(path, textureAssetNames[index], plan.OptimizeTextures, out _)
+                : plan.OptimizeTextures ? BuildDuplicateTexture(path, null, true, out _) : BuildTexture(path))
             .ToArray();
         string collectionDirectory = Path.Combine(Path.GetDirectoryName(plan.YmtPath)!, plan.CollectionName);
         byte[] ymtBytes = plan.ReusesSlot
@@ -603,7 +607,8 @@ internal static class ClothingImporter
         ClothingEntry target,
         string sourceModelPath,
         IReadOnlyList<string> sourceTexturePaths,
-        bool hasSkin)
+        bool hasSkin,
+        bool optimizeTextures = false)
     {
         if (target.Component.IsProp)
         {
@@ -661,7 +666,7 @@ internal static class ClothingImporter
             .ToArray();
         byte[] modelBytes = BuildDuplicateModel(sourcePath, target.Component, GetAssetName(targetPath), textureAssetNames[0]);
         byte[][] textureBytes = textureLayout
-            .Select((texture, index) => BuildDuplicateTexture(texture.Path, textureAssetNames[index]))
+            .Select((texture, index) => BuildDuplicateTexture(texture.Path, textureAssetNames[index], optimizeTextures, out _))
             .ToArray();
         byte[] ymtBytes = ReplaceComponentDrawable(
             ped,
@@ -912,14 +917,14 @@ internal static class ClothingImporter
         IReadOnlyList<string> sourceTexturePaths,
         bool optimizeCompression = false)
     {
-        foreach (string sourceTexturePath in sourceTexturePaths)
-            _ = BuildDuplicateTexture(sourceTexturePath, "blrp_preflight", optimizeCompression, out _);
+        YtdFile[] textures = sourceTexturePaths.Select(path => PrepareTexture(path, optimizeCompression)).ToArray();
         var results = new List<ClothingTextureImportResult>(sourceTexturePaths.Count);
-        foreach (string sourceTexturePath in sourceTexturePaths)
+        for (int index = 0; index < textures.Length; index++)
         {
+            string sourceTexturePath = sourceTexturePaths[index];
             try
             {
-                results.Add(ImportTexture(rootPath, target, sourceTexturePath, optimizeCompression));
+                results.Add(ImportTexture(rootPath, target, sourceTexturePath, textures[index]));
             }
             catch (Exception exception)
             {
@@ -931,11 +936,11 @@ internal static class ClothingImporter
         return results;
     }
 
-    public static ClothingTextureImportResult ImportTexture(
+    private static ClothingTextureImportResult ImportTexture(
         string rootPath,
         ClothingEntry target,
         string sourceTexturePath,
-        bool optimizeCompression = false)
+        YtdFile texture)
     {
         string fullRoot = Path.GetFullPath(rootPath);
         string fullTargetModel = Path.GetFullPath(target.FilePath);
@@ -990,7 +995,7 @@ internal static class ClothingImporter
             throw new IOException("Import target already exists: " + textureTarget);
         }
 
-        byte[] textureBytes = BuildDuplicateTexture(sourceTexturePath, assetName, optimizeCompression, out TextureFormat format);
+        byte[] textureBytes = SaveTexture(texture, assetName, out TextureFormat format);
         string collectionDirectory = Path.Combine(Path.GetDirectoryName(ymtPath)!, collection);
         byte[] ymtBytes = target.Component.IsProp
             ? AppendPropTexture(ped, collection, collectionDirectory, target.Component.Slot, target.RelativeIndex)
@@ -1438,7 +1443,7 @@ internal static class ClothingImporter
         var propEntry = new ClothingEntry(
             fixturePropModel, new FileInfo(fixturePropModel).Length, plan.Gender,
             propComponent, propPack, 0, propTextureCount);
-        ClothingTextureImportResult propResult = ImportTexture(fixtureRoot, propEntry, sourceTexture, true);
+        ClothingTextureImportResult propResult = ImportTextures(fixtureRoot, propEntry, [sourceTexture], true).Single();
         var propYtd = new YtdFile();
         propYtd.Load(File.ReadAllBytes(propResult.TexturePath));
         Texture? propTexture = propYtd.TextureDict?.Textures?.data_items?.SingleOrDefault();
@@ -1985,14 +1990,13 @@ internal static class ClothingImporter
         return HasResourceHeader(sourceBytes) ? sourceBytes : ytd.Save();
     }
 
-    private static byte[] BuildDuplicateTexture(string sourcePath, string targetName)
-        => BuildDuplicateTexture(sourcePath, targetName, false, out _);
-
     private static byte[] BuildDuplicateTexture(
         string sourcePath,
-        string targetName,
+        string? targetName,
         bool optimizeCompression,
-        out TextureFormat format)
+        out TextureFormat format) => SaveTexture(PrepareTexture(sourcePath, optimizeCompression), targetName, out format);
+
+    private static YtdFile PrepareTexture(string sourcePath, bool optimizeCompression)
     {
         YtdFile ytd = LoadYtd(sourcePath);
         TextureDictionary dictionary = ytd.TextureDict ??
@@ -2004,20 +2008,30 @@ internal static class ClothingImporter
         }
 
         Texture texture = textures[0];
-        if (optimizeCompression)
+        if (optimizeCompression && (texture.Width > MaxTextureDimension || texture.Height > MaxTextureDimension ||
+            !IsBlockCompressed(texture.Format)))
         {
-            try { texture = OptimizeTexture(texture); }
-            catch (NotSupportedException) { /* Preserve uncommon formats instead of failing the import. */ }
+            try { OptimizeTexture(texture); }
+            catch (NotSupportedException) { /* The saved asset's QC report identifies formats we could not optimize. */ }
         }
-        texture.Name = targetName;
-        texture.NameHash = JenkHash.GenHash(targetName.ToLowerInvariant());
-        textures[0] = texture;
+        return ytd;
+    }
+
+    private static byte[] SaveTexture(YtdFile ytd, string? targetName, out TextureFormat format)
+    {
+        TextureDictionary dictionary = ytd.TextureDict;
+        Texture texture = dictionary.Textures.data_items[0];
+        if (targetName != null)
+        {
+            texture.Name = targetName;
+            texture.NameHash = JenkHash.GenHash(targetName.ToLowerInvariant());
+        }
         format = texture.Format;
-        dictionary.BuildFromTextureList(textures.ToList());
+        dictionary.BuildFromTextureList([texture]);
         return ytd.Save();
     }
 
-    private static Texture OptimizeTexture(Texture texture)
+    private static void OptimizeTexture(Texture texture)
     {
         using var sourceDds = new MemoryStream(DDSIO.GetDDSFile(texture));
         ColorRgba32[] pixels = new BcDecoder().Decode(DdsFile.Load(sourceDds));
@@ -2042,17 +2056,39 @@ internal static class ClothingImporter
                 DdsPreferDxt10Header = false
             }
         };
-        DdsFile dds = encoder.EncodeToDds(rgba, texture.Width, texture.Height, PixelFormat.Rgba32);
+        int width = texture.Width;
+        int height = texture.Height;
+        if (Math.Max(width, height) > MaxTextureDimension)
+        {
+            double scale = (double)MaxTextureDimension / Math.Max(width, height);
+            int resizedWidth = Math.Max(1, (int)Math.Round(width * scale));
+            int resizedHeight = Math.Max(1, (int)Math.Round(height * scale));
+            using var source = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+            using var resized = new SKBitmap(new SKImageInfo(resizedWidth, resizedHeight, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+            System.Runtime.InteropServices.Marshal.Copy(rgba, 0, source.GetPixels(), rgba.Length);
+            if (!source.ScalePixels(resized, new SKSamplingOptions(SKCubicResampler.Mitchell)))
+                throw new InvalidDataException($"Could not resize texture {texture.Name}.");
+            rgba = resized.Bytes;
+            width = resizedWidth;
+            height = resizedHeight;
+        }
+
+        DdsFile dds = encoder.EncodeToDds(rgba, width, height, PixelFormat.Rgba32);
         using var output = new MemoryStream();
         dds.Write(output);
         Texture converted = DDSIO.GetTexture(output.ToArray()) ??
             throw new InvalidDataException($"Could not convert texture {texture.Name} to {(usesAlpha ? "DXT5" : "DXT1")}.");
         texture.Format = converted.Format;
+        texture.Width = converted.Width;
+        texture.Height = converted.Height;
         texture.Stride = converted.Stride;
         texture.Levels = converted.Levels;
         texture.Data = converted.Data;
-        return texture;
     }
+
+    private static bool IsBlockCompressed(TextureFormat format) => format is
+        TextureFormat.D3DFMT_DXT1 or TextureFormat.D3DFMT_DXT3 or TextureFormat.D3DFMT_DXT5 or
+        TextureFormat.D3DFMT_ATI1 or TextureFormat.D3DFMT_ATI2 or TextureFormat.D3DFMT_BC7;
 
     private static string FormatName(TextureFormat format) => format switch
     {
@@ -2863,7 +2899,7 @@ internal static class ClothingImporter
             throw new InvalidDataException("YMT validation detected a change to props. No files were changed.");
     }
 
-    internal static ClothingModelQuality InspectModel(string path, int textureCount)
+    internal static ClothingModelQuality InspectModel(string path, int textureCount, IReadOnlyList<string>? texturePaths = null)
     {
         try
         {
@@ -2882,12 +2918,61 @@ internal static class ClothingImporter
             bool high = drawables.All(drawable => drawable.DrawableModels?.High?.Length > 0);
             bool medium = drawables.All(drawable => drawable.DrawableModels?.Med?.Length > 0);
             bool low = drawables.All(drawable => drawable.DrawableModels?.Low?.Length > 0);
-            return SummarizeQuality(highPolygons, mediumPolygons, lowPolygons, high, medium, low, textureCount);
+            var quality = SummarizeQuality(highPolygons, mediumPolygons, lowPolygons, high, medium, low, textureCount);
+            string[] textureWarnings = InspectTextures(path, drawables, texturePaths ?? []).ToArray();
+            return textureWarnings.Length == 0 ? quality : quality with
+            {
+                Summary = quality.Summary == "OK" ? "CHECK TEXTURES" : $"CHECK TEXTURES / {quality.Summary}",
+                Details = quality.Details + "\n\n" + string.Join("\n", textureWarnings),
+                TextureWarnings = textureWarnings
+            };
         }
         catch (Exception exception)
         {
             return new ClothingModelQuality("READ ERROR", exception.Message);
         }
+    }
+
+    private static IEnumerable<string> InspectTextures(string modelPath, Drawable[] drawables, IReadOnlyList<string> paths)
+    {
+        var embedded = drawables.SelectMany(drawable => drawable.ShaderGroup?.TextureDictionary?.Textures?.data_items ?? []);
+        foreach (string warning in CheckTextureMetadata(modelPath, embedded, embedded: true)) yield return warning;
+        foreach (string path in paths)
+        {
+            Texture[]? textures = null;
+            string? readError = null;
+            try { textures = LoadYtd(path).TextureDict?.Textures?.data_items; }
+            catch (Exception ex) { readError = ex.Message; }
+            if (textures is not { Length: > 0 })
+            {
+                yield return $"{Path.GetFileName(path)}: {readError ?? "No textures found."}";
+                continue;
+            }
+            foreach (string warning in CheckTextureMetadata(path, textures, embedded: false)) yield return warning;
+        }
+    }
+
+    private static IEnumerable<string> CheckTextureMetadata(string path, IEnumerable<Texture> textures, bool embedded)
+    {
+        string file = Path.GetFileName(path);
+        foreach (Texture texture in textures)
+        {
+            bool oversized = texture.Width > MaxTextureDimension || texture.Height > MaxTextureDimension;
+            bool uncompressed = !IsBlockCompressed(texture.Format);
+            if (!oversized && !uncompressed) continue;
+            string reason = oversized && uncompressed ? "over 2048 px and uncompressed format" :
+                oversized ? "over 2048 px" : "uncompressed format";
+            yield return $"{file}{(embedded ? " / embedded" : "")} / {texture.Name}: " +
+                $"{texture.Width}×{texture.Height} {texture.Format.ToString().Replace("D3DFMT_", "")} ({reason})";
+        }
+
+        byte[] header = new byte[16];
+        using FileStream stream = File.OpenRead(path);
+        if (stream.ReadAtLeast(header, header.Length, false) != header.Length ||
+            BitConverter.ToUInt32(header, 0) != 0x37435352) yield break;
+        int graphicsSize = RpfResourceFileEntry.GetSizeFromFlags(BitConverter.ToUInt32(header, 12));
+        if (graphicsSize > 16 * 1024 * 1024)
+            yield return $"{file}: {graphicsSize / (1024d * 1024):0.##} MiB graphics allocation (over 16 MiB).";
     }
 
     private static ClothingModelQuality SummarizeQuality(
@@ -2923,6 +3008,16 @@ internal static class ClothingImporter
         bool summariesValid = good.Summary == "OK" &&
             bad.Summary == "OVER 20K / NO MED / NO LOW / NO YTD" &&
             bad.HighPolygons == 20_001 && good.MediumPolygons == 9_000 && good.LowPolygons == 3_000;
+        const int oversizedWidth = 4096;
+        byte[] rgba = Enumerable.Repeat((byte)128, oversizedWidth * 16 * 4).ToArray();
+        var encoder = new BcEncoder(CompressionFormat.Bc3);
+        encoder.OutputOptions.DdsPreferDxt10Header = false;
+        using var dds = new MemoryStream();
+        encoder.EncodeToDds(rgba, oversizedWidth, 16, PixelFormat.Rgba32).Write(dds);
+        Texture oversized = DDSIO.GetTexture(dds.ToArray());
+        OptimizeTexture(oversized);
+        summariesValid &= oversized.Width == MaxTextureDimension && oversized.Height == 8 &&
+            oversized.Format == TextureFormat.D3DFMT_DXT5 && oversized.Levels > 1;
         string testRoot = Path.Combine(Path.GetTempPath(), "blrp-clothing-root-test");
         string testAddon = Path.Combine(testRoot, "clothing_addon_1");
         summariesValid &= ResolveAddonRoot(testRoot, 1).Equals(Path.GetFullPath(testAddon), StringComparison.OrdinalIgnoreCase) &&

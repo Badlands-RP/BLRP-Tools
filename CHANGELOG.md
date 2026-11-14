@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.46
+
+- Clothing Utility 1.9.4 automatically optimises incoming YTDs during import, replacement, and duplication. Oversized maps are resized to fit within 2048 pixels while preserving aspect ratio. Re-encoding uses DXT1 for opaque maps and DXT5 when alpha is present.
+- Model QC flags oversized and uncompressed maps, including textures embedded in YDDs, and graphics allocations over 16 MiB. Imports surface remaining issues for review.
+
 ## v1.0.45
 
 - Clothing Locator opens and previews the streamed model and textures for each clothing number. LOD and other backup copies are skipped.

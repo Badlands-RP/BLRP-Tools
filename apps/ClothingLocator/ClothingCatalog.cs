@@ -260,7 +260,7 @@ internal sealed class ClothingCatalog
         foreach (ClothingEntry entry in _entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            ClothingModelQuality quality = ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount);
+            ClothingModelQuality quality = InspectQuality(entry);
             if (quality.Summary != "OK") report.Add((entry, quality));
         }
         return report
@@ -270,6 +270,9 @@ internal sealed class ClothingCatalog
             .ThenBy(item => item.Item1.FilePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }, cancellationToken);
+
+    public ClothingModelQuality InspectQuality(ClothingEntry entry) =>
+        ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount, FindTextures(entry));
 
     public async Task<IReadOnlyList<ClothingEntry>> FindDuplicatesAsync(
         string selectedFile,

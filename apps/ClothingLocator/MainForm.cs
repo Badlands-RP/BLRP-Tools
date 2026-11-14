@@ -33,6 +33,13 @@ internal sealed class MainForm : Form
     private readonly TextBox _businessSearch = CreateTextBox();
     private IReadOnlyList<string> _businessOptions = [];
     private readonly DataGridView _results = new();
+    private readonly CheckBox _optimizeImportedTextures = new()
+    {
+        Text = "AUTO-OPTIMISE TEXTURES TO 2K",
+        Checked = true,
+        Dock = DockStyle.Fill,
+        ForeColor = Color.LightSkyBlue
+    };
     private readonly ComboBox _qualityGender = CreateComboBox();
     private readonly ComboBox _qualityComponent = CreateComboBox();
     private readonly ComboBox _qualityPack = CreateComboBox();
@@ -391,6 +398,8 @@ internal sealed class MainForm : Form
         _blacklistDrawable.Margin = new Padding(4, 1, 4, 5);
         layout.Controls.Add(_deleteDrawable, 1, 1);
         layout.Controls.Add(_blacklistDrawable, 3, 1);
+        layout.Controls.Add(_optimizeImportedTextures, 4, 1);
+        layout.SetColumnSpan(_optimizeImportedTextures, 3);
 
         ConfigureGrid();
         Control qualityFilters = BuildQualityFilters();
@@ -694,7 +703,7 @@ internal sealed class MainForm : Form
         try
         {
             ClothingEntry refreshed = catalog.RefreshModel(entry.FilePath);
-            ClothingModelQuality quality = await Task.Run(() => ClothingImporter.InspectModel(refreshed.FilePath, refreshed.TextureCount));
+            ClothingModelQuality quality = await Task.Run(() => catalog.InspectQuality(refreshed));
             RefreshResultQuality(refreshed, quality);
             SetStatus("REVIEWED OPTIMISATION APPLIED" + BackupStatus(dialog.BackupPath), false);
         }
@@ -844,6 +853,7 @@ internal sealed class MainForm : Form
 
             string? business = SelectedBusiness;
             SetBusy(true, "IMPORTING MODEL, TEXTURES AND YMT ENTRY...");
+            plan = plan with { OptimizeTextures = _optimizeImportedTextures.Checked };
             await Task.Run(() => ClothingImporter.Import(plan));
             string? blacklistError = business == null ? null : await TryBlacklistAsync(() =>
                 ClothingBlacklist.AddDrawable(root, plan.Gender, plan.Component, plan.GlobalIndex, business));
@@ -860,6 +870,7 @@ internal sealed class MainForm : Form
                 BlacklistStatus(business, blacklistError),
                 plan.CountAfterImport >= 120 || blacklistError != null);
             ShowBlacklistWarning(blacklistError);
+            ShowTextureWarnings();
         }
         catch (Exception exception)
         {
@@ -933,7 +944,8 @@ internal sealed class MainForm : Form
                 textureDialog.FileNames,
                 target.TextureCount,
                 _business.Items.Cast<string>().Skip(1).ToArray(),
-                drawableRestriction);
+                drawableRestriction,
+                _optimizeImportedTextures.Checked);
             if (assignmentsDialog.ShowDialog(this) != DialogResult.OK)
             {
                 return;
@@ -978,6 +990,7 @@ internal sealed class MainForm : Form
                     : blacklistError == null ? $" / {requestedBlacklists} BLACKLISTED" : " / BLACKLIST FAILED"),
                 blacklistError != null);
             ShowTextureImportSummary(results, assignments, blacklistErrors, drawableRestriction);
+            ShowTextureWarnings();
         }
         catch (Exception exception)
         {
@@ -1018,6 +1031,7 @@ internal sealed class MainForm : Form
 
             string? business = SelectedBusiness;
             SetBusy(true, $"DUPLICATING {source.Component.Code.ToUpperInvariant()} INTO {targetComponent.Code.ToUpperInvariant()}...");
+            plan = plan with { OptimizeTextures = _optimizeImportedTextures.Checked };
             await Task.Run(() => ClothingImporter.Import(plan));
             string? blacklistError = business == null ? null : await TryBlacklistAsync(() =>
                 ClothingBlacklist.AddDrawable(
@@ -1037,6 +1051,7 @@ internal sealed class MainForm : Form
                 BlacklistStatus(business, blacklistError),
                 plan.CountAfterImport >= 120 || blacklistError != null);
             ShowBlacklistWarning(blacklistError);
+            ShowTextureWarnings();
         }
         catch (Exception exception)
         {
@@ -1109,12 +1124,14 @@ internal sealed class MainForm : Form
         try
         {
             SetBusy(true, $"REPLACING {target.Component.Code.ToUpperInvariant()} #{globalIndex}...");
+            bool optimizeTextures = _optimizeImportedTextures.Checked;
             string? backupPath = await Task.Run(() => ClothingImporter.ReplaceClothing(
                 _catalog.RootPath,
                 target,
                 modelDialog.FileName,
                 textureDialog.FileNames,
-                hasSkin));
+                hasSkin,
+                optimizeTextures));
             _catalog = await ClothingCatalog.LoadAsync(_catalog.RootPath);
             ClothingEntry? refreshed = _catalog.FindByGlobalIndex(
                 target.Gender,
@@ -1124,6 +1141,7 @@ internal sealed class MainForm : Form
             ShowResults(refreshed == null ? [] : [refreshed]);
             SetStatus($"REPLACED {target.Component.Code.ToUpperInvariant()} #{globalIndex} / {textureDialog.FileNames.Length} TEXTURES" +
                 BackupStatus(backupPath), false);
+            ShowTextureWarnings();
         }
         catch (Exception exception)
         {
@@ -1586,7 +1604,7 @@ internal sealed class MainForm : Form
             string relativePath = Path.GetRelativePath(_catalog.RootPath, entry.FilePath);
             ClothingModelQuality quality = qualityByPath?.GetValueOrDefault(entry.FilePath)
                 ?? (File.Exists(entry.FilePath)
-                    ? ClothingImporter.InspectModel(entry.FilePath, entry.TextureCount)
+                    ? _catalog.InspectQuality(entry)
                     : new ClothingModelQuality("MISSING YDD", "This slot still has YMT metadata. Delete Item can make it reusable."));
             _gitHistory.TryGetValue(Path.GetFullPath(entry.FilePath), out GitFileChange? git);
             int rowIndex = _results.Rows.Add(
@@ -1633,9 +1651,18 @@ internal sealed class MainForm : Form
         row.Cells[7].Value = quality.HighPolygons;
         row.Cells[8].Value = quality.Summary;
         row.Cells[8].ToolTipText = quality.Details;
+        row.Cells[8].Tag = quality.TextureWarnings;
         row.Cells[8].Style.ForeColor = quality.Summary == "OK"
             ? Color.FromArgb(120, 220, 150)
             : Color.FromArgb(255, 180, 50);
+    }
+
+    private void ShowTextureWarnings()
+    {
+        if (_results.Rows.Count != 1 || _results.Rows[0].Cells[8].Tag is not IReadOnlyList<string> warnings) return;
+        string remaining = warnings.Count > 5 ? $"\n\nSee Model QC for all {warnings.Count} warnings." : "";
+        MessageBox.Show(this, string.Join("\n\n", warnings.Take(5)) + remaining,
+            "Imported item needs texture review", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     private static void PopulateQualityFilter(ComboBox filter, string all, IEnumerable<object> options)

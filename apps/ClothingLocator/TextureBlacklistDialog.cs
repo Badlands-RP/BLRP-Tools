@@ -17,7 +17,8 @@ internal sealed class TextureBlacklistDialog : Form
         IReadOnlyList<string> texturePaths,
         int startingTextureIndex,
         IReadOnlyList<string> businesses,
-        string? drawableRestriction)
+        string? drawableRestriction,
+        bool optimizeTextures = true)
     {
         _texturePaths = texturePaths;
         _startingTextureIndex = startingTextureIndex;
@@ -52,7 +53,8 @@ internal sealed class TextureBlacklistDialog : Form
             drawableRestriction == null ? Color.FromArgb(180, 200, 215) : Color.FromArgb(255, 180, 50),
             FontStyle.Bold), 0, 1);
         layout.Controls.Add(BuildApplyAll(businesses), 0, 2);
-        _optimizeCompression.Text = "OPTIMISE: DXT1 FOR OPAQUE / DXT5 WHEN ALPHA IS DETECTED";
+        _optimizeCompression.Text = "AUTO-OPTIMISE TO 2K / DXT1 OPAQUE, DXT5 WITH ALPHA";
+        _optimizeCompression.Checked = optimizeTextures;
         _optimizeCompression.Dock = DockStyle.Fill;
         _optimizeCompression.ForeColor = Color.FromArgb(135, 206, 235);
         _optimizeCompression.Font = new Font("Cascadia Mono", 8.5F, FontStyle.Bold);
