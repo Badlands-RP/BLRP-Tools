@@ -23,6 +23,41 @@ internal static class Program
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length >= 5 && args[0] == "--preview-check")
+        {
+            var catalog = VehicleCatalog.Scan(args[1], default);
+            string output = Path.GetFullPath(args[3]);
+            Directory.CreateDirectory(output);
+            int failures = 0;
+            foreach (string name in args[4..])
+            {
+                var car = catalog.Vehicles.Single(v => v.Model == name);
+                Console.WriteLine($"MODEL {name}: {car.Status}; model files {car.ModelPaths.Length}; textures {car.TextureDictionary}");
+                var originals = car.MetadataPaths.Concat(car.ModelPaths).Concat(car.TexturePaths).Distinct().ToDictionary(p => p, p => SHA256.HashData(File.ReadAllBytes(p)));
+                var existing = ExistingLiveries.Load(catalog, car).FirstOrDefault(l => l.CanReplace);
+                if (existing != null) foreach (string path in existing.Paths) originals[path] = SHA256.HashData(File.ReadAllBytes(path));
+                string artwork = Path.Combine(output, name + "-art.png");
+                using (var image = new Bitmap(4, 4)) { using var graphics = Graphics.FromImage(image); graphics.Clear(Color.Red); image.Save(artwork); }
+                foreach (int mode in new[] { 0, 1, 2 })
+                {
+                    if (mode > 0 && existing == null) continue;
+                    string description = mode == 0 ? "vehicle" : mode == 1 ? "livery" : "pending";
+                    LiveryImport? pending = mode != 2 ? null : new(car, existing!.Kit, new VehicleTemplate(existing.Paths.Single(), existing.Mod),
+                        LiveryAssetBuilder.SuggestTexture(existing.Paths.Single())!, artwork, "Preview check", "", "", true);
+                    try
+                    {
+                        using var preview = await VehiclePreviewAssets.Prepare(catalog, car, pending, args[2], "mp2023_02", default,
+                            new InlineProgress(message => { if (message.StartsWith("Resolved")) Console.WriteLine(message); }), mode == 1 ? existing : null);
+                        var verified = new YftFile(); verified.Load(File.ReadAllBytes(preview.ModelPath));
+                        Check(verified.Fragment?.Drawable != null, $"{name} {description} stages and reloads natively");
+                        File.Copy(preview.ModelPath, Path.Combine(output, name + "-" + description + ".yft"), true);
+                    }
+                    catch (Exception ex) { failures++; Console.WriteLine($"FAIL {name} {description}: {ex}"); }
+                }
+                Check(originals.All(p => SHA256.HashData(File.ReadAllBytes(p.Key)).SequenceEqual(p.Value)), name + " preview keeps repository sources unchanged");
+            }
+            return failures == 0 ? 0 : 1;
+        }
         if (args.Length == 2 && args[0] == "--modkit-real-check")
         {
             var catalog = VehicleCatalog.Scan(args[1], default);
@@ -59,6 +94,10 @@ internal static class Program
             NamingChecks();
             ModkitChecks();
             RoutingChecks();
+            ReplacementChecks();
+            Check(PreviewMaterialSupport.LiveryShaderMatches("vehicle_paint4_emissive", "vehicle_paint4_emissive.sps", "vehicle_paint4", "vehicle_paint4.sps"), "native Blimp3 livery matches its explicit emissive vehicle-paint counterpart");
+            Check(!PreviewMaterialSupport.LiveryShaderMatches("vehicle_paint4_emissive", "vehicle_paint4_emissive.sps", "other", "normal.sps"), "emissive paint compatibility cannot match unrelated shader families");
+            Check(!PreviewMaterialSupport.LiveryShaderMatches("vehicle_paint4", "vehicle_paint4.sps", "different_material", "vehicle_paint4.sps"), "ordinary material matching still requires the actual shader identity");
             Reject(() => PreviewMaterialSupport.Validate(XDocument.Parse("<Fragment><Shaders><Item><FileName>unsupported_custom_shader.sps</FileName></Item></Shaders></Fragment>")), "unsupported preview materials cannot silently use generic rendering");
             Fixture(root);
             VehicleCatalog catalog = VehicleCatalog.Scan(root, default);
@@ -195,6 +234,16 @@ internal static class Program
                     var car = real.Vehicles.Single(car => car.Model == previewModel);
                     using var carOnly = await VehiclePreviewAssets.Prepare(real, car, null, args[1], "mp2023_02", default, new InlineProgress(Console.WriteLine));
                     Check(File.Exists(carOnly.ModelPath), "real vehicle preview stages and reloads without a queued livery");
+                    var existing = ExistingLiveries.Load(real, car).First(l => l.CanReplace);
+                    Console.WriteLine("EXISTING " + existing);
+                    string existingPath = existing.Paths.Single();
+                    byte[] originalAsset = File.ReadAllBytes(existingPath);
+                    using var existingPreview = await VehiclePreviewAssets.Prepare(real, car, null, args[1], "mp2023_02", default, new InlineProgress(Console.WriteLine), existing);
+                    Check(existingPreview.Description.Contains("existing livery bindings") && existingPreview.Description.Contains(existing.DisplayName), "real existing artwork previews on the actual model with its Lua display name");
+                    Check(File.ReadAllBytes(existingPath).SequenceEqual(originalAsset), "real existing livery preview leaves its source YFT untouched");
+                    var realReplacement = new LiveryImport(car, existing.Kit, new VehicleTemplate(existingPath, existing.Mod), LiveryAssetBuilder.SuggestTexture(existingPath)!, image, existing.DisplayName, "", "", true, Replacement: existing);
+                    using var replaceReview = workflow.Prepare(real, [realReplacement], default);
+                    Check(replaceReview.StagedFiles.Count == 1 && replaceReview.Items[0].Destination == existingPath && replaceReview.Items[0].Slot == existing.Slot && File.ReadAllBytes(existingPath).SequenceEqual(originalAsset), "real replacement review builds only the chosen YFT in temporary staging");
                     var realKit = car.Kits.Single();
                     var realTemplate = args.Length > 3
                         ? real.Templates(realKit).Single(template => Path.GetFileName(template.Path).Equals(args[3], StringComparison.OrdinalIgnoreCase))
@@ -511,6 +560,51 @@ internal static class Program
                     Check(rows.Take(2).All(row => row.Completed && row.Status.StartsWith("Exported")), "automatic refresh preserves completed queue results");
                     await Call("Install");
                     Check(rows.All(row => row.Completed) && File.Exists(Path.Combine(rows[2].ExportFolder, "testcar_livery10.yft")), "a second export succeeds without re-exporting completed rows");
+                    type.GetMethod("AddImages", flags)!.Invoke(form, new object[] { new[] { Path.Combine(root, "art.png") } });
+                    grid.CurrentCell = grid.Rows[3].Cells["LiveryName"];
+                    Field<LiveryTabs>("tabs").SelectedIndex = 3;
+                    type.GetMethod("UpdateAdvanced", flags)!.Invoke(form, null);
+                    for (int attempt = 0; Field<LiveryPicker>("replacements").Choices.Count == 0 && attempt < 100; attempt++) await Task.Delay(20);
+                    Field<CheckBox>("replaceExisting").Checked = true;
+                    Field<LiveryPicker>("replacements").Select(Field<LiveryPicker>("replacements").Choices[0].Key);
+                    Check(rows[3].ReplaceExisting && rows[3].ReplacementKey.Length > 0 && !Field<CheckBox>("convertModkit").Enabled && !Field<TextBox>("outputName").Enabled, "Advanced selects an existing livery for only the current row and disables incompatible overrides");
+                    Check(Field<LiveryPicker>("replacements").SelectedChoice!.ToString().Contains("Original"), "Advanced replacement choices show the existing Lua name");
+                    var beforeReplacement = Snapshot(root);
+                    Field<TextBox>("accessFile").Text = "missing.lua";
+                    await Call("Review");
+                    var replacementPlan = Field<LiveryPlan>("plan");
+                    Check(replacementPlan.StagedFiles.Count == 1 && replacementPlan.Items[0].Name == "testcar_livery7" && !rows[3].AutomaticFolder, "workspace reviews YFT-only replacement without a Lua or export-folder prompt");
+                    await Call("Install");
+                    Check(rows[3].Completed && rows[3].Status == "Replaced · YFT only" && beforeReplacement.Where(f => !f.Key.EndsWith("testcar_livery7.yft")).All(f => File.ReadAllBytes(f.Key).SequenceEqual(f.Value)), "workspace replacement exports in place and preserves every unrelated file");
+                    var car = Field<VehicleCatalog>("catalog").Vehicles.Single(v => v.Model == "testcar");
+                    var existing = ExistingLiveries.Load(Field<VehicleCatalog>("catalog"), car);
+                    var preview = Field<VehiclePreviewPanel>("preview");
+                    preview.SetExistingLiveries(car, existing, true, false, null);
+                    var choices = (LiveryPicker)typeof(VehiclePreviewPanel).GetField("existingChoices", flags)!.GetValue(preview)!;
+                    choices.Select(existing[0].Key);
+                    Check(Field<ExistingLivery>("previewExisting").Model == "testcar_livery7" && Field<bool>("previewVehicleOnly"), "preview dropdown selects actual existing artwork for the displayed car");
+                    choices.Select("pending");
+                    Check(!Field<bool>("previewVehicleOnly") && type.GetField("previewExisting", flags)!.GetValue(form) == null, "preview dropdown switches back to pending queue artwork");
+                    Field<System.Windows.Forms.Timer>("previewDebounce").Stop();
+                    // A base-game slot has metadata but no repository YFT. Keep it visible with an explanation.
+                    var cols = XDocument.Load(car.Kits[0].Path);
+                    var originalMod = cols.Descendants("Kits").Elements("Item").Single(i => i.Element("kitName")?.Value == car.Kits[0].Name).Element("visibleMods")!;
+                    originalMod.Add(new XElement("Item", new XElement("modelName", "game_only_art"), new XElement("modShopLabel", "GAME_ONLY"), new XElement("type", "VMT_LIVERY_MOD")));
+                    cols.Save(car.Kits[0].Path);
+                    Field<LiveryTabs>("tabs").SelectedIndex = 3;
+                    await Call("Scan");
+                    for (int attempt = 0; !Field<LiveryPicker>("replacements").Choices.Any(c => c.Existing?.Model == "game_only_art") && attempt < 100; attempt++) await Task.Delay(20);
+                    var picker = Field<LiveryPicker>("replacements");
+                    Check(picker.Choices.Any(c => c.Existing?.Model == "game_only_art" && c.Badge == "Preview only"), "replacement picker includes game-only slots instead of silently hiding them");
+                    picker.Select(picker.Choices.Single(c => c.Existing?.Model == "game_only_art").Key);
+                    Check(Field<Label>("replacementHint").Text.Contains("no YFT") && rows[3].Status == "Choose a replaceable repository YFT", "selecting a game-only slot explains exactly why it cannot be overwritten");
+                    Check(Field<Label>("replacementTarget").Text.Contains("testcar") && Field<Label>("replacementTarget").Text.Contains("art.png"), "replacement picker identifies its queue car and artwork explicitly");
+                    var otherCar = Field<VehicleCatalog>("catalog").Vehicles.Single(v => v.Model == "othercar");
+                    Field<ListBox>("vehicles").SelectedItem = otherCar;
+                    Check(Field<Label>("replacementTarget").Text.Contains("testcar") && picker.Choices.All(c => c.Existing!.VehicleKey == rows[3].Vehicle), "previewing another sidebar car cannot silently redirect a queued replacement");
+                    picker.Select(picker.Choices.Single(c => c.Existing?.Model == "testcar_livery7").Key);
+                    Check(rows[3].ReplacementKey == picker.SelectedChoice!.Key && rows[3].Template!.Path.EndsWith("testcar_livery7.yft"), "replacement selection remains stable when switching back from an unavailable slot");
+                    Field<System.Windows.Forms.Timer>("previewDebounce").Stop();
                     result = 0;
                 }
                 catch (Exception ex) { Console.Error.WriteLine(ex); }
@@ -518,6 +612,87 @@ internal static class Program
             };
             Application.Run(form);
             return result;
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static void ReplacementChecks()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "BLRP-Replacement-Checks-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Fixture(root);
+            var catalog = VehicleCatalog.Scan(root, default);
+            var vehicle = catalog.Vehicles.Single(v => v.Model == "testcar");
+            var selected = ExistingLiveries.Load(catalog, vehicle).Single();
+            Check(selected.DisplayName == "Original" && selected.Slot == 0 && selected.Model == "testcar_livery7", "existing dropdown joins the Lua display name to the actual modkit slot and filename");
+            var names = ExistingLiveries.DisplayNames("-- AddTextEntry('BAD', 'Hidden')\nAddTextEntry('A', 'Driver\\'s Art') AddTextEntry([=[B]=], [[Long name]])");
+            Check(names.Count == 2 && names[0].Value == "Driver's Art" && names[1].Value == "Long name", "existing names decode Lua strings and ignore commented calls");
+            var baseline = Snapshot(root);
+            string target = selected.Paths.Single();
+            string image = Path.Combine(root, "art.png");
+            using (var artwork = new Bitmap(4, 4)) { using var graphics = Graphics.FromImage(artwork); graphics.Clear(Color.Blue); artwork.Save(image); }
+            baseline = Snapshot(root);
+            var replacement = new LiveryImport(vehicle, selected.Kit, new VehicleTemplate(target, selected.Mod), "testcar_livery7", image, selected.DisplayName, "", "", false, Replacement: selected);
+            var workflow = new LiveryBatchWorkflow();
+            using (var plan = workflow.Prepare(catalog, [replacement], default, accessFile: "missing.lua"))
+            {
+                Check(plan.StagedFiles.Count == 1 && plan.StagedFiles.ContainsKey(target) && plan.Items[0].Slot == 0 && plan.Items[0].Name == selected.Model, "replacement stages only the original YFT without resolving Lua or allocating a slot");
+                Check(Same(root, baseline) && plan.Review().Contains("Unchanged (Lua is not edited)") && plan.Review().EndsWith("None"), "replacement review preserves repository bytes and reports no metadata writes");
+                var before = new YftFile(); before.Load(baseline[target]);
+                var after = new YftFile(); after.Load(File.ReadAllBytes(plan.Items[0].StagedAsset));
+                var originalXml = XDocument.Parse(YftXml.GetXml(before));
+                var replacedXml = XDocument.Parse(YftXml.GetXml(after));
+                foreach (var xml in new[] { originalXml, replacedXml })
+                    foreach (var item in xml.Descendants("TextureDictionary").Elements("Item"))
+                        foreach (string element in new[] { "Width", "Height", "MipLevels", "Format", "FileName" }) item.Element(element)?.Remove();
+                Check(XNode.DeepEquals(originalXml, replacedXml), "replacement preserves mesh, shader, fragment, bone and texture identities after native reload");
+                workflow.Install(plan, default);
+                Check(!File.ReadAllBytes(target).SequenceEqual(baseline[target]) && baseline.Where(f => f.Key != target).All(f => File.ReadAllBytes(f.Key).SequenceEqual(f.Value)), "replacement changes the selected artwork while every Lua, metadata and other asset stays byte-identical");
+            }
+            Restore(root, baseline);
+            Reject(() => workflow.Prepare(catalog, [replacement, replacement], default), "two artwork rows cannot overwrite the same YFT in one export");
+            using (var plan = workflow.Prepare(catalog, [replacement], default))
+            {
+                using var cancellation = new CancellationTokenSource();
+                Reject(() => workflow.Install(plan, cancellation.Token, new InlineProgress(_ => cancellation.Cancel())), "replacement cancellation is reported");
+                Check(Same(root, baseline), "cancelled replacement restores the original YFT bytes");
+            }
+            using (var plan = workflow.Prepare(catalog, [replacement], default))
+            {
+                File.AppendAllText(target, "changed");
+                Reject(() => workflow.Install(plan, default), "a YFT changed after review cannot be replaced");
+            }
+            Restore(root, baseline);
+            using (var plan = workflow.Prepare(catalog, [replacement, replacement with { Replacement = null, DisplayName = "New" }], default))
+            {
+                Check(plan.Items.Select(i => i.Slot).SequenceEqual(new[] { 0, 1 }), "mixed replacement and creation keeps the old slot and allocates only one new slot");
+                workflow.Install(plan, default);
+                Check(XDocument.Load(selected.Kit.Path).Descendants("Kits").Elements("Item").Single(i => i.Element("kitName")?.Value == selected.Kit.Name).Element("visibleMods")!.Elements("Item").Count(i => i.Element("type")?.Value == "VMT_LIVERY_MOD") == 2, "mixed export adds one mod entry without duplicating the replaced entry");
+            }
+            Restore(root, baseline);
+            File.AppendAllText(selected.Kit.Path, "<!--changed-->");
+            // XML outside the kit is harmless; changing the selected mod itself is stale.
+            var cols = XDocument.Load(selected.Kit.Path);
+            cols.Descendants("modShopLabel").Single(e => e.Value == "OLD").Value = "CHANGED";
+            cols.Save(selected.Kit.Path);
+            Reject(() => workflow.Prepare(catalog, [replacement], default), "replacement rejects metadata that changed since scanning");
+            Restore(root, baseline);
+            string preview = Path.Combine(root, "preview.yft");
+            LiveryAssetBuilder.CopyForPreview(target, replacement.Texture, "preview_texture", preview, default);
+            var source = new YftFile(); source.Load(baseline[target]);
+            var staged = new YftFile(); staged.Load(File.ReadAllBytes(preview));
+            Check(source.Fragment.Drawable.ShaderGroup.TextureDictionary.Textures.data_items[0].Data.FullData.SequenceEqual(staged.Fragment.Drawable.ShaderGroup.TextureDictionary.Textures.data_items[0].Data.FullData) && File.ReadAllBytes(target).SequenceEqual(baseline[target]), "existing preview copies original compressed artwork without changing or re-encoding its source");
+            File.Delete(preview);
+            string lua = baseline.Keys.Single(p => p.EndsWith("blrp_custom_liveries.lua"));
+            File.WriteAllText(lua, "this is broken Lua (");
+            using (var plan = workflow.Prepare(catalog, [replacement], default)) Check(plan.StagedFiles.Count == 1, "YFT-only replacement works even when unrelated Lua cannot be parsed");
+            Restore(root, baseline);
+            string duplicate = Path.Combine(root, "resources", "duplicate", Path.GetFileName(target));
+            Directory.CreateDirectory(Path.GetDirectoryName(duplicate)!); File.Copy(target, duplicate);
+            var ambiguousCatalog = VehicleCatalog.Scan(root, default);
+            Check(!ExistingLiveries.Load(ambiguousCatalog, ambiguousCatalog.Vehicles.Single(v => v.Model == "testcar")).Single().CanReplace, "duplicate filenames cannot be selected as a replacement target");
         }
         finally { Directory.Delete(root, true); }
     }
@@ -652,6 +827,10 @@ internal static class Program
         Texture original = before.Fragment.Drawable.ShaderGroup.TextureDictionary.Textures.data_items.Single(texture => texture.Name == "larger_unrelated");
         Texture retained = after.Fragment.Drawable.ShaderGroup.TextureDictionary.Textures.data_items.Single(texture => texture.Name == "larger_unrelated");
         Check(original.Data.FullData.SequenceEqual(retained.Data.FullData) && retained.Width == 8, "non-target embedded texture payload survives native compilation unchanged");
+        string replacement = Path.Combine(work, "replacement.yft");
+        LiveryAssetBuilder.Build(multiple, "testcar_livery7", image, "original_filename", replacement, false, default, preserveIdentities: true);
+        var replaced = new YftFile(); replaced.Load(File.ReadAllBytes(replacement));
+        Check(replaced.Fragment.Drawable.ShaderGroup.TextureDictionary.Textures.data_items.Single(t => t.Name == original.Name).Data.FullData.SequenceEqual(original.Data.FullData) && replaced.Fragment.Name == before.Fragment.Name, "YFT-only replacement retains non-target textures and original fragment names");
         Directory.Delete(work, true);
     }
 

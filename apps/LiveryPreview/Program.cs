@@ -36,12 +36,13 @@ internal sealed class PreviewHost : Form
 {
     private readonly RenderSurface surface = new();
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 150 };
-    private readonly CheckedListBox bodies = new() { Dock = DockStyle.Right, Width = 170, CheckOnClick = true };
+    private SceneSettingsForm? settings;
     private readonly IntPtr parent;
     private readonly int owner;
     private readonly string command;
     private readonly string status;
     private string loaded = "";
+    private string loadedVehicle = "";
     private DateTime commandTime;
 
     public PreviewHost(IntPtr parent, int owner, string command, string status)
@@ -53,7 +54,6 @@ internal sealed class PreviewHost : Form
         BackColor = Color.FromArgb(22, 22, 35);
         ForeColor = Color.White;
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 62, Padding = new Padding(10), WrapContents = false };
-        var settings = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 260, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(16), Visible = false };
         LiveryButton Button(string title, Action action)
         {
             var button = new LiveryButton { Text = title };
@@ -66,78 +66,20 @@ internal sealed class PreviewHost : Form
         angles.SelectedIndex = 0;
         toolbar.Controls.Add(angles);
         toolbar.Controls.Add(Button("Reset view", () => surface.Preset("Reset")));
-        toolbar.Controls.Add(Button("Scene settings", () => settings.Visible = !settings.Visible));
-        var alpha = new CheckBox { Text = "Transparent screenshots", AutoSize = true };
+        toolbar.Controls.Add(Button("Scene settings", OpenSceneSettings));
         var save = Button("Save screenshot", () =>
         {
             using var dialog = new SaveFileDialog { Filter = "PNG image|*.png", FileName = "livery-preview.png" };
-            if (dialog.ShowDialog(this) == DialogResult.OK) surface.Screenshot(dialog.FileName, alpha.Checked);
+            if (dialog.ShowDialog(this) == DialogResult.OK) surface.Screenshot(dialog.FileName, surface.ExportTransparent);
         });
         save.Primary = true;
         toolbar.Controls.Add(save);
-        settings.Controls.Add(new Label { Text = "LIGHTING", AutoSize = true });
-        var lighting = new ComboBox { Width = 215, DropDownStyle = ComboBoxStyle.DropDownList };
-        lighting.Items.AddRange(new object[] { "Studio", "Daylight", "Soft", "Night" });
-        lighting.SelectedIndexChanged += (_, _) => surface.Lighting(lighting.Text);
-        lighting.SelectedIndex = 0;
-        settings.Controls.Add(lighting);
-        void Slider(string title, int maximum, int value, Action<int> change)
-        {
-            settings.Controls.Add(new Label { Text = title, AutoSize = true, Margin = new Padding(0, 12, 0, 0) });
-            var slider = new TrackBar { Minimum = 0, Maximum = maximum, Value = value, Width = 215, Height = 32, TickStyle = TickStyle.None };
-            slider.ValueChanged += (_, _) => change(slider.Value);
-            settings.Controls.Add(slider);
-        }
-        Slider("Direction", 360, 130, value => surface.Azimuth = value * MathFCompat.Pi / 180);
-        Slider("Elevation", 90, 40, value => surface.Elevation = value * MathFCompat.Pi / 180);
-        Slider("Intensity", 250, 100, value => surface.Intensity = value / 100f);
-        Slider("Ambient light", 150, 50, value => surface.Ambient = value / 100f);
-        var shadows = new CheckBox { Text = "Shadows", Checked = true, AutoSize = true };
-        shadows.CheckedChanged += (_, _) => surface.Shadows = shadows.Checked;
-        settings.Controls.Add(shadows);
-        settings.Controls.Add(new Label { Text = "BACKGROUND", AutoSize = true, Margin = new Padding(0, 16, 0, 6) });
-        var background = new ComboBox { Width = 215, DropDownStyle = ComboBoxStyle.DropDownList };
-        background.Items.AddRange(new object[] { "Dark studio", "Light studio", "Solid colour", "Image…", "Transparent" });
-        background.SelectedIndexChanged += (_, _) =>
-        {
-            try
-            {
-                if (background.Text == "Image…")
-                {
-                    using var dialog = new OpenFileDialog { Filter = "Background image|*.png;*.jpg;*.jpeg;*.bmp" };
-                    if (dialog.ShowDialog(this) == DialogResult.OK) surface.SetBackgroundImage(dialog.FileName);
-                }
-                else
-                {
-                    Color colour = background.Text == "Light studio" ? Color.FromArgb(195, 201, 211) : LiveryTheme.Background;
-                    if (background.Text == "Solid colour")
-                    {
-                        using var dialog = new ColorDialog();
-                        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                        colour = dialog.Color;
-                    }
-                    surface.SetBackground(colour, background.Text == "Transparent");
-                }
-            }
-            catch (Exception ex) { Report(ex); }
-        };
-        settings.Controls.Add(background); background.SelectedIndex = 0;
-        settings.Controls.Add(Button("Paint colour (approx.)", () =>
-        {
-            using var dialog = new ColorDialog { Color = Color.White };
-            if (dialog.ShowDialog(this) == DialogResult.OK) surface.SetPaint(dialog.Color);
-        }));
-        settings.Controls.Add(alpha);
-        settings.Controls.Add(new Label { Text = "BODY PARTS", AutoSize = true, Margin = new Padding(0, 16, 0, 6) });
-        bodies.Dock = DockStyle.None; bodies.Width = 215; bodies.Height = 130;
-        settings.Controls.Add(bodies);
         var notes = new Label { Dock = DockStyle.Bottom, Height = 32, Padding = new Padding(12, 6, 0, 0), Text = "Drag to orbit  ·  Right-drag to pan  ·  Scroll to zoom  ·  Offline materials and paint are approximate" };
         surface.TopLevel = false;
         surface.FormBorderStyle = FormBorderStyle.None;
         surface.Dock = DockStyle.Fill;
-        Controls.Add(surface); Controls.Add(settings); Controls.Add(toolbar); Controls.Add(notes);
+        Controls.Add(surface); Controls.Add(toolbar); Controls.Add(notes);
         LiveryTheme.Apply(this);
-        bodies.ItemCheck += (_, e) => surface.SetBody(e.Index, e.NewValue == CheckState.Checked);
         surface.Failed += Report;
         Shown += (_, _) =>
         {
@@ -147,8 +89,22 @@ internal sealed class PreviewHost : Form
             timer.Start();
         };
         timer.Tick += (_, _) => Tick();
-        FormClosing += (_, _) => { if (!surface.IsDisposed) surface.Close(); };
+        FormClosing += (_, _) => { settings?.Dispose(); if (!surface.IsDisposed) surface.Close(); };
         FormClosed += (_, _) => timer.Dispose();
+    }
+
+    private void OpenSceneSettings()
+    {
+        if (settings == null || settings.IsDisposed)
+        {
+            settings = new SceneSettingsForm(surface);
+            var area = Screen.FromControl(this).WorkingArea;
+            settings.Height = Math.Min(settings.Height, area.Height - 40);
+            Point position = PointToScreen(new Point(Math.Max(0, Width - settings.Width - 16), 0));
+            settings.Location = new Point(Math.Max(area.Left, Math.Min(position.X, area.Right - settings.Width)), Math.Max(area.Top, Math.Min(position.Y, area.Bottom - settings.Height)));
+            settings.Show(new PreviewOwner(GetAncestor(parent, 2)));
+        }
+        else { settings.Show(); settings.Activate(); }
     }
 
     private void Report(Exception ex) => File.WriteAllText(status, "ERROR: " + ex.GetBaseException().Message);
@@ -162,13 +118,14 @@ internal sealed class PreviewHost : Form
             if (Width != rectangle.Right || Height != rectangle.Bottom) MoveWindow(Handle, 0, 0, rectangle.Right, rectangle.Bottom, true);
             if (!File.Exists(command) || File.GetLastWriteTimeUtc(command) == commandTime) return;
             commandTime = File.GetLastWriteTimeUtc(command);
-            string model = XDocument.Load(command).Root!.Attribute("model")!.Value;
+            XElement scene = XDocument.Load(command).Root!;
+            string model = scene.Attribute("model")!.Value;
+            string vehicle = (string?)scene.Attribute("vehicle") ?? model;
             if (model != loaded)
             {
-                surface.LoadVehicle(model, loaded.Length == 0);
+                surface.LoadVehicle(model, loaded.Length == 0 || vehicle != loadedVehicle);
                 loaded = model;
-                bodies.Items.Clear();
-                foreach (string part in surface.BodyNames) bodies.Items.Add(part, true);
+                loadedVehicle = vehicle;
                 File.WriteAllText(status, "LOADED:" + loaded);
             }
         }
@@ -177,6 +134,12 @@ internal sealed class PreviewHost : Form
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
+    private sealed class PreviewOwner : IWin32Window
+    {
+        public IntPtr Handle { get; }
+        public PreviewOwner(IntPtr handle) => Handle = handle;
+    }
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32.dll")] private static extern IntPtr SetParent(IntPtr child, IntPtr parent);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLong(IntPtr window, int index, IntPtr value);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLong(IntPtr window, int index);
@@ -187,12 +150,15 @@ internal sealed class PreviewHost : Form
 
 internal static class MathFCompat { public const float Pi = (float)Math.PI; }
 
-internal sealed class RenderSurface : Form, DXForm
+internal sealed partial class RenderSurface : Form, DXForm
 {
     public Form Form => this;
     private Renderer renderer = null!;
     private readonly Entity target = new();
     private YftFile? model;
+    private DrawableBase[] materialDrawables = Array.Empty<DrawableBase>();
+    private readonly HashSet<ShaderFX> emissivePaint = new();
+    public int EmissivePaintGeometryCount { get; private set; }
     private readonly Stopwatch elapsed = Stopwatch.StartNew();
     private BackgroundPass? backgroundPass;
     private bool hasBackgroundImage;
@@ -201,9 +167,12 @@ internal sealed class RenderSurface : Form, DXForm
     private string? screenshot;
     private bool screenshotAlpha;
     private float radius = 3;
-    private Color background = Color.FromArgb(22, 22, 35);
+    private Color background = LiveryTheme.Background;
+    public string LightingPreset { get; set; } = "Studio";
+    public string BackgroundPreset { get; private set; } = "Dark studio";
+    public Color BackgroundColour => background;
     private bool transparent;
-    private Texture? paintTexture;
+    public bool ExportTransparent { get; set; }
     private volatile bool stopping;
     private Thread? content;
     public float Azimuth = 2.25f, Elevation = 0.65f, Intensity = 1, Ambient = 0.5f;
@@ -315,7 +284,21 @@ internal sealed class RenderSurface : Form, DXForm
             renderer.RenderableCache.OnDeviceDestroyed();
             renderer.RenderableCache.OnDeviceCreated(renderer.Device);
             model = next;
+            materialDrawables = Drawables(next.Fragment).Distinct().ToArray();
+            emissivePaint.Clear();
+            EmissivePaintGeometryCount = 0;
+            foreach (var drawable in materialDrawables)
+            foreach (var shader in drawable.ShaderGroup?.Shaders?.data_items ?? Array.Empty<ShaderFX>())
+            {
+                if (shader.FileName.Hash != LiveryPreviewMaterials.EmissiveVehiclePaint) continue;
+                // The shipped BasicShader supports both paint/livery samplers and emissive lighting.
+                // Bind its explicit vehicle-paint batch and enable emission on the matching geometry.
+                // Only this in-memory preview is adapted; the staged YFT and repository stay intact.
+                emissivePaint.Add(shader);
+                shader.FileName = LiveryPreviewMaterials.VehiclePaint4;
+            }
             renderer.SelectionModelDrawFlags.Clear();
+            InitializePaint();
             radius = next.Fragment.Drawable.BoundingSphereRadius;
             if (reset) Preset("Reset");
         }
@@ -348,22 +331,15 @@ internal sealed class RenderSurface : Form, DXForm
 
     public void Lighting(string preset)
     {
+        LightingPreset = preset;
         Intensity = preset == "Night" ? 0.35f : preset == "Soft" ? 0.7f : 1;
         Ambient = preset == "Night" ? 0.15f : preset == "Soft" ? 0.7f : 0.5f;
         Elevation = preset == "Daylight" ? 1.1f : 0.65f;
     }
 
-    public void SetPaint(Color colour)
-    {
-        byte[] pixels = new byte[64];
-        for (int i = 0; i < pixels.Length; i += 4) { pixels[i] = colour.B; pixels[i + 1] = colour.G; pixels[i + 2] = colour.R; pixels[i + 3] = 255; }
-        string name = "blrp_preview_paint_" + Guid.NewGuid().ToString("N");
-        lock (renderer.RenderSyncRoot)
-            paintTexture = new Texture { Name = name, NameHash = JenkHash.GenHash(name), Width = 4, Height = 4, Depth = 1,
-                Levels = 1, Stride = 16, Format = TextureFormat.D3DFMT_A8R8G8B8, Data = new TextureData { FullData = pixels } };
-    }
     public void SetBackground(Color colour, bool alpha)
     {
+        BackgroundPreset = alpha ? "Transparent" : colour == LiveryTheme.Background ? "Dark studio" : colour == Color.FromArgb(195, 201, 211) ? "Light studio" : "Solid colour…";
         if (renderer == null) { background = colour; transparent = alpha; return; }
         lock (renderer.RenderSyncRoot) { background = colour; transparent = alpha; backgroundPass?.SetImage(null); hasBackgroundImage = false; }
     }
@@ -371,7 +347,7 @@ internal sealed class RenderSurface : Form, DXForm
     {
         using var image = Image.FromFile(path);
         using var bitmap = new Bitmap(image);
-        lock (renderer.RenderSyncRoot) { backgroundPass!.SetImage(bitmap); hasBackgroundImage = true; transparent = false; }
+        lock (renderer.RenderSyncRoot) { backgroundPass!.SetImage(bitmap); hasBackgroundImage = true; transparent = false; BackgroundPreset = "Image…"; }
     }
     public void Screenshot(string path, bool alpha)
     {
@@ -399,7 +375,8 @@ internal sealed class RenderSurface : Form, DXForm
             if (model?.Fragment != null)
             {
                 renderer.RenderFragment(null, null, model.Fragment);
-                if (paintTexture != null) ApplyPaintTint();
+                ApplyEmissivePaint();
+                ApplyPaintOverrides();
             }
             renderer.RenderQueued(); renderer.RenderFinalPass(); renderer.EndRender();
             if (screenshot != null)
@@ -413,24 +390,31 @@ internal sealed class RenderSurface : Form, DXForm
         }
     }
 
-    private void ApplyPaintTint()
+    private static IEnumerable<DrawableBase> Drawables(FragType fragment)
     {
-        // BasicShader lacks native vehicle paint palettes. A clearly labelled studio approximation
-        // replaces only the diffuse base on materials carrying the pending livery's second sampler.
-        if (paintTexture == null || model?.Fragment?.Drawable == null) return;
-        RenderableTexture tint = renderer.RenderableCache.GetRenderableTexture(paintTexture);
-        if (!tint.IsLoaded) return;
-        Renderable drawable = renderer.RenderableCache.GetRenderable(model.Fragment.Drawable);
-        foreach (RenderableModel part in drawable.AllModels ?? Array.Empty<RenderableModel>())
-        foreach (RenderableGeometry geometry in part.Geometries ?? Array.Empty<RenderableGeometry>())
+        if (fragment.Drawable != null) yield return fragment.Drawable;
+        if (fragment.DrawableCloth != null) yield return fragment.DrawableCloth;
+        foreach (var drawable in fragment.DrawableArray?.data_items ?? Array.Empty<FragDrawable>())
+            if (drawable != null) yield return drawable;
+        foreach (var child in fragment.PhysicsLODGroup?.PhysicsLOD1?.Children?.data_items ?? Array.Empty<FragPhysTypeChild>())
         {
-            if (geometry.Textures == null || geometry.RenderableTextures == null) continue;
-            uint shader = geometry.DrawableGeom.Shader.FileName.Hash;
-            bool paintMaterial = shader is 3274951810 or 1009159769 or 2045642561 or 1534086746 or 4262329590 or 60950417 or 249472155 or 354168229 or 430888562 or 4118002252;
-            if (!paintMaterial) continue;
-            for (int i = 0; i < geometry.TextureParamHashes.Length; i++)
-                if (geometry.TextureParamHashes[i] == ShaderParamNames.DiffuseSampler) geometry.RenderableTextures[i] = tint;
+            if (child.Drawable1 != null) yield return child.Drawable1;
+            if (child.Drawable2 != null) yield return child.Drawable2;
         }
+    }
+
+    private void ApplyEmissivePaint()
+    {
+        if (emissivePaint.Count == 0) return;
+        int count = 0;
+        foreach (var drawable in materialDrawables)
+        {
+            Renderable renderable = renderer.RenderableCache.GetRenderable(drawable);
+            foreach (var part in renderable.AllModels ?? Array.Empty<RenderableModel>())
+            foreach (var geometry in part.Geometries ?? Array.Empty<RenderableGeometry>())
+                if (emissivePaint.Contains(geometry.DrawableGeom.Shader)) { geometry.IsEmissive = true; count++; }
+        }
+        EmissivePaintGeometryCount = count;
     }
 
     private Bitmap ReadFrame(DeviceContext context)

@@ -10,7 +10,9 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length != 2) return 2;
+        if (args.Length == 3 && args[0] == "--paint-check") return PaintChecks.Run(args[1], args[2]);
+        if (args.Length is < 2 or > 3) return 2;
+        bool compatibility = args.Length == 3;
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         Directory.CreateDirectory(args[1]);
@@ -55,7 +57,26 @@ internal static class Program
                 else if (phase == 3 && File.Exists(image)) { surface.Screenshot(transparent, true); phase = 4; }
                 else if (phase == 4 && File.Exists(transparent))
                 {
-                    Verify(plain, image, transparent); result = 0; surface.Close();
+                    if (compatibility)
+                    {
+                        using var rendered = new Bitmap(plain);
+                        using var alpha = new Bitmap(transparent);
+                        Color background = rendered.GetPixel(2, 2);
+                        int visible = 0;
+                        for (int y = 0; y < rendered.Height; y += 2)
+                        for (int x = 0; x < rendered.Width; x += 2)
+                        {
+                            Color pixel = rendered.GetPixel(x, y);
+                            if (Math.Abs(pixel.R - background.R) + Math.Abs(pixel.G - background.G) + Math.Abs(pixel.B - background.B) > 60) visible++;
+                        }
+                        if (visible < 1000) throw new Exception("Vehicle did not produce enough visible rendered geometry: " + visible);
+                        Console.WriteLine($"PASS actual vehicle rendered on the GPU ({visible} foreground samples).");
+                        if (args[2] == "--emissive" && surface.EmissivePaintGeometryCount == 0) throw new Exception("Emissive paint adapter was not applied.");
+                        if (surface.EmissivePaintGeometryCount > 0) Console.WriteLine($"PASS emissive vehicle paint configured on {surface.EmissivePaintGeometryCount} geometries.");
+                        if (alpha.GetPixel(2, 2).A != 0) throw new Exception("Transparent screenshot background is not transparent.");
+                    }
+                    else Verify(plain, image, transparent);
+                    result = 0; surface.Close();
                 }
             }
             catch (Exception ex) { Console.Error.WriteLine(ex); surface.Close(); }

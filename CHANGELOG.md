@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.48
+
+- Added existing-livery browsing with in-game Lua names and searchable, styled selectors.
+- Added YFT-only artwork replacement, preserving filenames, slots, Lua names and access rules.
+- Added independent primary and secondary paint colours and finish previews.
+- Redesigned Scene settings with Paint, Lighting and Scene pages.
+- Fixed Pantor and Blimp3 previews and automatic camera framing between vehicles.
+- Paint finishes are preview-only studio approximations.
+
 ## v1.0.47
 
 - Overhauled Livery Studio with a modern dark interface, searchable addon vehicle discovery, and bulk livery creation and exports.

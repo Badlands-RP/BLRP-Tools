@@ -8,9 +8,9 @@ namespace Badlands.LiveryTool;
 
 internal sealed record LiveryImport(CatalogVehicle Vehicle, VehicleKit Kit, VehicleTemplate Template,
     string Texture, string Image, string DisplayName, string AccessGroup, string Permission, bool FitImage,
-    string? OutputName = null, string? Label = null, string? ExportFolder = null, bool ConvertModkit = false);
+    string? OutputName = null, string? Label = null, string? ExportFolder = null, bool ConvertModkit = false, ExistingLivery? Replacement = null);
 
-internal sealed record PlannedLivery(LiveryImport Import, string Name, string Label, int Slot, string Destination, string StagedAsset);
+internal sealed record PlannedLivery(LiveryImport Import, string Name, string Label, int Slot, string Destination, string StagedAsset, string[]? OtherUses = null);
 
 internal sealed class LiveryPlan : IDisposable
 {
@@ -30,10 +30,12 @@ internal sealed class LiveryPlan : IDisposable
     public void Dispose() { if (Directory.Exists(Staging)) Directory.Delete(Staging, true); }
 
     public string Review() => string.Join(Environment.NewLine + Environment.NewLine, Items.Select(item =>
-        $"{item.Import.Vehicle.Model} — {item.Import.DisplayName}\r\n  Export: {item.Destination}\r\n  Access: {(item.Import.AccessGroup.Length == 0 ? "Public" : item.Import.AccessGroup + (item.Import.Permission.Length == 0 ? "" : ":" + item.Import.Permission))}\r\n  Livery slot: {item.Slot}")) +
+        $"{item.Import.Vehicle.Model} — {item.Import.DisplayName}\r\n  {(item.Import.Replacement != null ? "Replace YFT" : "Export")}: {item.Destination}\r\n  Access: {(item.Import.Replacement != null ? "Unchanged (Lua is not edited)" : item.Import.AccessGroup.Length == 0 ? "Public" : item.Import.AccessGroup + (item.Import.Permission.Length == 0 ? "" : ":" + item.Import.Permission))}\r\n  Livery slot: {item.Slot}" +
+            (item.OtherUses?.Length > 0 ? "\r\n  This shared YFT also updates: " + string.Join(", ", item.OtherUses) : ""))) +
         Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, Modkits.Select(kit =>
             $"{kit.Vehicle} modkit: {kit.OriginalName} → {kit.Name} (ID {kit.Id})\r\n  Master list: {kit.MasterList}")) +
-        Environment.NewLine + Environment.NewLine + "Metadata updates:" + Environment.NewLine + string.Join(Environment.NewLine, StagedFiles.Keys.Where(path => Originals[path] != null));
+        Environment.NewLine + Environment.NewLine + "Metadata updates:" + Environment.NewLine +
+        (StagedFiles.Keys.Any(path => !Items.Any(item => item.Destination == path)) ? string.Join(Environment.NewLine, StagedFiles.Keys.Where(path => !Items.Any(item => item.Destination == path))) : "None");
 }
 
 internal sealed class LiveryBatchWorkflow
@@ -45,21 +47,22 @@ internal sealed class LiveryBatchWorkflow
         try
         {
             plan.StreamBaseline = StreamFiles(plan.Resources);
-            string lua = LiveryRouting.AccessFile(catalog, accessFile, cancellation);
+            LiveryImport[] additions = imports.Where(import => import.Replacement == null).ToArray();
+            string? lua = additions.Length > 0 ? LiveryRouting.AccessFile(catalog, accessFile, cancellation) : null;
             var textChanges = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             string Text(string path) => PlanText(plan, catalog, textChanges, path);
-            foreach (var group in imports.GroupBy(import => import.Vehicle.Key))
+            foreach (var group in additions.GroupBy(import => import.Vehicle.Key))
                 if (group.Select(import => import.ConvertModkit).Distinct().Count() > 1 || group.Select(import => import.Kit.Name).Distinct().Count() > 1)
                     throw new InvalidDataException("Use the same modkit and conversion setting for every queued livery of " + group.First().Vehicle.Model);
-            var conversions = ApplyConversions(plan, catalog, imports.Where(import => import.ConvertModkit)
+            var conversions = ApplyConversions(plan, catalog, additions.Where(import => import.ConvertModkit)
                 .GroupBy(import => import.Vehicle.Key).Select(group => new ModkitConversionRequest(group.First().Vehicle, group.First().Kit)).ToArray(),
                 masterList, textChanges, cancellation);
-            string luaText = Text(lua);
+            string luaText = lua != null ? Text(lua) : "";
             LuaLiveryEditor.Tokens(luaText);
             var occupiedNames = plan.StreamBaseline.Select(path => Path.GetFileNameWithoutExtension(path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
             // Labels have global scope, including labels in unrelated resources.
             var occupiedLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string file in catalog.Files.Where(file => file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".lua", StringComparison.OrdinalIgnoreCase)))
+            foreach (string file in additions.Length == 0 ? [] : catalog.Files.Where(file => file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".lua", StringComparison.OrdinalIgnoreCase)))
             {
                 cancellation.ThrowIfCancellationRequested();
                 string text = File.ReadAllText(file);
@@ -67,12 +70,37 @@ internal sealed class LiveryBatchWorkflow
                     occupiedLabels.Add(match.Groups[1].Success ? match.Groups[1].Value.Trim() : match.Groups[2].Value);
             }
             var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var replacements = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (LiveryImport import in imports)
             {
                 cancellation.ThrowIfCancellationRequested();
                 if (import.Vehicle.Problems.Length > 0) throw new InvalidDataException($"{import.Vehicle.Model}: {import.Vehicle.Status}");
                 if (!catalog.Vehicles.Contains(import.Vehicle)) throw new InvalidDataException($"{import.Vehicle.Model}: the vehicle definition changed. Review this queued vehicle again.");
                 if (!import.Vehicle.Kits.Contains(import.Kit)) throw new InvalidDataException($"{import.Vehicle.Model}: modkit '{import.Kit.Name}' does not belong to this vehicle. Select its modkit in Advanced and review again.");
+                if (import.Replacement is ExistingLivery replacement)
+                {
+                    ExistingLiveries.Validate(catalog, import.Vehicle, replacement);
+                    if (!replacement.CanReplace) throw new InvalidDataException("Choose one existing repository YFT to replace. Game-archive assets and ambiguous filenames cannot be overwritten.");
+                    if (import.ConvertModkit) throw new InvalidDataException("A YFT-only replacement cannot convert the modkit.");
+                    string target = replacement.Paths.Single();
+                    EnsureInside(catalog.Root, target);
+                    if (import.Kit.Path != replacement.Kit.Path || import.Kit.Name != replacement.Kit.Name || import.Template.Path != target || !XNode.DeepEquals(import.Template.Mod, replacement.Mod))
+                        throw new InvalidDataException("The replacement template must be the selected existing livery itself.");
+                    if (!replacements.Add(target)) throw new InvalidDataException("Two queued replacements target the same YFT: " + target);
+                    if (!File.Exists(target)) throw new FileNotFoundException("The YFT selected for replacement no longer exists.", target);
+                    if (!XNode.DeepEquals(FindKit(File.ReadAllText(import.Kit.Path), import.Kit.Name), import.Kit.Xml))
+                        throw new InvalidDataException("Modkit changed since scanning. Scan and select the existing livery again.");
+                    foreach (string input in import.Vehicle.MetadataPaths.Append(import.Kit.Path).Append(target).Append(import.Image).Distinct(StringComparer.OrdinalIgnoreCase))
+                        plan.Inputs[input] = SHA256.HashData(File.ReadAllBytes(input));
+                    string targetFolder = Path.GetDirectoryName(target)!;
+                    EnsureNoLinks(targetFolder);
+                    plan.ExportFolders.Add(targetFolder);
+                    string stagedReplacement = Path.Combine(plan.Staging, Path.GetFileName(target));
+                    plan.Items.Add(new PlannedLivery(import, replacement.Model, replacement.Label, replacement.Slot, target, stagedReplacement, ExistingLiveries.OtherUses(catalog, replacement)));
+                    plan.Originals[target] = File.ReadAllBytes(target);
+                    plan.StagedFiles[target] = stagedReplacement;
+                    continue;
+                }
                 VehicleKit activeKit = conversions.GetValueOrDefault(import.Vehicle.Key) ?? import.Kit;
                 if (!conversions.ContainsKey(import.Vehicle.Key) && catalog.Vehicles.Any(vehicle => vehicle.Model != import.Vehicle.Model && vehicle.Kits.Any(kit => kit.Path == import.Kit.Path && kit.Name == import.Kit.Name)))
                     throw new InvalidDataException("This modkit is shared with another vehicle. Create or select a dedicated modkit before extending its livery slots.");
@@ -135,13 +163,13 @@ internal sealed class LiveryBatchWorkflow
                 plan.Originals[destination] = null;
                 plan.StagedFiles[destination] = staged;
             }
-            textChanges[lua] = luaText;
+            if (lua != null) textChanges[lua] = luaText;
             // All metadata/slot/name checks above complete before the expensive conversions begin.
             for (int i = 0; i < plan.Items.Count; i++)
             {
                 PlannedLivery item = plan.Items[i];
                 progress?.Report($"Building and reloading {i + 1}/{plan.Items.Count}: {item.Name}");
-                LiveryAssetBuilder.Build(item.Import.Template.Path, item.Import.Texture, item.Import.Image, item.Name, item.StagedAsset, item.Import.FitImage, cancellation);
+                LiveryAssetBuilder.Build(item.Import.Template.Path, item.Import.Texture, item.Import.Image, item.Name, item.StagedAsset, item.Import.FitImage, cancellation, preserveIdentities: item.Import.Replacement != null);
             }
             StageTexts(plan, textChanges);
             return plan;

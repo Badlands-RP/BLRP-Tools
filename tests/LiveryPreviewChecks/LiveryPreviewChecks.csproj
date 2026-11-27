@@ -12,4 +12,9 @@
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\..\apps\LiveryPreview\BLRP.LiveryPreview.csproj" /></ItemGroup>
   <ItemGroup><Reference Include="CodeWalker"><HintPath>$(BadWalkerDirectory)\CodeWalker.exe</HintPath><Private>false</Private></Reference></ItemGroup>
+  <ItemGroup>
+    <Reference Include="CodeWalker.Core"><HintPath>$(BadWalkerDirectory)\CodeWalker.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SharpDX"><HintPath>$(BadWalkerDirectory)\SharpDX.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SharpDX.Mathematics"><HintPath>$(BadWalkerDirectory)\SharpDX.Mathematics.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
 </Project>

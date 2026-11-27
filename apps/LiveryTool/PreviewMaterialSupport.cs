@@ -9,6 +9,7 @@ internal static class PreviewMaterialSupport
     // Unknown shaders must not silently use its generic BasicShader fallback.
     private static readonly HashSet<uint> Supported =
     [
+        LiveryPreviewMaterials.EmissiveVehiclePaint, // helper explicitly binds vehicle paint + emissive lighting
         413996436, // default.sps
         1581835696, // default_um.sps
         200682448, // default_tnt.sps
@@ -230,6 +231,17 @@ internal static class PreviewMaterialSupport
             .Distinct().Where(name => !Supported.Contains(Hash(name))).ToArray();
         if (unsupported.Length > 0)
             throw new InvalidDataException("The bundled renderer does not support these materials: " + string.Join(", ", unsupported) + ". Preview stopped instead of using generic replacement shaders.");
+    }
+
+    public static bool LiveryShaderMatches(string? vehicleName, string? vehicleFile, string? modName, string? modFile)
+    {
+        if (vehicleFile == null || modFile == null) return false;
+        uint vehicle = Hash(vehicleFile), mod = Hash(modFile);
+        if (vehicle == mod && vehicleName != null && modName != null && Hash(vehicleName) == Hash(modName)) return true;
+        // Blimp3's native hull uses the emissive paint variant, while its VMT livery YFTs use
+        // ordinary paint4. Both use the same UV channel / DiffuseSampler2 livery binding.
+        return (vehicle == LiveryPreviewMaterials.EmissiveVehiclePaint && mod == LiveryPreviewMaterials.VehiclePaint4) ||
+            (vehicle == LiveryPreviewMaterials.VehiclePaint4 && mod == LiveryPreviewMaterials.EmissiveVehiclePaint);
     }
 
     private static uint Hash(string name) => name.StartsWith("hash_", StringComparison.OrdinalIgnoreCase) &&

@@ -19,9 +19,13 @@ internal sealed class VehiclePreviewPanel : UserControl
     private bool closed;
     private string lastDescription = "";
     private string requestedModel = "";
+    private readonly LiveryPicker existingChoices = new() { Width = 760, AccessibleName = "Preview livery" };
+    private bool updatingChoices;
+    public string DisplayedVehicleKey { get; private set; } = "";
     public event Action? RefreshRequested;
     public event Action? PreviewLiveryRequested;
     public event Action? VehicleOnlyRequested;
+    public event Action<ExistingLivery?, bool>? LiverySelectionChanged;
     private string CommandPath => Path.Combine(session, "scene.xml");
     private string StatusPath => Path.Combine(session, "status.txt");
 
@@ -57,7 +61,17 @@ internal sealed class VehiclePreviewPanel : UserControl
         carOnly.Click += (_, _) => VehicleOnlyRequested?.Invoke();
         bar.Controls.Add(artwork);
         bar.Controls.Add(carOnly);
-        Controls.Add(viewport); Controls.Add(connection); Controls.Add(bar); Controls.Add(message);
+        var liveryBar = new TableLayoutPanel { Dock = DockStyle.Top, Height = 88, Padding = new Padding(8), ColumnCount = 2 };
+        liveryBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 65));
+        liveryBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        existingChoices.Dock = DockStyle.Fill;
+        liveryBar.Controls.Add(new Label { Text = "Livery", AutoSize = true, Padding = new Padding(0, 7, 8, 0) }, 0, 0);
+        liveryBar.Controls.Add(existingChoices, 1, 0);
+        existingChoices.SelectionChanged += () =>
+        {
+            if (!updatingChoices && existingChoices.SelectedChoice is LiveryChoice choice) LiverySelectionChanged?.Invoke(choice.Existing, choice.Pending);
+        };
+        Controls.Add(viewport); Controls.Add(connection); Controls.Add(liveryBar); Controls.Add(bar); Controls.Add(message);
         Directory.CreateDirectory(session);
         poll.Tick += (_, _) =>
         {
@@ -82,7 +96,23 @@ internal sealed class VehiclePreviewPanel : UserControl
         poll.Start();
     }
 
-    public async Task LoadVehicle(VehicleCatalog catalog, CatalogVehicle vehicle, LiveryImport? request, CancellationToken token)
+    public void SetExistingLiveries(CatalogVehicle vehicle, ExistingLivery[] liveries, bool pendingAvailable, bool usePending, string? selectedKey)
+    {
+        updatingChoices = true;
+        try
+        {
+            DisplayedVehicleKey = vehicle.Key;
+            var choices = new List<LiveryChoice> { new("car-only", "Car only", "View the vehicle without a livery", "Base vehicle") };
+            if (pendingAvailable) choices.Add(new("pending", "Pending artwork", "Artwork from the selected queue row", "Your artwork", Pending: true));
+            choices.AddRange(liveries.Select(livery => LiveryChoice.From(livery)));
+            existingChoices.Context = vehicle.Model + " · preview";
+            existingChoices.SetChoices(choices, choices.FirstOrDefault(choice => selectedKey != null && choice.Existing?.Key == selectedKey)?.Key ??
+                choices.FirstOrDefault(choice => usePending && choice.Pending)?.Key ?? "car-only");
+        }
+        finally { updatingChoices = false; }
+    }
+
+    public async Task LoadVehicle(VehicleCatalog catalog, CatalogVehicle vehicle, LiveryImport? request, CancellationToken token, ExistingLivery? existing = null)
     {
         if (closed) return;
         await loadLock.WaitAsync(token);
@@ -92,12 +122,12 @@ internal sealed class VehiclePreviewPanel : UserControl
             message.Text = "Preparing real vehicle in temporary staging…";
             if (dlc.Text.Length == 0 && catalog.GameBuild == "3095") dlc.Text = "mp2023_02";
             assets = await VehiclePreviewAssets.Prepare(catalog, vehicle, request, gta.Text, dlc.Text.Trim(), token,
-                new Progress<string>(text => { if (!closed) message.Text = text; }));
+                new Progress<string>(text => { if (!closed) message.Text = text; }), existing);
             token.ThrowIfCancellationRequested();
             if (closed) return;
             lastDescription = assets.Description;
             string temporary = CommandPath + ".tmp";
-            new XDocument(new XElement("Scene", new XAttribute("model", assets.ModelPath))).Save(temporary);
+            new XDocument(new XElement("Scene", new XAttribute("model", assets.ModelPath), new XAttribute("vehicle", vehicle.Key))).Save(temporary);
             File.Move(temporary, CommandPath, true);
             requestedModel = assets.ModelPath;
             retained.Add(assets); assets = null;

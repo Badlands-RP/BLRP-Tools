@@ -21,6 +21,8 @@ internal sealed class ImportRow
     [Browsable(false)] public string Label { get; set; } = "";
     [Browsable(false)] public bool Completed { get; set; }
     [Browsable(false)] public bool ConvertModkit { get; set; }
+    [Browsable(false)] public bool ReplaceExisting { get; set; }
+    [Browsable(false)] public string ReplacementKey { get; set; } = "";
 }
 
 internal sealed class LiveryWorkspaceForm : Form
@@ -53,6 +55,17 @@ internal sealed class LiveryWorkspaceForm : Form
     private readonly TextBox masterList = new() { Width = 720, PlaceholderText = "Automatic: find the modkit master list in the selected repository" };
     private readonly HashSet<string> conversionVehicles = new(StringComparer.OrdinalIgnoreCase);
     private bool updatingConversion;
+    private readonly CheckBox replaceExisting = new() { AutoSize = true, Text = "Replace an existing livery (YFT only)" };
+    private readonly LiveryPicker replacements = new() { Width = 720, AccessibleName = "Livery to replace" };
+    private readonly Label replacementTarget = new() { AutoSize = true, MaximumSize = new Size(720, 0) };
+    private readonly Label replacementHint = new() { AutoSize = true, MaximumSize = new Size(720, 0), Margin = new Padding(0, 0, 0, 14) };
+    private VehicleCatalog? replacementCatalog;
+    private string replacementVehicleKey = "";
+    private Task<ExistingLivery[]>? replacementLoad;
+    private bool updatingReplacement;
+    private int replacementGeneration;
+    private ExistingLivery? previewExisting;
+    private string previewBaseVehicleKey = "";
     private readonly LiveryTabs tabs = new() { Dock = DockStyle.Fill };
     private readonly VehiclePreviewPanel preview = new() { Dock = DockStyle.Fill };
     private readonly FlowLayoutPanel actions = new() { Dock = DockStyle.Top, Height = 54, WrapContents = false, Padding = new Padding(8) };
@@ -113,7 +126,7 @@ internal sealed class LiveryWorkspaceForm : Form
         split.Panel1.Controls.Add(vehicles);
         split.Panel1.Controls.Add(search);
         split.Panel1.Controls.Add(vehicleDetails);
-        var previewCar = Button("Preview selected car", () => { previewVehicleOnly = true; tabs.SelectedIndex = 1; SchedulePreview(); });
+        var previewCar = Button("Preview selected car", () => { ResetPreviewSelection(); previewVehicleOnly = true; tabs.SelectedIndex = 1; SchedulePreview(); });
         previewCar.Dock = DockStyle.Bottom;
         split.Panel1.Controls.Add(previewCar);
         split.Panel2.Controls.Add(tabs);
@@ -154,6 +167,10 @@ internal sealed class LiveryWorkspaceForm : Form
         showUnclassified.Dock = DockStyle.None;
         showUnclassified.Width = 340;
         advanced.Controls.Add(showUnclassified);
+        advanced.Controls.Add(replacementTarget);
+        advanced.Controls.Add(replaceExisting);
+        advanced.Controls.Add(replacements);
+        advanced.Controls.Add(replacementHint);
         advanced.Controls.Add(conversionTarget);
         advanced.Controls.Add(convertModkit);
         advanced.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(720, 0), Text = "For a vehicle that needs its first custom modkit. Preserves the original kit and its other users. Review with your livery queue, or convert the selected vehicle without artwork using the button below." });
@@ -197,13 +214,13 @@ internal sealed class LiveryWorkspaceForm : Form
         {
             if (e.RowIndex < 0) return;
             if (queue.Columns[e.ColumnIndex].Name == "Image") { e.Value = Path.GetFileName(rows[e.RowIndex].Image); e.FormattingApplied = true; }
-            if (queue.Columns[e.ColumnIndex].Name == "ExportFolder") { e.Value = rows[e.RowIndex].ExportFolder.Length == 0 ? "Automatic · change…" : new DirectoryInfo(rows[e.RowIndex].ExportFolder).Name; e.FormattingApplied = true; }
+            if (queue.Columns[e.ColumnIndex].Name == "ExportFolder") { e.Value = rows[e.RowIndex].ReplaceExisting ? "Replace in place" : rows[e.RowIndex].ExportFolder.Length == 0 ? "Automatic · change…" : new DirectoryInfo(rows[e.RowIndex].ExportFolder).Name; e.FormattingApplied = true; }
         };
         queue.CellToolTipTextNeeded += (_, e) =>
         {
             if (e.RowIndex >= 0 && e.ColumnIndex >= 0 && queue.Columns[e.ColumnIndex].Name == "ExportFolder") e.ToolTipText = rows[e.RowIndex].ExportFolder;
         };
-        queue.CellContentClick += (_, e) => { if (e.RowIndex >= 0 && queue.Columns[e.ColumnIndex].Name == "ExportFolder") ChooseFolder(rows[e.RowIndex]); };
+        queue.CellContentClick += (_, e) => { if (e.RowIndex >= 0 && queue.Columns[e.ColumnIndex].Name == "ExportFolder" && !rows[e.RowIndex].ReplaceExisting) ChooseFolder(rows[e.RowIndex]); };
         rows.ListChanged += (_, _) => { queue.Visible = rows.Count > 0; emptyQueue.Visible = rows.Count == 0; queueCount.Text = rows.Count == 0 ? "" : $"{rows.Count} liveries"; };
         queue.Columns["Image"].FillWeight = 150;
         queue.Columns["Status"].FillWeight = 130;
@@ -213,6 +230,7 @@ internal sealed class LiveryWorkspaceForm : Form
             if (changing || e.RowIndex < 0) return;
             ImportRow row = rows[e.RowIndex];
             row.Completed = false;
+            ResetPreviewSelection();
             previewVehicleOnly = false;
             if (e.ColumnIndex == queue.Columns["Vehicle"].Index) AutoConfigure(row);
             row.Status = "Needs review";
@@ -222,11 +240,12 @@ internal sealed class LiveryWorkspaceForm : Form
         queue.CurrentCellDirtyStateChanged += (_, _) => { if (queue.IsCurrentCellDirty) queue.CommitEdit(DataGridViewDataErrorContexts.Commit); };
         // SelectionChanged can run before CurrentRow advances, leaving the previous car's overrides
         // on screen. Bind only after the current cell (and therefore the current row) has changed.
-        queue.CurrentCellChanged += (_, _) => { if (changing) return; previewVehicleOnly = false; UpdateAdvanced(); SchedulePreview(); };
+        queue.CurrentCellChanged += (_, _) => { if (changing) return; ResetPreviewSelection(); previewVehicleOnly = false; UpdateAdvanced(); SchedulePreview(); };
         search.TextChanged += (_, _) => FilterVehicles();
         showUnclassified.CheckedChanged += (_, _) => FilterVehicles();
         vehicles.SelectedIndexChanged += (_, _) =>
         {
+            ResetPreviewSelection();
             previewVehicleOnly = true;
             if (vehicles.SelectedItem is CatalogVehicle vehicle) vehicleDetails.Text = $"{vehicle.Model} — {vehicle.DisplayName}\r\nResource: {vehicle.Resource}\r\n{vehicle.Status}";
             if (Current == null) UpdateAdvanced();
@@ -244,9 +263,31 @@ internal sealed class LiveryWorkspaceForm : Form
         preview.PreviewLiveryRequested += BrowsePreviewLivery;
         preview.VehicleOnlyRequested += () =>
         {
-            if (!previewVehicleOnly && Current is ImportRow row && Vehicle(row) is CatalogVehicle car) vehicles.SelectedItem = car;
+            previewExisting = null;
+            previewBaseVehicleKey = preview.DisplayedVehicleKey;
             previewVehicleOnly = true;
             SchedulePreview();
+        };
+        preview.LiverySelectionChanged += (existing, pending) =>
+        {
+            previewExisting = existing;
+            previewBaseVehicleKey = pending ? "" : preview.DisplayedVehicleKey;
+            previewVehicleOnly = !pending;
+            SchedulePreview();
+        };
+        replaceExisting.CheckedChanged += (_, _) =>
+        {
+            if (updatingReplacement || Current is not ImportRow row || row != advancedRow) return;
+            row.ReplaceExisting = replaceExisting.Checked;
+            row.Completed = false;
+            if (row.ReplaceExisting) { row.ConvertModkit = false; SelectReplacement(); }
+            else { row.ReplacementKey = ""; AutoConfigure(row); }
+            UpdateAdvanced(); rows.ResetBindings(); InvalidatePlan(); SchedulePreview();
+        };
+        replacements.SelectionChanged += () =>
+        {
+            if (updatingReplacement || Current is not ImportRow row || row != advancedRow || !row.ReplaceExisting) return;
+            SelectReplacement(); UpdateAdvanced(); rows.ResetBindings(); InvalidatePlan(); SchedulePreview();
         };
         accessFile.TextChanged += (_, _) => InvalidatePlan();
         masterList.TextChanged += (_, _) => InvalidatePlan();
@@ -256,7 +297,7 @@ internal sealed class LiveryWorkspaceForm : Form
             CatalogVehicle? vehicle = Current is ImportRow row ? Vehicle(row) : vehicles.SelectedItem as CatalogVehicle;
             if (vehicle == null) return;
             if (convertModkit.Checked) conversionVehicles.Add(vehicle.Key); else conversionVehicles.Remove(vehicle.Key);
-            foreach (ImportRow queued in rows.Where(item => !item.Completed && item.Vehicle == vehicle.Key)) queued.ConvertModkit = convertModkit.Checked;
+            foreach (ImportRow queued in rows.Where(item => !item.Completed && !item.ReplaceExisting && item.Vehicle == vehicle.Key)) queued.ConvertModkit = convertModkit.Checked;
             rows.ResetBindings(); InvalidatePlan();
         };
         AllowDrop = true;
@@ -317,6 +358,8 @@ internal sealed class LiveryWorkspaceForm : Form
         }
         Section("Start with a car", "Search by spawn name, display name or resource. Select a car and choose Preview selected car to view it without artwork. Game files lets you select your local GTA V Legacy installation for shared textures and base-game vehicles.");
         Section("Add artwork and preview", "Drop images into Create liveries, or choose Preview livery… directly in 3D Preview. That adds artwork for the car you are viewing and previews it from temporary staging. Select a queue row to switch liveries; Car only removes the artwork from the preview while keeping your queue. Orbit with the left mouse button, zoom with the wheel and pan with the middle mouse button. Scene settings contains lighting, backgrounds and paint controls.");
+        Section("Browse or replace an existing livery", "The Livery dropdown in 3D Preview lists existing slots with names from Lua and YFT filenames. Choose a slot to see its current artwork, Car only to remove it, or Pending artwork to see the selected queue image. To replace artwork, select your queue row, open Advanced, enable Replace an existing livery (YFT only) and choose the target. Review export builds and verifies the replacement before overwriting that exact YFT. Lua names, access rules, slots, modkits and manifests stay unchanged. Game archive liveries can be previewed; replacement requires one unambiguous YFT inside the selected repository.");
+        Section("Paint and scene settings", "Open Scene settings in 3D Preview for separate Paint, Lighting and Scene pages. Paint has independent primary and secondary colour pickers, finish menus and reset controls. A layer is disabled when the model does not declare it. Paint choices stay in the preview when switching liveries, and do not change artwork or exported YFTs. Matte, classic, metallic, satin and chrome are studio approximations; verify the final finish in FiveM. Lighting controls the studio lights, and Scene contains backgrounds, screenshot options and body-part visibility.");
         Section("YFT building is automatic", "Enter a livery name and access group (blank means public). Choose Review export. The tool selects a compatible existing VMT_LIVERY_MOD template, converts the image with mipmaps, builds a uniquely named native YFT and reloads it to verify the result. You do not need to convert an image or build a YFT separately. If artwork dimensions differ, enable Fit image under Advanced to preserve its proportions with transparent padding.");
         Section("Review, then export", "The tool finds the existing livery stream folder, the vehicle's exact modkit metadata and the Lua configuration for names and access. When a destination or Lua file cannot be identified uniquely, a selection window asks you to choose it. The folder button in each queue row and the Lua field in Advanced let you override these choices. Review lists every asset, metadata path, slot and access rule before Export liveries writes them together. Existing liveries are preserved. No files are written to your repository during preview or review.");
         Section("When Advanced is needed", "Use Advanced to select a modkit, compatible livery template or embedded texture when there are several valid choices. It also contains shared queue settings and the separate extraction, texture conversion and sign utilities. A vehicle with no compatible VMT_LIVERY_MOD template needs a template made for that vehicle first. Texture-index livery systems and conflicting resource definitions require additional setup; exporting arbitrary artwork cannot create a compatible mesh.");
@@ -371,7 +414,7 @@ internal sealed class LiveryWorkspaceForm : Form
             foreach (ImportRow row in rows)
             {
                 string previousStatus = row.Status;
-                RebindSelection(row);
+                if (!row.ReplaceExisting) RebindSelection(row);
                 if (row.Completed) row.Status = previousStatus;
             }
             rows.ResetBindings();
@@ -483,7 +526,7 @@ internal sealed class LiveryWorkspaceForm : Form
 
     private void PreviewArtwork(string image)
     {
-        CatalogVehicle? car = !previewVehicleOnly && Current is ImportRow current ? Vehicle(current) : vehicles.SelectedItem as CatalogVehicle;
+        CatalogVehicle? car = !previewVehicleOnly && Current is ImportRow current ? Vehicle(current) : catalog?.Vehicles.FirstOrDefault(v => v.Key == previewBaseVehicleKey) ?? vehicles.SelectedItem as CatalogVehicle;
         if (catalog == null || car == null) { status.Text = "Select a car before adding preview artwork."; return; }
         var row = new ImportRow { Image = image, Vehicle = car.Key, LiveryName = sharedName.Text.Trim().Length > 0 ? sharedName.Text.Trim() : Path.GetFileNameWithoutExtension(image),
             AccessGroup = sharedAccess.Text.Trim(), Permission = sharedPermission.Text.Trim(), FitImage = fit.Checked };
@@ -524,6 +567,7 @@ internal sealed class LiveryWorkspaceForm : Form
 
     private void AutoConfigure(ImportRow row)
     {
+        row.ReplaceExisting = false; row.ReplacementKey = "";
         row.ConvertModkit = conversionVehicles.Contains(row.Vehicle);
         if (row.AutomaticFolder) { row.ExportFolder = ""; row.AutomaticFolder = false; }
         row.Kit = null; row.Template = null; row.Texture = "";
@@ -571,15 +615,66 @@ internal sealed class LiveryWorkspaceForm : Form
         InvalidatePlan(); SchedulePreview();
     }
 
+    private void ResetPreviewSelection() { previewExisting = null; previewBaseVehicleKey = ""; }
+
+    private void SelectReplacement()
+    {
+        if (Current is not ImportRow row || replacements.SelectedChoice?.Existing is not ExistingLivery selected || selected.VehicleKey != row.Vehicle) return;
+        row.ReplacementKey = selected.Key;
+        if (!selected.CanReplace) { row.Texture = ""; row.Completed = false; row.Status = "Choose a replaceable repository YFT"; return; }
+        row.Kit = selected.Kit;
+        row.Template = new VehicleTemplate(selected.Paths.Single(), selected.Mod);
+        row.Texture = ""; row.ConvertModkit = false; row.Completed = false;
+        row.Status = "Replacement · needs review";
+    }
+
+    private async void LoadReplacements(ImportRow? row, CatalogVehicle? vehicle)
+    {
+        int generation = ++replacementGeneration;
+        VehicleCatalog? snapshot = catalog;
+        try
+        {
+            if (snapshot != replacementCatalog || vehicle?.Key != replacementVehicleKey || replacementLoad == null)
+            {
+                replacementCatalog = snapshot; replacementVehicleKey = vehicle?.Key ?? "";
+                replacements.Placeholder = "Loading livery slots…";
+                replacements.SetChoices([], null);
+                replacementLoad = snapshot == null || vehicle == null ? Task.FromResult(Array.Empty<ExistingLivery>()) : Task.Run(() => ExistingLiveries.Load(snapshot, vehicle));
+            }
+            var choices = await replacementLoad;
+            if (IsDisposed || generation != replacementGeneration || row != Current || catalog != snapshot) return;
+            updatingReplacement = true;
+            try
+            {
+                replacements.Placeholder = choices.Length == 0 ? "No livery slots found" : "Choose the livery to replace…";
+                replacements.Context = (vehicle?.Model ?? "Vehicle") + " · replace artwork";
+                replacements.SetChoices(choices.Select(l => LiveryChoice.From(l, replacing: true)), row?.ReplacementKey);
+                ExistingLivery? selected = replacements.SelectedChoice?.Existing;
+                replacementHint.Text = selected?.CanReplace == false ? selected.ReplacementUnavailableReason :
+                    $"{choices.Count(l => l.CanReplace)} of {choices.Length} slots have a replaceable repository YFT. Game-only and duplicate slots stay visible with their availability. Replacement preserves Lua, slots and access.";
+            }
+            finally { updatingReplacement = false; }
+        }
+        catch (Exception ex) { if (!IsDisposed && generation == replacementGeneration) status.Text = ex.Message; }
+    }
+
     private void UpdateAdvanced()
     {
         advancedRow = Current;
         CatalogVehicle? target = advancedRow is ImportRow selected ? Vehicle(selected) : vehicles.SelectedItem as CatalogVehicle;
+        replacementTarget.Text = advancedRow != null ? $"Replace artwork for: {target?.Model ?? "choose a vehicle"}  ·  {Path.GetFileName(advancedRow.Image)} (selected queue row)" : "Select a queue row or add artwork to replace a livery.";
         conversionTarget.Text = "Modkit setup for: " + (target?.Model ?? "select a vehicle");
         updatingConversion = true;
         try { convertModkit.Checked = advancedRow?.ConvertModkit ?? (target != null && conversionVehicles.Contains(target.Key)); }
         finally { updatingConversion = false; }
-        convertModkit.Enabled = target != null;
+        convertModkit.Enabled = target != null && advancedRow?.ReplaceExisting != true;
+        updatingReplacement = true;
+        try { replaceExisting.Checked = advancedRow?.ReplaceExisting == true; }
+        finally { updatingReplacement = false; }
+        replaceExisting.Enabled = advancedRow != null && target != null;
+        replacements.Enabled = replaceExisting.Checked;
+        kits.Enabled = templates.Enabled = outputName.Enabled = label.Enabled = !replaceExisting.Checked;
+        LoadReplacements(advancedRow, target);
         if (advancedRow is not ImportRow row) { kits.DataSource = target?.Kits; templates.DataSource = null; textures.DataSource = null; return; }
         kits.DataSource = Vehicle(row)?.Kits;
         if (row.Kit != null) kits.SelectedItem = row.Kit;
@@ -613,6 +708,12 @@ internal sealed class LiveryWorkspaceForm : Form
     private void ApplyOverrides()
     {
         if (Current is not ImportRow row) return;
+        if (row.ReplaceExisting)
+        {
+            row.Texture = (textures.SelectedItem as LiveryTexture)?.Name ?? "";
+            row.Completed = false; row.Status = "Replacement · needs review";
+            InvalidatePlan(); rows.ResetBindings(); SchedulePreview(); return;
+        }
         CatalogVehicle? vehicle = Vehicle(row);
         if (!ReferenceEquals(row, advancedRow) || vehicle == null || kits.SelectedItem is not VehicleKit kit || !vehicle.Kits.Contains(kit))
         {
@@ -629,17 +730,32 @@ internal sealed class LiveryWorkspaceForm : Form
         }
         row.Kit = kit; row.Template = template;
         row.Texture = (textures.SelectedItem as LiveryTexture)?.Name ?? "";
-        row.OutputName = outputName.Text.Trim(); row.Label = label.Text.Trim(); row.Status = "Needs review";
-        if (row.Kit != null && row.Template != null && catalog != null)
+        if (!row.ReplaceExisting) { row.OutputName = outputName.Text.Trim(); row.Label = label.Text.Trim(); }
+        row.Completed = false; row.Status = "Needs review";
+        if (!row.ReplaceExisting && row.Kit != null && row.Template != null && catalog != null)
             remembered[catalog.Root + "|" + row.Vehicle] = new VehicleChoice(row.Kit.Path, row.Kit.Name, row.Template.Path, row.Texture);
         rows.ResetBindings(); InvalidatePlan(); SchedulePreview();
     }
 
     private async Task<LiveryImport> Request(ImportRow row)
     {
-        RebindSelection(row);
+        if (!row.ReplaceExisting) RebindSelection(row);
         VehicleCatalog snapshot = catalog ?? throw new InvalidOperationException("Scan vehicles before previewing or reviewing.");
         CatalogVehicle vehicle = Vehicle(row) ?? throw new InvalidDataException("Choose a vehicle for " + Path.GetFileName(row.Image));
+        if (row.ReplaceExisting)
+        {
+            string key = row.ReplacementKey;
+            string replacementTexture = row.Texture;
+            ExistingLivery[] choices = await Task.Run(() => ExistingLiveries.Load(snapshot, vehicle));
+            ExistingLivery selected = choices.SingleOrDefault(l => l.Key == key) ?? throw new InvalidDataException("Choose an existing repository livery to replace in Advanced.");
+            if (!selected.CanReplace) throw new InvalidDataException(selected.Model + ".yft: " + selected.ReplacementUnavailableReason);
+            string textureName = replacementTexture.Length > 0 ? replacementTexture : await Task.Run(() => LiveryAssetBuilder.SuggestTexture(selected.Paths.Single())) ?? "";
+            if (catalog != snapshot || row.Vehicle != vehicle.Key || !row.ReplaceExisting || row.ReplacementKey != key || row.Texture != replacementTexture || !rows.Contains(row))
+                throw new OperationCanceledException("Replacement selection changed during preparation.");
+            if (textureName.Length == 0) throw new InvalidDataException("Choose the embedded livery texture in Advanced.");
+            row.Kit = selected.Kit; row.Template = new VehicleTemplate(selected.Paths.Single(), selected.Mod); row.Texture = textureName;
+            return new LiveryImport(vehicle, selected.Kit, row.Template, textureName, row.Image, selected.DisplayName, "", "", row.FitImage, Replacement: selected);
+        }
         if (row.Kit == null) throw new InvalidDataException(vehicle.Status + ". Choose a modkit in Advanced.");
         VehicleKit kit = row.Kit;
         VehicleTemplate? selectedTemplate = row.Template;
@@ -680,16 +796,16 @@ internal sealed class LiveryWorkspaceForm : Form
                 LiveryImport request;
                 try { request = await Request(row); row.Status = "Preparing"; }
                 catch (Exception ex) { row.Status = ex.Message; rows.ResetBindings(); throw; }
-                if (row.ExportFolder.Length == 0)
+                if (request.Replacement == null && row.ExportFolder.Length == 0)
                 {
                     string? folder = LiveryRouting.ExportFolder(snapshot, request.Kit);
                     if (folder != null) { row.ExportFolder = folder; row.AutomaticFolder = true; }
                     else if (!ChooseFolder(row)) throw new OperationCanceledException("Export folder selection cancelled.");
                 }
-                requests.Add(request with { ExportFolder = row.ExportFolder });
+                requests.Add(request.Replacement != null ? request : request with { ExportFolder = row.ExportFolder });
             }
             string lua = accessFile.Text.Trim();
-            if (lua.Length == 0)
+            if (requests.Any(r => r.Replacement == null) && lua.Length == 0)
             {
                 string[] matches = await Task.Run(() => LiveryRouting.AccessFiles(snapshot, token), token);
                 if (matches.Length == 1) lua = matches[0];
@@ -706,7 +822,7 @@ internal sealed class LiveryWorkspaceForm : Form
             plannedRows = pending;
             for (int i = 0; i < pending.Length; i++) pending[i].Status = $"Ready · slot {plan.Items[i].Slot}";
             rows.ResetBindings();
-            reviewText.Text = $"{pending.Length} liveries ready to export\r\nYFTs built and verified. Destinations and metadata are listed below; names and access update together.\r\n\r\n" + plan.Review() +
+            reviewText.Text = $"{pending.Length} liveries ready to export\r\nYFTs built and verified. Replacements update only their existing YFT; new liveries include names and access.\r\n\r\n" + plan.Review() +
                 "\r\n\r\nFor folders outside a running resource's stream directory, copy the exported YFTs into that resource before testing in FiveM.";
             install.Enabled = true;
             install.Text = "Export liveries";
@@ -753,11 +869,11 @@ internal sealed class LiveryWorkspaceForm : Form
             install.Enabled = false;
             var progress = Progress();
             await Task.Run(() => workflow.Install(plan, token, progress), token);
-            foreach (ImportRow row in plannedRows) { row.Status = "Exported · metadata updated"; row.Completed = true; }
+            foreach (ImportRow row in plannedRows) { row.Status = row.ReplaceExisting ? "Replaced · YFT only" : "Exported · metadata updated"; row.Completed = true; }
             rows.ResetBindings();
             string exported = plan.Items.Count > 0 ? $"{plan.Items.Count} {(plan.Items.Count == 1 ? "livery" : "liveries")}" : "";
             if (plan.Modkits.Count > 0) exported += (exported.Length > 0 ? " and " : "") + $"{plan.Modkits.Count} {(plan.Modkits.Count == 1 ? "modkit" : "modkits")}";
-            status.Text = $"Exported {exported} and updated metadata. Ready for FiveM testing.";
+            status.Text = $"Exported {exported}. Ready for FiveM testing.";
             plan.Dispose(); plan = null;
         });
     }
@@ -809,23 +925,26 @@ internal sealed class LiveryWorkspaceForm : Form
     private async Task UpdatePreview()
     {
         if (catalog == null || busy) return;
+        VehicleCatalog snapshot = catalog;
         ImportRow? row = Current;
-        CatalogVehicle? selected = vehicles.SelectedItem as CatalogVehicle;
-        if ((row == null || previewVehicleOnly) && selected == null) { preview.Clear("Select a car in the vehicle list to preview it, or select a queue row to preview a pending livery."); return; }
+        CatalogVehicle? selected = snapshot.Vehicles.FirstOrDefault(v => v.Key == previewBaseVehicleKey) ?? vehicles.SelectedItem as CatalogVehicle;
+        if ((row == null || previewVehicleOnly) && selected == null) { preview.Clear("Select a car or a queue row to preview."); return; }
         previewOperation?.Cancel();
         var source = new CancellationTokenSource(); previewOperation = source;
         try
         {
             LiveryImport? request = row != null && !previewVehicleOnly ? await Request(row) : null;
             CatalogVehicle vehicle = request?.Vehicle ?? selected!;
-            if (!source.IsCancellationRequested)
+            ExistingLivery[] existing = await Task.Run(() => ExistingLiveries.Load(snapshot, vehicle, source.Token), source.Token);
+            source.Token.ThrowIfCancellationRequested();
+            ExistingLivery? choice = previewExisting == null ? null : existing.SingleOrDefault(l => l.Key == previewExisting.Key)
+                ?? throw new InvalidDataException("The selected existing livery changed. Choose it again.");
+            preview.SetExistingLiveries(vehicle, existing, row?.Vehicle == vehicle.Key, request != null, choice?.Key);
+            await preview.LoadVehicle(snapshot, vehicle, request, source.Token, choice);
+            if (!source.IsCancellationRequested && request != null && row != null && !row.Completed && plan == null)
             {
-                await preview.LoadVehicle(catalog, vehicle, request, source.Token);
-                if (!source.IsCancellationRequested && request != null && row != null && !row.Completed && plan == null)
-                {
-                    row.Status = "Preview ready · review to export";
-                    queue.Invalidate();
-                }
+                row.Status = "Preview ready · review to export";
+                queue.Invalidate();
             }
         }
         catch (OperationCanceledException) { }

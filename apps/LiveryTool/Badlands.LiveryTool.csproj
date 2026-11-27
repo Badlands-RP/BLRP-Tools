@@ -9,7 +9,7 @@
     <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
     <Company>BadlandsRP</Company>
     <Product>BLRP Livery Tool</Product>
-    <Version>1.0.47</Version>
+    <Version>1.0.48</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +21,7 @@
   <ItemGroup>
     <Compile Include="..\..\shared\BlrpTheme.cs" Link="BlrpTheme.cs" />
     <Compile Include="..\..\shared\LiveryTheme.cs" Link="LiveryTheme.cs" />
+    <Compile Include="..\..\shared\LiveryPreviewMaterials.cs" Link="LiveryPreviewMaterials.cs" />
     <Reference Include="CodeWalker.Core"><HintPath>..\..\shared\lib\CodeWalker.Core.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="SharpDX"><HintPath>..\..\shared\lib\SharpDX.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="SharpDX.Mathematics"><HintPath>..\..\shared\lib\SharpDX.Mathematics.dll</HintPath><Private>true</Private></Reference>
