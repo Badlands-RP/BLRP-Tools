@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.46')
+param([string]$Version = '1.0.47')
 
 $ErrorActionPreference = 'Stop'
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'release'))
@@ -82,6 +82,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $badWalkerOutput 'CodeWalker.exe')))
 $previewProject = Join-Path $PSScriptRoot 'apps\PropertyMapPreview\BLRP.PropertyMapPreview.csproj'
 dotnet build $previewProject -c Release -o $badWalkerOutput
 if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed for the Property Mapper 3D preview helper.' }
+$liveryPreviewProject = Join-Path $PSScriptRoot 'apps\LiveryPreview\BLRP.LiveryPreview.csproj'
+dotnet build $liveryPreviewProject -c Release "-p:BadWalkerDirectory=$badWalkerOutput" -o $badWalkerOutput
+if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed for the Livery Tool 3D preview helper.' }
 foreach ($name in @('Notice.txt', 'Readme_Src.txt', 'README.md')) {
     Copy-Item -LiteralPath (Join-Path $badWalkerRoot $name) -Destination $badWalkerOutput -Force
 }

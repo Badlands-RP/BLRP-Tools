@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>BLRP.LiveryPreview.Checks</AssemblyName>
+    <BadWalkerDirectory Condition="'$(BadWalkerDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\release\staging\BLRP-Tools\tools\BadWalker</BadWalkerDirectory>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\..\apps\LiveryPreview\BLRP.LiveryPreview.csproj" /></ItemGroup>
+  <ItemGroup><Reference Include="CodeWalker"><HintPath>$(BadWalkerDirectory)\CodeWalker.exe</HintPath><Private>false</Private></Reference></ItemGroup>
+</Project>

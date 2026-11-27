@@ -6,7 +6,7 @@ One Windows launcher and updater for BadlandsRP's internal desktop utilities.
 
 - **BLRP Asset Studio** — weapon skins, cups, 3D previews, and inventory images.
 - **BLRP Clothing Utility** — clothing search, preview, import, metadata, and blacklist workflows.
-- **BLRP Livery Tool** — vehicle livery conversion, sign batch building, scanning, metadata, and installation.
+- **BLRP Livery Studio** — searchable vehicle selection, bulk livery exports, real vehicle 3D previews, and dedicated modkit setup with master-list registration. Includes metadata extraction and standalone texture/sign utilities.
 - **BLRP Mapping Deconflicter** — scans mapping resources and reports duplicate assets.
 - **BLRP Property Mapper** — reviews panel mapping XML, opens it in CodeWalker's GTA renderer, and exports deployable YMAP/manifest files.
 - **grzyClothTool** — builds, inspects, and previews GTA clothing packs.
@@ -32,6 +32,7 @@ apps/
   AssetStudio/
   ClothingLocator/
   LiveryTool/
+  LiveryPreview/
   MappingDeconflicter/
   PropertyMapper/
   PropertyMapPreview/

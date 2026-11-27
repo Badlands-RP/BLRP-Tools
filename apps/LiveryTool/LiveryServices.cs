@@ -1,34 +1,26 @@
 using BCnEncoder.Encoder;
 using BCnEncoder.Shared;
 using StbImageSharp;
-using System.Text.RegularExpressions;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 namespace Badlands.LiveryTool;
 
 internal static class Paths
 {
-    public const string DefaultRepoRoot = @"D:\BadlandsRP";
+    public static string DefaultRepoRoot { get; } = DiscoverRepository();
 
-    public static readonly string LiveryStreamRelativePath = Path.Combine(
-        "resources",
-        "addons",
-        "stream",
-        "custom_vehicle_liveries");
-
-    public static string GetDefaultVehicleDataFolder(string repoRoot)
+    private static string DiscoverRepository()
     {
-        return Path.Combine(repoRoot, "resources", "addons", "data", "custom_vehicle_liverys");
+        for (DirectoryInfo? directory = new(AppContext.BaseDirectory); directory != null; directory = directory.Parent)
+        {
+            string candidate = Path.Combine(directory.FullName, "BadlandsRP");
+            if (Directory.Exists(Path.Combine(candidate, "resources"))) return candidate;
+        }
+        string documents = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "GitHub", "BadlandsRP");
+        return Directory.Exists(Path.Combine(documents, "resources")) ? documents : "";
     }
 
-    public static string GetDefaultModkitMasterListPath(string repoRoot)
-    {
-        return Path.Combine(repoRoot, "resources", "addons", "! modkit master list.txt");
-    }
-
-    public static string GetDefaultLiveryStreamFolder(string repoRoot)
-    {
-        return Path.Combine(repoRoot, LiveryStreamRelativePath);
-    }
 }
 
 internal sealed record ImageConversionResult(
@@ -40,50 +32,82 @@ internal sealed record ImageConversionResult(
 
 internal sealed class LiveryImageConverter
 {
-    public ImageConversionResult ConvertToDxt5Dds(string inputPath, string outputPath)
+    public ImageConversionResult ConvertForTemplate(string inputPath, string outputPath, int width, int height, bool fitImage, CancellationToken cancellation)
     {
-        inputPath = Path.GetFullPath(inputPath);
-        outputPath = Path.GetFullPath(outputPath);
-
-        if (!File.Exists(inputPath))
+        if (width < 4 || height < 4 || width > 8192 || height > 8192 || (width & (width - 1)) != 0 || (height & (height - 1)) != 0)
+            throw new InvalidDataException("Template needs power-of-two dimensions between 4 and 8192 pixels.");
+        using var input = File.OpenRead(inputPath);
+        ImageInfo info = ImageInfo.FromStream(input) ?? throw new InvalidDataException("Image header could not be read (use PNG, JPG, TGA or BMP).");
+        if (info.Width > 16384 || info.Height > 16384 || (long)info.Width * info.Height > 67_108_864)
+            throw new InvalidDataException("Source image exceeds the 64-megapixel limit. Resize it before importing.");
+        input.Position = 0;
+        var image = ImageResult.FromStream(input, ColorComponents.RedGreenBlueAlpha);
+        cancellation.ThrowIfCancellationRequested();
+        byte[] pixels = image.Data;
+        if (image.Width != width || image.Height != height)
         {
-            throw new FileNotFoundException("Input image was not found.", inputPath);
+            if (!fitImage) throw new InvalidDataException($"Image is {image.Width}×{image.Height}; template needs {width}×{height}. Enable Fit image or resize the artwork.");
+            // Letterbox into a transparent canvas; never stretch artwork or discard alpha.
+            using var source = new Bitmap(image.Width, image.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            BitmapData sourceBits = source.LockBits(new Rectangle(0, 0, source.Width, source.Height), ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] row = new byte[source.Width * 4];
+                for (int y = 0; y < source.Height; y++)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    Buffer.BlockCopy(pixels, y * row.Length, row, 0, row.Length);
+                    for (int i = 0; i < row.Length; i += 4) (row[i], row[i + 2]) = (row[i + 2], row[i]);
+                    Marshal.Copy(row, 0, IntPtr.Add(sourceBits.Scan0, y * sourceBits.Stride), row.Length);
+                }
+            }
+            finally { source.UnlockBits(sourceBits); }
+            using var resized = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(resized))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                float scale = Math.Min((float)width / image.Width, (float)height / image.Height);
+                float w = image.Width * scale, h = image.Height * scale;
+                graphics.DrawImage(source, (width - w) / 2, (height - h) / 2, w, h);
+            }
+            pixels = new byte[checked(width * height * 4)];
+            BitmapData resultBits = resized.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] row = new byte[width * 4];
+                for (int y = 0; y < height; y++)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    Marshal.Copy(IntPtr.Add(resultBits.Scan0, y * resultBits.Stride), row, 0, row.Length);
+                    for (int i = 0; i < row.Length; i += 4) (row[i], row[i + 2]) = (row[i + 2], row[i]);
+                    Buffer.BlockCopy(row, 0, pixels, y * row.Length, row.Length);
+                }
+            }
+            finally { resized.UnlockBits(resultBits); }
         }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? ".");
-
-        using var inputStream = File.OpenRead(inputPath);
-        var image = ImageResult.FromStream(inputStream, ColorComponents.RedGreenBlueAlpha);
-
         var encoder = new BcEncoder(CompressionFormat.Bc3)
         {
-            OutputOptions =
-            {
-                FileFormat = OutputFileFormat.Dds,
-                Format = CompressionFormat.Bc3,
-                GenerateMipMaps = true,
-                Quality = CompressionQuality.Balanced,
-                DdsPreferDxt10Header = false,
-            },
+            OutputOptions = { FileFormat = OutputFileFormat.Dds, Format = CompressionFormat.Bc3, GenerateMipMaps = true,
+                Quality = CompressionQuality.Balanced, DdsPreferDxt10Header = false }
         };
+        var dds = encoder.EncodeToDdsAsync(pixels, width, height, BCnEncoder.Encoder.PixelFormat.Rgba32, cancellation).GetAwaiter().GetResult();
+        cancellation.ThrowIfCancellationRequested();
+        using (var output = File.Create(outputPath)) dds.Write(output);
+        byte[] bytes = File.ReadAllBytes(outputPath);
+        int expectedMips = 1 + (int)Math.Log2(Math.Max(width, height));
+        if (ReadDdsFourCc(outputPath) != "DXT5" || BitConverter.ToInt32(bytes, 28) != expectedMips)
+            throw new InvalidDataException("DDS compression/mipmap verification failed.");
+        return new ImageConversionResult(outputPath, width, height, bytes.Length, "DXT5");
+    }
 
-        var dds = encoder.EncodeToDds(
-            image.Data,
-            image.Width,
-            image.Height,
-            PixelFormat.Rgba32);
-
-        using (var outputStream = File.Create(outputPath))
-        {
-            dds.Write(outputStream);
-        }
-
-        return new ImageConversionResult(
-            outputPath,
-            image.Width,
-            image.Height,
-            new FileInfo(outputPath).Length,
-            ReadDdsFourCc(outputPath));
+    public ImageConversionResult ConvertToDxt5Dds(string inputPath, string outputPath)
+    {
+        using var inputStream = File.OpenRead(inputPath);
+        ImageInfo info = ImageInfo.FromStream(inputStream) ?? throw new InvalidDataException("Image header could not be read.");
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        return ConvertForTemplate(inputPath, outputPath, info.Width, info.Height, false, default);
     }
 
     private static string ReadDdsFourCc(string path)
@@ -96,68 +120,5 @@ internal sealed class LiveryImageConverter
         }
 
         return System.Text.Encoding.ASCII.GetString(bytes, 84, 4);
-    }
-}
-
-internal sealed record LiverySlotGroup(
-    string Prefix,
-    string ExistingFileNumbers,
-    int NextFileNumber,
-    int NextLuaSlot,
-    int Count);
-
-internal sealed partial class LiveryScanner
-{
-    public IReadOnlyList<LiverySlotGroup> Scan(string repoRoot)
-    {
-        repoRoot = Path.GetFullPath(repoRoot);
-        var liveryDir = Path.Combine(repoRoot, Paths.LiveryStreamRelativePath);
-
-        if (!Directory.Exists(liveryDir))
-        {
-            throw new DirectoryNotFoundException($"Livery stream folder was not found: {liveryDir}");
-        }
-
-        return Directory
-            .EnumerateFiles(liveryDir, "*.yft", SearchOption.TopDirectoryOnly)
-            .Select(path => new LiveryAsset(path))
-            .Where(asset => asset.Number is not null)
-            .GroupBy(asset => asset.Prefix, StringComparer.OrdinalIgnoreCase)
-            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(group =>
-            {
-                var numbers = group
-                    .Select(asset => asset.Number!.Value)
-                    .Order()
-                    .ToArray();
-
-                return new LiverySlotGroup(
-                    group.Key,
-                    string.Join(", ", numbers),
-                    numbers.Last() + 1,
-                    numbers.Last(),
-                    numbers.Length);
-            })
-            .ToArray();
-    }
-
-    private sealed partial class LiveryAsset
-    {
-        private static readonly Regex FilePattern = LiveryFileRegex();
-
-        public LiveryAsset(string path)
-        {
-            var name = Path.GetFileNameWithoutExtension(path);
-            var match = FilePattern.Match(name);
-
-            Prefix = match.Success ? match.Groups["prefix"].Value : name;
-            Number = match.Success ? int.Parse(match.Groups["number"].Value) : null;
-        }
-
-        public string Prefix { get; }
-        public int? Number { get; }
-
-        [GeneratedRegex("^(?<prefix>.+?_(?:liv|livery)_?)(?<number>\\d+)$", RegexOptions.IgnoreCase)]
-        private static partial Regex LiveryFileRegex();
     }
 }

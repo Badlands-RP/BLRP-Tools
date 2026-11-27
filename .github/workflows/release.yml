@@ -28,6 +28,15 @@ jobs:
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           .\Build-Package.ps1 -Version $version
 
+      - name: Verify livery workflow and Hub updater
+        shell: pwsh
+        run: |
+          dotnet run --project tests/LiveryToolChecks/LiveryToolChecks.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Livery workflow checks failed." }
+          $hub = Resolve-Path 'release/staging/BLRP-Tools/BLRP.Tools.exe'
+          $check = Start-Process -FilePath $hub -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
+          if ($check.ExitCode -ne 0) { throw "Hub updater checks failed." }
+
       - name: Publish GitHub release
         shell: pwsh
         env:

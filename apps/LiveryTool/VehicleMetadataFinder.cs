@@ -52,7 +52,7 @@ internal sealed class VehicleMetadataFinder
         return InsertBlock(targetPath, "Kits", xml, kitName, "kitName", createBackup);
     }
 
-    public VehicleMetadataSearchResult Find(string gtaFolder, string modelName, Action<string>? updateStatus = null)
+    public VehicleMetadataSearchResult Find(string gtaFolder, string modelName, Action<string>? updateStatus = null, CancellationToken cancellation = default)
     {
         if (string.IsNullOrWhiteSpace(gtaFolder))
         {
@@ -98,6 +98,7 @@ internal sealed class VehicleMetadataFinder
 
         foreach (var entry in EnumerateEntries(manager, "vehicles.meta"))
         {
+            cancellation.ThrowIfCancellationRequested();
             var xml = TryGetXmlText(entry);
             if (xml is null)
             {
@@ -112,6 +113,7 @@ internal sealed class VehicleMetadataFinder
 
         foreach (var entry in EnumerateEntries(manager, "carvariations.meta", "carvariations.ymt"))
         {
+            cancellation.ThrowIfCancellationRequested();
             var xml = TryLoadCarVariationsXml(entry);
             if (xml is null)
             {
@@ -133,6 +135,7 @@ internal sealed class VehicleMetadataFinder
         {
             foreach (var entry in EnumerateEntries(manager, "carcols.meta", "carcols.ymt"))
             {
+                cancellation.ThrowIfCancellationRequested();
                 var xml = TryLoadCarColsXml(entry);
                 if (xml is null)
                 {
@@ -466,12 +469,9 @@ internal sealed class VehicleMetadataFinder
         var itemIndent = closeIndent + "  ";
         var insertXml = IndentBlock(blockXml, itemIndent, newline) + newline;
 
-        if (createBackup)
-        {
-            File.Copy(targetPath, $"{targetPath}.{DateTime.Now:yyyyMMddHHmmss}.bak", overwrite: false);
-        }
-
-        File.WriteAllText(targetPath, text.Insert(close.Index, insertXml));
+        string updated = text.Insert(close.Index, insertXml);
+        XDocument.Parse(updated);
+        File.WriteAllText(targetPath, updated);
         return true;
     }
 

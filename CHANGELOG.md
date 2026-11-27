@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.47
+
+- Overhauled Livery Studio with a modern dark interface, searchable addon vehicle discovery, and bulk livery creation and exports.
+- Added real vehicle 3D previews with or without liveries, smoother camera controls, lighting, paint, body-part settings, custom backgrounds, and screenshots.
+- Automated YFT building and verification, export destinations, metadata updates, and consistent vehicle filenames and Lua entries.
+- Added dedicated modkit conversion, master-list registration, portable file discovery, and conversion-only exports without artwork.
+- Fixed mixed-vehicle modkit selection, access and permission handling, background placement, and export cancellation and rollback.
+- Added built-in Help and clearer handling of encrypted or unsupported models. Offline previews still require FiveM validation.
+
 ## v1.0.46
 
 - Clothing Utility 1.9.4 automatically optimises incoming YTDs during import, replacement, and duplication. Oversized maps are resized to fit within 2048 pixels while preserving aspect ratio. Re-encoding uses DXT1 for opaque maps and DXT5 when alpha is present.
