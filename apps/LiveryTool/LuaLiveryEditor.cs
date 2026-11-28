@@ -182,10 +182,17 @@ internal static class LuaLiveryEditor
             throw new InvalidDataException($"Text label {label} already exists.");
         string newline = text.Contains("\r\n") ? "\r\n" : "\n";
         text = InsertDisplayName(text, label, displayName, relatedLabels, newline);
+        return AppendAccess(text, model, slot, accessGroup, permission);
+    }
+
+    internal static string AppendAccess(string text, string model, int slot, string accessGroup, string permission)
+    {
+        if (Slots(text, model).Contains(slot)) throw new InvalidDataException($"Lua restriction already occupies {model} slot {slot}; existing permissions are preserved.");
         if (string.IsNullOrWhiteSpace(accessGroup)) return text; // public liveries have no restriction entry
+        string newline = text.Contains("\r\n") ? "\r\n" : "\n";
         string value = accessGroup.Trim() + (string.IsNullOrWhiteSpace(permission) ? "" : ":" + permission.Trim().TrimStart(':'));
         var table = Table(text);
-        tokens = table.Tokens;
+        var tokens = table.Tokens;
         for (int i = table.Open + 1; i + 4 < table.Close; i++)
         {
             if (tokens[i].Value == "[" && tokens[i + 1].Value.Equals("`" + model + "`", StringComparison.OrdinalIgnoreCase) && tokens[i + 4].Value == "{")

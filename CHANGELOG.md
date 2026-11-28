@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.49
+
+- Added a shared-modkit override to export liveries for every vehicle using the same kit, with affected models listed in review.
+- Preserved livery template rules for hiding vehicle extras during export.
+- Added all 19 business permissions to the livery access dropdown, plus custom permission support.
+- Improved batch errors to identify the affected vehicle and artwork.
+- Fixed carcols ID mismatches when converting registered modkits.
+- Added preview loading progress and step-by-step how-to guides in Help.
+
 ## v1.0.48
 
 - Added existing-livery browsing with in-game Lua names and searchable, styled selectors.

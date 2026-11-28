@@ -8,6 +8,10 @@ namespace Badlands.LiveryTool;
 
 internal sealed record ModkitConversionRequest(CatalogVehicle Vehicle, VehicleKit Kit);
 internal sealed record PlannedModkit(string Vehicle, string OriginalName, string Name, int Id, string MasterList);
+internal sealed class ModkitConversionException(string vehicleKey, Exception cause) : IOException(vehicleKey + " modkit: " + cause.Message, cause)
+{
+    public string VehicleKey { get; } = vehicleKey;
+}
 
 internal static class ModkitConversion
 {
@@ -50,10 +54,22 @@ internal static class ModkitConversion
         if (entries.Contains(kit.Name, StringComparer.OrdinalIgnoreCase) && !shared)
         {
             int currentId = (int?)kit.Xml.Element("id")?.Attribute("value") ?? throw new InvalidDataException("The selected modkit has no numeric ID.");
-            if (!kit.Name.StartsWith(currentId.ToString(CultureInfo.InvariantCulture) + "_", StringComparison.Ordinal))
-                throw new InvalidDataException("The registered modkit name and its metadata ID disagree. Resolve that mismatch before exporting.");
-            changes.Add(new PlannedModkit(vehicle.Model, kit.Name, kit.Name, currentId, masterList));
-            return kit;
+            int registeredId = int.Parse(kit.Name[..kit.Name.IndexOf('_')], CultureInfo.InvariantCulture);
+            if (registeredId > ushort.MaxValue || catalog.Kits.Any(other => other != kit && (int?)other.Xml.Element("id")?.Attribute("value") == registeredId))
+                throw new InvalidDataException("The registered ID is outside the supported range or already assigned to another carcols modkit.");
+            string current = read(kit.Path);
+            XElement source = XDocument.Parse(current, LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo).Descendants("Kits").Elements("Item").Single(item => item.Element("kitName")?.Value.Trim() == kit.Name);
+            if (!XNode.DeepEquals(source, kit.Xml)) throw new InvalidDataException("Modkit metadata changed since scanning. Review again before converting.");
+            if (currentId != registeredId)
+            {
+                XElement identity = source.Element("id")!;
+                var span = ElementSpan(current, identity);
+                identity.SetAttributeValue("value", registeredId);
+                write(kit.Path, current[..span.Start] + identity.ToString(SaveOptions.DisableFormatting) + current[span.End..]);
+            }
+            changes.Add(new PlannedModkit(vehicle.Model, kit.Name, kit.Name, registeredId, masterList));
+            XElement repaired = XDocument.Parse(read(kit.Path), LoadOptions.PreserveWhitespace).Descendants("Kits").Elements("Item").Single(item => item.Element("kitName")?.Value.Trim() == kit.Name);
+            return new VehicleKit(kit.Path, kit.Name, repaired);
         }
         var usedIds = catalog.Kits.Select(item => (int?)item.Xml.Element("id")?.Attribute("value")).Where(id => id != null).Select(id => id!.Value).ToHashSet();
         foreach (string entry in entries) usedIds.Add(int.Parse(entry[..entry.IndexOf('_')], CultureInfo.InvariantCulture));

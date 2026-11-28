@@ -23,6 +23,37 @@ internal static class Program
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--shared-real-check")
+        {
+            var catalog = VehicleCatalog.Scan(args[1], default);
+            var car = catalog.Vehicles.Single(vehicle => vehicle.Model == "mule6");
+            var kit = car.Kits.Single();
+            var template = catalog.Templates(kit).First(template => template.Mod.Element("linkedModels")?.Elements().Any() != true);
+            string directory = Path.Combine(Path.GetTempPath(), "BLRP-Mule-Review-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                string artwork = Path.Combine(directory, "art.png");
+                using (var image = new Bitmap(4, 4)) { using var graphics = Graphics.FromImage(image); graphics.Clear(Color.Red); image.Save(artwork); }
+                var affected = LiveryBatchWorkflow.SharedVehicles(catalog, kit);
+                var originals = affected.SelectMany(vehicle => vehicle.MetadataPaths).Append(kit.Path).Append(template.Path).Append(LiveryRouting.AccessFile(catalog, null, default))
+                    .Distinct().ToDictionary(path => path, File.ReadAllBytes);
+                var import = new LiveryImport(car, kit, template, LiveryAssetBuilder.SuggestTexture(template.Path)!, artwork, "Shared mule check", "Test Group", "extra_b", true, ExportFolder: Path.GetDirectoryName(template.Path), AllowSharedModkit: true);
+                using var plan = new LiveryBatchWorkflow().Prepare(catalog, [import], default);
+                var item = plan.Items.Single();
+                Check(item.SharedVehicles!.Contains("mule6") && item.SharedVehicles!.Contains("mule7"), "real mule6 export includes mule7 through their shared kit");
+                var stagedKit = XDocument.Load(plan.StagedFiles[kit.Path]).Descendants("Kits").Elements("Item").Single(node => node.Element("kitName")?.Value == kit.Name);
+                Check(XNode.DeepEquals(stagedKit.Element("visibleMods")!.Elements("Item").Last().Element("turnOffBones"), XElement.Parse(template.Mod.Element("turnOffBones")!.ToString())), "real Mule template keeps its original extra-part hiding rules");
+                string luaPath = LiveryRouting.AccessFile(catalog, null, default);
+                string lua = File.ReadAllText(plan.StagedFiles[luaPath]);
+                Check(affected.All(vehicle => LuaLiveryEditor.Slots(lua, vehicle.Model).Contains(item.Slot)), "real shared Mule slot gets access rules for every linked model");
+                Check(originals.All(original => File.ReadAllBytes(original.Key).SequenceEqual(original.Value)) && !File.Exists(item.Destination), "real Mule review leaves source assets, Lua and metadata unchanged");
+                Console.WriteLine(plan.Review());
+                return 0;
+            }
+            catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+            finally { Directory.Delete(directory, true); }
+        }
         if (args.Length >= 5 && args[0] == "--preview-check")
         {
             var catalog = VehicleCatalog.Scan(args[1], default);
@@ -78,10 +109,10 @@ internal static class Program
             Console.WriteLine(plan.Review());
             return 0;
         }
-        if (args.Length == 1 && args[0] is "--ui-check" or "--modkit-ui-check")
+        if (args.Length == 1 && args[0] is "--ui-check" or "--modkit-ui-check" or "--shared-ui-check")
         {
             int result = 1;
-            var thread = new Thread(() => result = WorkspaceCheck(args[0] == "--modkit-ui-check"));
+            var thread = new Thread(() => result = WorkspaceCheck(args[0] == "--modkit-ui-check", args[0] == "--shared-ui-check"));
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start(); thread.Join();
             return result;
@@ -93,6 +124,7 @@ internal static class Program
             LuaChecks();
             NamingChecks();
             ModkitChecks();
+            SharedKitChecks();
             RoutingChecks();
             ReplacementChecks();
             Check(PreviewMaterialSupport.LiveryShaderMatches("vehicle_paint4_emissive", "vehicle_paint4_emissive.sps", "vehicle_paint4", "vehicle_paint4.sps"), "native Blimp3 livery matches its explicit emissive vehicle-paint counterpart");
@@ -367,6 +399,19 @@ internal static class Program
             catalog = Scan(); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
             using (var repeat = workflow.PrepareModkits(catalog, [new(car, car.Kits.Single())], master, default))
                 Check(repeat.StagedFiles.Count == 0, "an already registered dedicated kit is not converted or registered twice");
+            var convertedBaseline = Snapshot(root);
+            cols = XDocument.Load(colsPath, LoadOptions.PreserveWhitespace);
+            cols.Descendants("Kits").Elements("Item").Single(item => item.Element("kitName")!.Value == car.Kits.Single().Name).Element("id")!.SetAttributeValue("value", 42);
+            cols.Save(colsPath, SaveOptions.DisableFormatting);
+            catalog = Scan(); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            using (var repair = workflow.PrepareModkits(catalog, [new(car, car.Kits.Single())], master, default))
+            {
+                Check(repair.StagedFiles.ContainsKey(colsPath), "a registered modkit with a leftover stock carcols ID stages an ID repair");
+                workflow.Install(repair, default);
+                var repaired = Scan().Vehicles.Single(vehicle => vehicle.Model == "testcar").Kits.Single();
+                Check(repaired.Name == "60020_bl_testcar_modkit" && (int?)repaired.Xml.Element("id")!.Attribute("value") == 60020, "modkit conversion keeps the carvariations name and carcols numeric ID consistent");
+            }
+            Restore(root, convertedBaseline);
             Restore(root, baseline);
             catalog = Scan(); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
             var originalKit = car.Kits.Single();
@@ -445,7 +490,51 @@ internal static class Program
         finally { Directory.Delete(root, true); if (File.Exists(external)) File.Delete(external); }
     }
 
-    private static int WorkspaceCheck(bool modkitOnly = false)
+    private static void SharedKitChecks()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "BLRP-Shared-Kit-Checks-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Fixture(root);
+            string vars = Path.Combine(root, "resources", "[cars]", "addon", "data", "carvariations.meta");
+            var variations = XDocument.Load(vars);
+            variations.Descendants("variationData").Elements("Item").Single(item => item.Element("modelName")!.Value == "othercar").Element("kits")!.Element("Item")!.Value = "42_testcar";
+            variations.Save(vars);
+            string cols = Path.Combine(Path.GetDirectoryName(vars)!, "carcols.meta");
+            var metadata = XDocument.Load(cols);
+            metadata.Descendants("turnOffBones").First().Add(new XElement("Item", "extra_2"));
+            metadata.Save(cols);
+            var catalog = VehicleCatalog.Scan(root, default);
+            var car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            var kit = car.Kits.Single();
+            var import = new LiveryImport(car, kit, catalog.Templates(kit).Single(), "testcar_livery7", Path.Combine(root, "art.png"), "Shared artwork", "Test Group", "management", false);
+            var workflow = new LiveryBatchWorkflow();
+            var baseline = Snapshot(root);
+            Reject(() => workflow.Prepare(catalog, [import], default), "shared modkit additions require the explicit override");
+            using (var plan = workflow.Prepare(catalog, [import with { AllowSharedModkit = true }], default))
+            {
+                Check(plan.Items.Single().SharedVehicles!.Order().SequenceEqual(new[] { "othercar", "testcar" }) && plan.Review().Contains("othercar"), "shared-kit review lists every affected vehicle model");
+                Check(!plan.StagedFiles.ContainsKey(vars) && plan.Modkits.Count == 0 && Same(root, baseline), "shared override extends the existing kit without redirecting carvariations or editing source files during review");
+                var staged = XDocument.Load(plan.StagedFiles[cols]).Descendants("Kits").Elements("Item").Single(item => item.Element("kitName")!.Value == kit.Name);
+                Check(staged.Element("visibleMods")!.Elements("Item").Count() == 2 && staged.Element("visibleMods")!.Elements("Item").Last().Element("turnOffBones")!.Element("Item")!.Value == "extra_2", "a shared livery slot is appended once and preserves the template's extra-part hiding rules");
+                string lua = File.ReadAllText(plan.StagedFiles[plan.StagedFiles.Keys.Single(path => path.EndsWith("blrp_custom_liveries.lua"))]);
+                Check(LuaLiveryEditor.Slots(lua, "testcar").Contains(1) && LuaLiveryEditor.Slots(lua, "othercar").Contains(1) && lua.Split("Test Group:management").Length == 3, "shared exports apply the chosen access restriction to both models");
+                Check(ExistingLiveries.DisplayNames(lua).Count(entry => entry.Value == "Shared artwork") == 1, "shared exports add the global display name only once");
+            }
+            string wide = Path.Combine(root, "wide.png");
+            using (var image = new Bitmap(8, 4)) image.Save(wide);
+            var failureBaseline = Snapshot(root);
+            var good = import with { AllowSharedModkit = true };
+            var broken = good with { Image = wide };
+            try { using var failed = workflow.Prepare(catalog, [good, broken], default); throw new Exception("Broken artwork was accepted"); }
+            catch (LiveryBatchException ex) { Check(ex.Imports.Count == 1 && ReferenceEquals(ex.Imports[0], broken) && ex.Message.Contains("wide.png") && ex.Message.Contains("testcar"), "a batch build failure identifies only its broken artwork and vehicle"); }
+            Check(Same(root, failureBaseline), "failed shared batch review leaves all repository files untouched");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static int WorkspaceCheck(bool modkitOnly = false, bool sharedOnly = false)
     {
         string root = Path.Combine(Path.GetTempPath(), "BLRP-Livery-Workspace-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -453,6 +542,13 @@ internal static class Program
         try
         {
             Fixture(root);
+            if (sharedOnly)
+            {
+                string vars = Path.Combine(root, "resources", "[cars]", "addon", "data", "carvariations.meta");
+                var metadata = XDocument.Load(vars);
+                metadata.Descendants("variationData").Elements("Item").Single(item => item.Element("modelName")!.Value == "othercar").Element("kits")!.Element("Item")!.Value = "42_testcar";
+                metadata.Save(vars);
+            }
             string master = Path.Combine(root, "resources", "registry", "Modkit Master List.txt");
             if (modkitOnly)
             {
@@ -485,6 +581,35 @@ internal static class Program
                     if (clock.Elapsed.TotalSeconds > 20) throw new TimeoutException("Workspace scan timed out.");
                     VehicleCatalog catalog = Field<VehicleCatalog>("catalog");
                     Field<ListBox>("vehicles").SelectedItem = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+                    if (sharedOnly)
+                    {
+                        type.GetMethod("AddImages", flags)!.Invoke(form, new object[] { new[] { Path.Combine(root, "art.png") } });
+                        Field<LiveryTabs>("tabs").SelectedIndex = 3;
+                        var sharedRows = Field<System.ComponentModel.BindingList<ImportRow>>("rows");
+                        Check(Field<Button>("sharedModkitOverride").Enabled && Field<Label>("sharedModkitHint").Text.Contains("othercar"), "shared-kit override identifies the other linked model in Advanced");
+                        Field<Button>("sharedModkitOverride").PerformClick();
+                        Check(sharedRows.Single().AllowSharedModkit && Field<Button>("sharedModkitOverride").Text.StartsWith("Disable"), "the manual override explicitly enables shared slot creation");
+                        Field<CheckBox>("convertModkit").Checked = true;
+                        Check(!Field<Button>("sharedModkitOverride").Enabled, "dedicated conversion disables the shared-kit action");
+                        Field<CheckBox>("convertModkit").Checked = false;
+                        Check(Field<Button>("sharedModkitOverride").Enabled, "shared-kit override becomes available again after disabling conversion");
+                        Field<TextBox>("sharedAccess").Text = "Test Group";
+                        Field<ComboBox>("permissionChoices").SelectedItem = "logs";
+                        Check(Field<TextBox>("sharedPermission").Text == "logs" && !Field<TextBox>("sharedPermission").Visible, "permission dropdown selects known permissions without a custom field");
+                        Field<ComboBox>("permissionChoices").SelectedItem = "Custom…";
+                        Check(Field<TextBox>("sharedPermission").Visible, "custom permission selection exposes a free-text field");
+                        Field<TextBox>("sharedPermission").Text = "extra_b";
+                        type.GetMethod("ApplyShared", flags)!.Invoke(form, new object[] { true });
+                        Check(sharedRows.Single().Permission == "extra_b", "custom extra permissions are applied to queued liveries");
+                        await Call("Review");
+                        var sharedPlan = Field<LiveryPlan>("plan");
+                        Check(Field<Button>("install").Enabled && sharedPlan.Items.Single().SharedVehicles!.Length == 2, "shared override survives automatic rescan and produces a review for both models");
+                        Check(Field<TextBox>("reviewText").Text.Contains("Test Group:extra_b"), "shared review displays the chosen custom access rule");
+                        await Call("Install");
+                        var after = VehicleCatalog.Scan(root, default);
+                        Check(after.Vehicles.Where(vehicle => vehicle.Model is "testcar" or "othercar").All(vehicle => vehicle.Kits.Single().Liveries.Length == 2), "shared UI export adds one slot visible to both vehicle models");
+                        result = 0; return;
+                    }
                     if (modkitOnly)
                     {
                         Field<LiveryTabs>("tabs").SelectedIndex = 3;
@@ -512,6 +637,18 @@ internal static class Program
                     Field<System.Windows.Forms.Timer>("previewDebounce").Stop();
                     Field<LiveryTabs>("tabs").SelectedIndex = 4;
                     Check(Field<LiveryTabs>("tabs").SelectedTab?.Text == "Help", "workflow help is available inside the tool");
+                    Check(((LiveryTabs)form.Controls.Find("helpTopics", true).Single()).SelectedTab!.Text == "How to", "Help opens with task-based how-to guides and retains a separate reference");
+                    Field<LiveryTabs>("tabs").SelectedIndex = 1;
+                    Field<System.Windows.Forms.Timer>("previewDebounce").Stop();
+                    var panel = Field<VehiclePreviewPanel>("preview");
+                    var loading = (ProgressBar)typeof(VehiclePreviewPanel).GetField("loading", flags)!.GetValue(panel)!;
+                    int firstLoading = panel.BeginLoading(), nextLoading = panel.BeginLoading();
+                    panel.CancelLoading(firstLoading);
+                    Check(loading.Visible, "cancelling an old preview cannot hide the current loading indicator");
+                    panel.CancelLoading(nextLoading);
+                    Check(!loading.Visible, "cancelling the current preview clears its loading indicator");
+                    panel.BeginLoading(); panel.Clear("Test preview error");
+                    Check(!loading.Visible, "a preview error clears its loading indicator");
                     Field<LiveryTabs>("tabs").SelectedIndex = 0;
                     type.GetMethod("AddImages", flags)!.Invoke(form, new object[] { new[] { Path.Combine(root, "art.png") } });
                     Check(rows.Count == 2 && Field<DataGridView>("queue").Visible, "workspace displays multiple queued liveries");

@@ -9,7 +9,7 @@
     <ApplicationIcon>..\..\branding\BLRP.ico</ApplicationIcon>
     <Company>BadlandsRP</Company>
     <Product>BLRP Livery Tool</Product>
-    <Version>1.0.48</Version>
+    <Version>1.0.49</Version>
   </PropertyGroup>
 
   <ItemGroup>

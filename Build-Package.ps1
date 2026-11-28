@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.48')
+param([string]$Version = '1.0.49')
 
 $ErrorActionPreference = 'Stop'
 $releaseRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'release'))

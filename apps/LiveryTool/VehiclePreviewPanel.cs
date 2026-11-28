@@ -11,6 +11,8 @@ internal sealed class VehiclePreviewPanel : UserControl
     private readonly TextBox dlc = new() { Width = 120, PlaceholderText = "GTA DLC level" };
     private readonly Panel viewport = new() { Dock = DockStyle.Fill };
     private readonly Label message = new() { Dock = DockStyle.Bottom, Height = 65, Text = "Select a car to preview it. Select a queue row to apply its pending livery." };
+    private readonly ProgressBar loading = new() { Dock = DockStyle.Bottom, Height = 6, Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 25, Visible = false, AccessibleName = "Loading vehicle preview" };
+    private int loadingGeneration;
     private readonly List<VehiclePreviewAssets> retained = [];
     private readonly string session = Path.Combine(Path.GetTempPath(), "BLRP-Livery-Viewer-" + Guid.NewGuid().ToString("N"));
     private readonly SemaphoreSlim loadLock = new(1);
@@ -71,7 +73,7 @@ internal sealed class VehiclePreviewPanel : UserControl
         {
             if (!updatingChoices && existingChoices.SelectedChoice is LiveryChoice choice) LiverySelectionChanged?.Invoke(choice.Existing, choice.Pending);
         };
-        Controls.Add(viewport); Controls.Add(connection); Controls.Add(liveryBar); Controls.Add(bar); Controls.Add(message);
+        Controls.Add(viewport); Controls.Add(connection); Controls.Add(liveryBar); Controls.Add(bar); Controls.Add(loading); Controls.Add(message);
         Directory.CreateDirectory(session);
         poll.Tick += (_, _) =>
         {
@@ -80,16 +82,21 @@ internal sealed class VehiclePreviewPanel : UserControl
                 if (File.Exists(StatusPath))
                 {
                     string text = File.ReadAllText(StatusPath);
-                    if (text.StartsWith("ERROR:")) message.Text = text;
+                    if (text.StartsWith("ERROR:") && requestedModel.Length > 0) { message.Text = text; loading.Visible = false; }
                     else if (text.StartsWith("LOADED:"))
                     {
                         string loaded = text[7..].Trim();
                         if (loaded != requestedModel) return;
                         foreach (var old in retained.Where(asset => asset.ModelPath != loaded).ToArray()) { old.Dispose(); retained.Remove(old); }
                         message.Text = lastDescription;
+                        loading.Visible = false;
                     }
                 }
-                if (process?.HasExited == true) { message.Text = "Preview renderer closed. Select a queue item to start it again."; process.Dispose(); process = null; }
+                if (process?.HasExited == true)
+                {
+                    if (requestedModel.Length > 0) { message.Text = "Preview renderer closed. Select a queue item to start it again."; loading.Visible = false; }
+                    process.Dispose(); process = null;
+                }
             }
             catch (IOException) { }
         };
@@ -112,9 +119,26 @@ internal sealed class VehiclePreviewPanel : UserControl
         finally { updatingChoices = false; }
     }
 
-    public async Task LoadVehicle(VehicleCatalog catalog, CatalogVehicle vehicle, LiveryImport? request, CancellationToken token, ExistingLivery? existing = null)
+    public int BeginLoading()
+    {
+        requestedModel = "";
+        message.Text = "Loading vehicle and livery selection…";
+        loading.Visible = true;
+        return ++loadingGeneration;
+    }
+
+    public void CancelLoading(int generation)
+    {
+        if (generation != loadingGeneration || closed) return;
+        requestedModel = "";
+        loading.Visible = false;
+        message.Text = "Preview loading cancelled.";
+    }
+
+    public async Task LoadVehicle(VehicleCatalog catalog, CatalogVehicle vehicle, LiveryImport? request, CancellationToken token, ExistingLivery? existing = null, int generation = 0)
     {
         if (closed) return;
+        if (generation == 0) generation = BeginLoading();
         await loadLock.WaitAsync(token);
         VehiclePreviewAssets? assets = null;
         try
@@ -122,7 +146,7 @@ internal sealed class VehiclePreviewPanel : UserControl
             message.Text = "Preparing real vehicle in temporary staging…";
             if (dlc.Text.Length == 0 && catalog.GameBuild == "3095") dlc.Text = "mp2023_02";
             assets = await VehiclePreviewAssets.Prepare(catalog, vehicle, request, gta.Text, dlc.Text.Trim(), token,
-                new Progress<string>(text => { if (!closed) message.Text = text; }), existing);
+                new Progress<string>(text => { if (!closed && generation == loadingGeneration) message.Text = text; }), existing);
             token.ThrowIfCancellationRequested();
             if (closed) return;
             lastDescription = assets.Description;
@@ -130,9 +154,10 @@ internal sealed class VehiclePreviewPanel : UserControl
             new XDocument(new XElement("Scene", new XAttribute("model", assets.ModelPath), new XAttribute("vehicle", vehicle.Key))).Save(temporary);
             File.Move(temporary, CommandPath, true);
             requestedModel = assets.ModelPath;
+            if (File.Exists(StatusPath)) File.Delete(StatusPath);
             retained.Add(assets); assets = null;
             StartRenderer();
-            message.Text = lastDescription;
+            message.Text = "Loading model and textures into the 3D renderer…";
         }
         finally { assets?.Dispose(); loadLock.Release(); }
     }
@@ -163,6 +188,7 @@ internal sealed class VehiclePreviewPanel : UserControl
         StopRenderer();
         // A previous load acknowledgement must not hide a preparation error after its renderer stopped.
         requestedModel = "";
+        loading.Visible = false;
         lastDescription = "";
         message.Text = text;
     }
