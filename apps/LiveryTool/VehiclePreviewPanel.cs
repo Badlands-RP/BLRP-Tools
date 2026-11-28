@@ -24,6 +24,13 @@ internal sealed class VehiclePreviewPanel : UserControl
     private readonly LiveryPicker existingChoices = new() { Width = 760, AccessibleName = "Preview livery" };
     private bool updatingChoices;
     public string DisplayedVehicleKey { get; private set; } = "";
+    public string GtaFolder => gta.Text;
+    public string DlcLevel => dlc.Text.Trim();
+    public void SetGameFiles(string folder, string level)
+    {
+        gta.Text = folder; dlc.Text = level;
+        ToolSettingsStore.Save(ToolSettingsStore.Load() with { GtaFolder = folder, CreateBackups = false });
+    }
     public event Action? RefreshRequested;
     public event Action? PreviewLiveryRequested;
     public event Action? VehicleOnlyRequested;

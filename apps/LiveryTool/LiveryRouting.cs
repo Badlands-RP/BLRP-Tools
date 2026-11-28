@@ -7,6 +7,16 @@ internal static class LiveryRouting
     {
         string[] folders = catalog.Templates(kit).Select(template => Path.GetDirectoryName(template.Path)!)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (folders.Length == 0)
+        {
+            try
+            {
+                string root = Path.GetDirectoryName(ResourceMetadata.Manifest(catalog.Root, kit.Path))!;
+                string stream = Path.Combine(root, "stream");
+                return Directory.Exists(stream) ? stream : null;
+            }
+            catch (InvalidDataException) { return null; }
+        }
         if (folders.Length != 1) return null;
         try
         {

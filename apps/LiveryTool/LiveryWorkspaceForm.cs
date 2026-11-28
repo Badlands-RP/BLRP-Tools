@@ -85,6 +85,7 @@ internal sealed class LiveryWorkspaceForm : Form
     private readonly System.Windows.Forms.Timer previewDebounce = new() { Interval = 600 };
     private bool changing;
     private bool busy;
+    private int templateGeneration;
     private bool previewVehicleOnly = true;
     private ImportRow? advancedRow;
     private ToolSettings settings;
@@ -158,6 +159,7 @@ internal sealed class LiveryWorkspaceForm : Form
         var prepare = (LiveryButton)Button("Review export", async () => await Review());
         prepare.Primary = true;
         queueFooter.Controls.Add(prepare);
+        queueFooter.Controls.Add(Button("Set up vehicle…", async () => await SetupVehicle()));
         queueFooter.Controls.Add(new Label { Text = "YFTs are built automatically. Destinations and metadata are found for you.", AutoSize = true, Padding = new Padding(8, 10, 0, 0) });
         var dropContent = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         dropContent.Controls.Add(new Label { Text = "Drop your artwork here", AutoSize = true, Font = new Font("Segoe UI", 22f, FontStyle.Bold) });
@@ -190,6 +192,7 @@ internal sealed class LiveryWorkspaceForm : Form
         advanced.Controls.Add(replacements);
         advanced.Controls.Add(replacementHint);
         advanced.Controls.Add(conversionTarget);
+        advanced.Controls.Add(Button("Set up vehicle…", async () => await SetupVehicle()));
         advanced.Controls.Add(sharedModkitOverride);
         advanced.Controls.Add(sharedModkitHint);
         advanced.Controls.Add(convertModkit);
@@ -206,7 +209,7 @@ internal sealed class LiveryWorkspaceForm : Form
             new Label { Text = "Embedded texture to replace", AutoSize = true }, textures,
             new Label { Text = "Asset filename / label (empty = automatic)", AutoSize = true }, outputName, label,
             Button("Apply overrides to selected row", ApplyOverrides),
-            Button("Metadata extraction, texture conversion & sign tools…", OpenUtilities),
+            Button("Texture conversion & sign tools…", OpenUtilities),
             new Label { AutoSize = true, MaximumSize = new Size(650, 0), Text = "Installation supports metadata-linked VMT_LIVERY_MOD assets. Native texture-index liveries, missing modkits, conflicting resource definitions and linked mod assets need additional setup. Existing slots and permissions are preserved. GTA extraction does not change the target server build." }]);
         advancedTab.Controls.Add(advanced);
         advanced.Controls.Add(new Label { Text = "Repository metadata warnings", AutoSize = true });
@@ -387,11 +390,11 @@ internal sealed class LiveryWorkspaceForm : Form
             "Choose Review export. The tool converts your image, builds the YFT and reloads it automatically. If several templates have different shapes, choose the correct one in Advanced; Fit image preserves proportions with transparent padding.",
             "Read the proposed filenames, paths, slots and access rules. If automatic discovery cannot choose a location, select it in the file or folder window. Choose Export liveries, then test in FiveM.");
         Guide("Set up a base-game vehicle's first custom modkit",
-            "Open Advanced → Metadata extraction, texture conversion & sign tools. Enter the spawn name and Find metadata. Choose the source matching your server build.",
-            "Use Insert carcols.meta… and Insert carvariations.meta… to choose your existing shared files. They can contain many vehicles. Insert vehicles.meta… if a vehicle definition is also needed. Existing matching identities are skipped.",
-            "Return to the studio and Scan vehicles again. Select the car and check Modkit setup for in Advanced.",
-            "Enable Convert to a dedicated modkit and update the master list. Choose Review modkit conversion only, inspect the plan, then Export modkit. The new kit name AND numeric ID are written into the same carcols file; that car's carvariations reference and the master list are updated together. The original kit remains available to other cars.",
-            "To add artwork, supply a compatible VMT_LIVERY_MOD YFT template for this vehicle in the resource's stream folder, keeping its original filename. For a stock template, extract the actual livery YFT with CodeWalker. Scan again and follow Create and export above. A new modkit alone cannot turn texture-index/YTD liveries into YFT livery meshes.");
+            "Select the vehicle and choose Set up vehicle beside Review export, or in Advanced. This replaces the old separate carcols/carvariations insertion buttons.",
+            "Choose your GTA V Legacy folder and the DLC level matching the server build. The tool reads active game metadata when it is missing from the repository. Stock vehicles do not need a copied vehicles.meta definition.",
+            "Choose Review setup. Existing shared metadata files are selected automatically where unambiguous. Use Show file locations to resolve a choice or override a destination.",
+            "Check the proposed duplicate repairs and modkit changes, then Apply setup. Identical duplicate kits are consolidated; differing entries are reported. Carcols names and IDs, carvariations references and the master list are updated together. An existing registered dedicated kit is reused.",
+            "Your artwork stays queued. Preview or Review export to continue. Stock livery templates are read directly from GTA into temporary staging, never copied into the server resource. Only the new custom livery YFT is exported. Addon templates must be supplied by their creator. Creating a modkit cannot turn texture-index/YTD liveries into YFT livery meshes.");
         Guide("Add a livery to vehicles sharing one modkit",
             "Select your queue row, then open Advanced. Check the shared kit name and the list of affected models (for example mule6 and mule7). Sharing one large carcols FILE does not itself mean the vehicles share a kit.",
             "Choose Enable shared-modkit override. Each new slot will be added once to the existing shared kit. The same display name and access rules apply to every model listed. Use dedicated conversion instead when the new slots should belong to only one car.",
@@ -423,8 +426,8 @@ internal sealed class LiveryWorkspaceForm : Form
         Section("Paint and scene settings", "Open Scene settings in 3D Preview for separate Paint, Lighting and Scene pages. Paint has independent primary and secondary colour pickers, finish menus and reset controls. A layer is disabled when the model does not declare it. Paint choices stay in the preview when switching liveries, and do not change artwork or exported YFTs. Matte, classic, metallic, satin and chrome are studio approximations; verify the final finish in FiveM. Lighting controls the studio lights, and Scene contains backgrounds, screenshot options and body-part visibility.");
         Section("YFT building is automatic", "Enter a livery name and access group (blank means public). Choose Review export. The tool selects a compatible existing VMT_LIVERY_MOD template, converts the image with mipmaps, builds a uniquely named native YFT and reloads it to verify the result. You do not need to convert an image or build a YFT separately. If artwork dimensions differ, enable Fit image under Advanced to preserve its proportions with transparent padding.");
         Section("Review, then export", "The tool finds the existing livery stream folder, the vehicle's exact modkit metadata and the Lua configuration for names and access. When a destination or Lua file cannot be identified uniquely, a selection window asks you to choose it. The folder button in each queue row and the Lua field in Advanced let you override these choices. Review lists every asset, metadata path, slot and access rule before Export liveries writes them together. Existing liveries are preserved. No files are written to your repository during preview or review.");
-        Section("When Advanced is needed", "Use Advanced to select a modkit, compatible livery template or embedded texture when there are several valid choices. It also contains shared queue settings and the separate extraction, texture conversion and sign utilities. A vehicle with no compatible VMT_LIVERY_MOD template needs a template made for that vehicle first. Texture-index livery systems and conflicting resource definitions require additional setup; exporting arbitrary artwork cannot create a compatible mesh.");
-        Section("A vehicle's first custom modkit", "In Advanced, enable Convert to a dedicated modkit and update the master list for the selected queue vehicle. Review export will create one dedicated kit, preserve the existing mods and slots, update that vehicle's carvariations reference and register the new ID in the master list. The original kit remains intact for other vehicles. Review modkit conversion only works without artwork or a livery template. The master list is found relative to your selected repository; use Choose master list if it lives elsewhere. Creating a modkit does not create a compatible livery mesh. Vehicles without repository modkit metadata still need the correct metadata extracted or supplied first.");
+        Section("When Advanced is needed", "Use Advanced to select a modkit, compatible livery template or embedded texture when there are several valid choices. Stock templates load directly from the selected GTA build when there are no repository templates. Advanced also contains shared queue settings, vehicle setup, texture conversion and sign utilities. An addon with no readable matching template needs one supplied by its creator. Texture-index livery systems cannot be converted by cloning a YFT livery.");
+        Section("A vehicle's first custom modkit", "Choose Set up vehicle for one reviewed operation covering missing carcols/carvariations, identical duplicate repairs, dedicated-kit conversion and master-list registration. File locations are discovered from your repository and can be changed when necessary. Stock livery assets remain in GTA. The separate conversion checkbox is still available for an already configured kit when you want to combine conversion with a livery export.");
         Section("Escrowed models", "Encrypted FXAP assets cannot be decoded by this offline renderer, even just for viewing. Unencrypted files in an escrowed resource can still be previewed. For an encrypted vehicle, ask its creator for an unencrypted preview model and required textures, or inspect it in your entitled FiveM resource. The tool does not decrypt or bypass escrow protection.");
         Section("Before using it on the server", "This is an offline visual check. Paint is an approximation and some materials or dependencies cannot be reproduced. Test the exported vehicle, livery slots, names and access in FiveM before deployment. A folder outside a running resource's stream directory needs its exported assets copied into the resource first.");
         content.Resize += (_, _) => { foreach (Label item in content.Controls.OfType<Label>()) item.MaximumSize = new Size(Math.Max(250, content.ClientSize.Width - 65), 0); };
@@ -498,7 +501,7 @@ internal sealed class LiveryWorkspaceForm : Form
         row.Kit = kit;
         row.AllowSharedModkit = sharedKitOverrides.Contains(KitKey(kit));
         VehicleTemplate? template = row.Template;
-        row.Template = template == null ? null : catalog!.Templates(kit).SingleOrDefault(candidate =>
+        row.Template = template?.GameSource != null && GameLiveryTemplates.Matches(catalog!, kit, template) ? template : template == null ? null : catalog!.Templates(kit).SingleOrDefault(candidate =>
             candidate.Path.Equals(template.Path, StringComparison.OrdinalIgnoreCase) && XNode.DeepEquals(candidate.Mod, template.Mod));
         if (template != null && row.Template == null) row.Texture = "";
         if (changed && row.AutomaticFolder) { row.ExportFolder = ""; row.AutomaticFolder = false; }
@@ -649,7 +652,7 @@ internal sealed class LiveryWorkspaceForm : Form
         row.AllowSharedModkit = sharedKitOverrides.Contains(KitKey(row.Kit));
         VehicleTemplate[] compatible = catalog!.Templates(row.Kit);
         // Different livery meshes are not interchangeable merely because they share a vehicle.
-        if (compatible.Length == 0) { row.Status = "Needs compatible streamed VMT_LIVERY_MOD template"; return; }
+        if (compatible.Length == 0) { row.Status = row.Kit.Liveries.Length > 0 ? "Stock templates load from GTA during preview / review" : "No livery slots — use Set up vehicle"; return; }
         row.Status = "Checking template";
         // Inspecting YFTs runs only on demand, away from the UI thread.
         row.Template = compatible.Length == 1 ? compatible[0] : null;
@@ -754,9 +757,23 @@ internal sealed class LiveryWorkspaceForm : Form
         outputName.Text = row.OutputName; label.Text = row.Label;
     }
 
-    private void LoadTemplates()
+    private string TargetDlc => preview.DlcLevel.Length > 0 ? preview.DlcLevel : catalog?.GameBuild == "3095" ? "mp2023_02" : "";
+
+    private async void LoadTemplates()
     {
-        templates.DataSource = catalog != null && kits.SelectedItem is VehicleKit kit ? catalog.Templates(kit) : null;
+        int generation = ++templateGeneration;
+        var snapshot = catalog; var selectedRow = advancedRow;
+        if (snapshot == null || kits.SelectedItem is not VehicleKit kit) { templates.DataSource = null; LoadTextures(); return; }
+        VehicleTemplate[] candidates = snapshot.Templates(kit);
+        templates.DataSource = candidates;
+        if (candidates.Length == 0 && selectedRow != null && selectedRow.ReplaceExisting == false && kit.Liveries.Length > 0 && !busy && tabs.SelectedIndex == 3 && Vehicle(selectedRow)?.Problems.Length == 0)
+        {
+            try { candidates = await GameLiveryTemplates.Resolve(snapshot, kit, preview.GtaFolder, TargetDlc, default, Progress()); }
+            catch (Exception ex) { if (generation == templateGeneration) status.Text = ex.Message; return; }
+            if (generation != templateGeneration || catalog != snapshot || advancedRow != selectedRow || !Equals(kits.SelectedItem, kit) || IsDisposed) return;
+            templates.DataSource = candidates;
+        }
+        if (selectedRow?.Template != null) templates.SelectedItem = candidates.FirstOrDefault(template => template.Path == selectedRow.Template.Path);
         LoadTextures();
     }
 
@@ -793,7 +810,7 @@ internal sealed class LiveryWorkspaceForm : Form
             return;
         }
         VehicleTemplate? template = templates.SelectedItem as VehicleTemplate;
-        if (template != null && !catalog!.Templates(kit).Any(candidate => candidate.Path == template.Path && XNode.DeepEquals(candidate.Mod, template.Mod)))
+        if (template != null && !GameLiveryTemplates.Matches(catalog!, kit, template))
         {
             UpdateAdvanced();
             status.Text = "Choose a template belonging to the current vehicle's modkit.";
@@ -804,16 +821,17 @@ internal sealed class LiveryWorkspaceForm : Form
         row.Texture = (textures.SelectedItem as LiveryTexture)?.Name ?? "";
         if (!row.ReplaceExisting) { row.OutputName = outputName.Text.Trim(); row.Label = label.Text.Trim(); }
         row.Completed = false; row.Status = "Needs review";
-        if (!row.ReplaceExisting && row.Kit != null && row.Template != null && catalog != null)
+        if (!row.ReplaceExisting && row.Kit != null && row.Template?.GameSource == null && row.Template != null && catalog != null)
             remembered[catalog.Root + "|" + row.Vehicle] = new VehicleChoice(row.Kit.Path, row.Kit.Name, row.Template.Path, row.Texture);
         rows.ResetBindings(); InvalidatePlan(); SchedulePreview();
     }
 
-    private async Task<LiveryImport> Request(ImportRow row)
+    private async Task<LiveryImport> Request(ImportRow row, CancellationToken cancellation = default)
     {
         if (!row.ReplaceExisting) RebindSelection(row);
         VehicleCatalog snapshot = catalog ?? throw new InvalidOperationException("Scan vehicles before previewing or reviewing.");
         CatalogVehicle vehicle = Vehicle(row) ?? throw new InvalidDataException("Choose a vehicle for " + Path.GetFileName(row.Image));
+        if (vehicle.Problems.Length > 0) throw new InvalidDataException(vehicle.Status + " Open Set up vehicle to review repairs.");
         if (row.ReplaceExisting)
         {
             string key = row.ReplacementKey;
@@ -828,15 +846,18 @@ internal sealed class LiveryWorkspaceForm : Form
             row.Kit = selected.Kit; row.Template = new VehicleTemplate(selected.Paths.Single(), selected.Mod); row.Texture = textureName;
             return new LiveryImport(vehicle, selected.Kit, row.Template, textureName, row.Image, selected.DisplayName, "", "", row.FitImage, Replacement: selected);
         }
-        if (row.Kit == null) throw new InvalidDataException(vehicle.Status + ". Choose a modkit in Advanced.");
+        if (row.Kit == null) throw new InvalidDataException(vehicle.Status + ". Choose Set up vehicle to prepare its metadata.");
         VehicleKit kit = row.Kit;
+        if (row.Template?.GameSource != null && !GameLiveryTemplates.MatchesConfiguration(row.Template, preview.GtaFolder, TargetDlc)) { row.Template = null; row.Texture = ""; }
         VehicleTemplate? selectedTemplate = row.Template;
         VehicleTemplate? template = selectedTemplate;
         string selectedTexture = row.Texture;
         if (template == null)
         {
             // Automatically reuse equivalent templates only when their mesh/shader structure is identical.
-            template = await Task.Run(() => TemplateCompatibility.Choose(snapshot.Templates(kit)));
+            VehicleTemplate[] candidates = await GameLiveryTemplates.Resolve(snapshot, kit, preview.GtaFolder, TargetDlc, cancellation, Progress());
+            if (candidates.Length == 0) throw new InvalidDataException("No compatible livery YFT was found in the repository or selected GTA build for " + vehicle.Model + ". An addon needs a readable template supplied for that vehicle.");
+            template = await Task.Run(() => TemplateCompatibility.Choose(candidates), cancellation);
         }
         if (template == null) throw new InvalidDataException("Choose a compatible template in Advanced for " + vehicle.Model);
         string texture = selectedTexture.Length > 0 ? selectedTexture : await Task.Run(() => LiveryAssetBuilder.SuggestTexture(template.Path)) ?? "";
@@ -885,7 +906,7 @@ internal sealed class LiveryWorkspaceForm : Form
             foreach (ImportRow row in pending)
             {
                 LiveryImport request;
-                try { request = await Request(row); row.Status = "Preparing"; }
+                try { request = await Request(row, token); row.Status = "Preparing"; }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex) { row.Status = "Needs attention: " + ex.Message; errors.Add($"{Vehicle(row)?.Model ?? row.Vehicle} / {Path.GetFileName(row.Image)}: {ex.Message}"); continue; }
                 if (request.Replacement == null && row.ExportFolder.Length == 0)
@@ -949,7 +970,7 @@ internal sealed class LiveryWorkspaceForm : Form
             CatalogVehicle vehicle = snapshot.Vehicles.Single(item => item.Key == key);
             VehicleKit? kit = vehicle.Kits.SingleOrDefault(item => selected != null && item.Path == selected.Path && item.Name == selected.Name);
             kit ??= vehicle.Kits.Length == 1 ? vehicle.Kits[0] : null;
-            if (kit == null) throw new InvalidDataException("Select this vehicle's modkit in Advanced. If it has no repository modkit metadata, extract or supply that metadata first.");
+            if (kit == null) throw new InvalidDataException("Choose Set up vehicle to prepare missing metadata, or select an existing modkit in Advanced.");
             string master = await MasterListPath(snapshot, token);
             plan = await Task.Run(() => workflow.PrepareModkits(snapshot, [new(vehicle, kit)], master, token), token);
             plannedRows = [];
@@ -1039,7 +1060,7 @@ internal sealed class LiveryWorkspaceForm : Form
         int loading = preview.BeginLoading();
         try
         {
-            LiveryImport? request = row != null && !previewVehicleOnly ? await Request(row) : null;
+            LiveryImport? request = row != null && !previewVehicleOnly ? await Request(row, source.Token) : null;
             CatalogVehicle vehicle = request?.Vehicle ?? selected!;
             ExistingLivery[] existing = await Task.Run(() => ExistingLiveries.Load(snapshot, vehicle, source.Token), source.Token);
             source.Token.ThrowIfCancellationRequested();
@@ -1064,6 +1085,22 @@ internal sealed class LiveryWorkspaceForm : Form
         using var utilities = new MainForm();
         utilities.ShowDialog(this);
     }
+
+    private async Task SetupVehicle()
+    {
+        if (busy || catalog == null) return;
+        CatalogVehicle? vehicle = Current is ImportRow row ? Vehicle(row) : vehicles.SelectedItem as CatalogVehicle;
+        if (vehicle == null) { status.Text = "Select a vehicle first."; return; }
+        previewOperation?.Cancel(); previewDebounce.Stop();
+        using var setup = new VehicleSetupForm(catalog, vehicle, preview.GtaFolder, TargetDlc, masterList.Text);
+        setup.ShowDialog(this);
+        if (Directory.Exists(setup.GtaFolder)) preview.SetGameFiles(setup.GtaFolder, setup.DlcLevel);
+        if (setup.Applied)
+        {
+            await Scan();
+            status.Text = vehicle.Model + " metadata setup applied. Your artwork is still queued; preview or review the livery to continue.";
+        }
+    }
 }
 
 internal static class TemplateCompatibility
@@ -1079,6 +1116,14 @@ internal static class TemplateCompatibility
             var xml = System.Xml.Linq.XDocument.Parse(CodeWalker.GameFiles.YftXml.GetXml(yft));
             string? texture = LiveryAssetBuilder.SuggestTexture(template.Path);
             if (texture == null) return null;
+            // The selected source keeps its own usage flags, and Build replaces the
+            // livery image as DXT5. Stock DXT1/DXT5 variants can share the same mesh.
+            // Keep dimensions, all other textures, UVs, shaders and transforms in the signature.
+            foreach (XElement target in xml.Descendants("TextureDictionary").Elements("Item").Where(item => item.Element("Name")?.Value == texture))
+            {
+                target.Element("Format")?.Remove();
+                target.Element("UsageFlags")?.Remove();
+            }
             // Ignore only asset identities and DDS payload names; retain UVs, geometry, dimensions and shaders.
             // Asset identities and livery texture identities are separate: cara2_liv11, for example,
             // contains a texture called livery11, while later templates name both alike.

@@ -125,7 +125,7 @@ internal static class ModkitConversion
         return offset + column - 2; // XML line information points at the name, immediately after '<'.
     }
 
-    private static (int Start, int End) ElementSpan(string text, XElement element)
+    internal static (int Start, int End) ElementSpan(string text, XElement element)
     {
         var target = (IXmlLineInfo)element;
         using var reader = XmlReader.Create(new StringReader(text), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit });
@@ -143,7 +143,7 @@ internal static class ModkitConversion
         throw new InvalidDataException("Could not locate the original XML element without reformatting unrelated metadata.");
     }
 
-    private static string AppendKit(string text, XElement parent, XElement converted)
+    internal static string AppendKit(string text, XElement parent, XElement converted)
     {
         var span = ElementSpan(text, parent);
         int close = text.LastIndexOf("</Kits", span.End - 1, span.End - span.Start, StringComparison.Ordinal);

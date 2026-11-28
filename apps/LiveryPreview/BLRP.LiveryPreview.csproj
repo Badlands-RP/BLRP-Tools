@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>BLRP.LiveryPreview</AssemblyName>
-    <Version>1.0.49</Version>
+    <Version>1.0.50</Version>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
     <BadWalkerDirectory Condition="'$(BadWalkerDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\release\staging\BLRP-Tools\tools\BadWalker</BadWalkerDirectory>

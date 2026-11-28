@@ -11,9 +11,9 @@ internal sealed record VehicleKit(string Path, string Name, XElement Xml)
     public override string ToString() => $"{Name} — {System.IO.Path.GetDirectoryName(Path)}";
 }
 
-internal sealed record VehicleTemplate(string Path, XElement Mod)
+internal sealed record VehicleTemplate(string Path, XElement Mod, string? GameSource = null)
 {
-    public override string ToString() => System.IO.Path.GetFileName(Path);
+    public override string ToString() => System.IO.Path.GetFileName(Path) + (GameSource != null ? " · GTA archive" : "");
 }
 
 internal sealed record CatalogVehicle(string Model, string DisplayName, string Resource, string ResourcePath,
@@ -42,7 +42,7 @@ internal sealed class VehicleCatalog
             System.IO.Path.GetFileNameWithoutExtension(file).Equals(mod.Element("modelName")?.Value, StringComparison.OrdinalIgnoreCase))
         .Select(file => new VehicleTemplate(file, mod))).ToArray();
 
-    public static VehicleCatalog Scan(string root, CancellationToken cancellation, IProgress<string>? progress = null)
+    public static VehicleCatalog Scan(string root, CancellationToken cancellation, IProgress<string>? progress = null, IReadOnlyDictionary<string, string>? overrides = null)
     {
         root = System.IO.Path.GetFullPath(root);
         string resources = System.IO.Path.Combine(root, "resources");
@@ -67,7 +67,7 @@ internal sealed class VehicleCatalog
             cancellation.ThrowIfCancellationRequested();
             try
             {
-                XDocument document = XDocument.Load(file, LoadOptions.PreserveWhitespace);
+                XDocument document = overrides?.TryGetValue(file, out string? staged) == true ? XDocument.Parse(staged, LoadOptions.PreserveWhitespace) : XDocument.Load(file, LoadOptions.PreserveWhitespace);
                 if (document.Descendants("InitDatas").Any() || document.Descendants("variationData").Any() || document.Descendants("Kits").Any()) documents.Add((file, document));
             }
             catch (Exception ex) { warnings.Add($"{System.IO.Path.GetRelativePath(root, file)}: {ex.Message}"); }
@@ -112,7 +112,8 @@ internal sealed class VehicleCatalog
             if (group.Count(item => item.Xml.Parent?.Name.LocalName == "InitDatas") > 1) problems.Add("Multiple vehicle definitions; resolve load order");
             var kitRefs = variations.SelectMany(item => item.Xml.Element("kits")?.Elements("Item") ?? []).Select(item => Hash(item.Value.Trim())).ToHashSet();
             var linked = kitRefs.SelectMany(hash => kitsByHash[hash]).ToArray();
-            if (linked.GroupBy(kit => Hash(kit.Name)).Any(items => items.Count() > 1)) problems.Add("Duplicate modkit definitions; resolve load order");
+            foreach (var duplicate in linked.GroupBy(kit => Hash(kit.Name)).Where(items => items.Count() > 1))
+                problems.Add($"Duplicate modkit '{duplicate.First().Name}' ({duplicate.Count()} entries): " + string.Join(", ", duplicate.GroupBy(kit => kit.Path).Select(items => System.IO.Path.GetRelativePath(root, items.Key) + $" ×{items.Count()}")) + ". Use Set up vehicle to review identical duplicates.");
             string[] models = modelFiles[first.Model].Concat(modelFiles[first.Model + "_hi"]).ToArray();
             string txd = group.Select(item => item.Xml.Element("txdName")?.Value).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? first.Model;
             string[] textures = textureFiles[txd].ToArray();

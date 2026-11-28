@@ -34,6 +34,45 @@ internal sealed record VehicleMetadataBlock(string Kind, string SourceKey, strin
 
 internal sealed class VehicleMetadataFinder
 {
+    internal static VehicleMetadataSourceResult FindActive(GameFileCache game, string model, CancellationToken cancellation)
+    {
+        var entries = game.ActiveMapRpfFiles.Values.Concat(game.DlcActiveRpfs).Distinct()
+            .SelectMany(rpf => rpf.AllEntries ?? []).OfType<RpfFileEntry>().ToArray();
+        VehicleMetadataBlock? Last(string kind, string section, string child, string identity, Func<RpfFileEntry, string?> load, params string[] filenames)
+        {
+            VehicleMetadataBlock? found = null;
+            foreach (var entry in entries.Where(entry => filenames.Contains(entry.NameLower, StringComparer.OrdinalIgnoreCase)))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                string? xml = load(entry);
+                if (xml == null) continue;
+                foreach (XElement item in XDocument.Parse(xml).Descendants(section).Elements("Item").Where(item => item.Element(child)?.Value.Equals(identity, StringComparison.OrdinalIgnoreCase) == true))
+                    found = CreateBlock(kind, entry.Path, identity, item.ToString());
+            }
+            return found;
+        }
+        var vehicle = Last("vehicles.meta", "InitDatas", "modelName", model, TryGetXmlText, "vehicles.meta");
+        var variation = Last("carvariations", "variationData", "modelName", model, TryLoadCarVariationsXml, "carvariations.meta", "carvariations.ymt");
+        var kits = new Dictionary<uint, VehicleMetadataBlock>();
+        if (variation != null)
+        {
+            var hashes = ExtractKitHashes(variation.Xml).ToHashSet();
+            foreach (var entry in entries.Where(entry => entry.NameLower is "carcols.meta" or "carcols.ymt"))
+            {
+                cancellation.ThrowIfCancellationRequested();
+                string? xml = TryLoadCarColsXml(entry);
+                if (xml == null) continue;
+                foreach (var kit in FindKits(xml, hashes))
+                {
+                    string name = kit.Element("kitName")!.Value.Trim();
+                    TryGetHash(name, out uint hash);
+                    kits[hash] = CreateBlock("carcols kit", entry.Path, name, kit.ToString());
+                }
+            }
+        }
+        return new("active", "Active GTA metadata for " + model, vehicle == null ? [] : [vehicle], variation == null ? [] : [variation], kits.Values.ToArray());
+    }
+
     public static bool InsertVehiclesBlock(string targetPath, string xml, bool createBackup)
     {
         var modelName = GetChildValue(xml, "modelName");

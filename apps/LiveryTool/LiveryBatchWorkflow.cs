@@ -123,9 +123,9 @@ internal sealed class LiveryBatchWorkflow
                         throw new InvalidDataException("Resolve conflicting metadata for shared-modkit vehicles: " + string.Join(", ", affected.Where(vehicle => vehicle.Problems.Length > 0 || catalog.Vehicles.Count(other => other.Model.Equals(vehicle.Model, StringComparison.OrdinalIgnoreCase)) != 1).Select(vehicle => vehicle.Model)));
                     if (catalog.Vehicles.Count(vehicle => vehicle.Model.Equals(import.Vehicle.Model, StringComparison.OrdinalIgnoreCase)) != 1)
                         throw new InvalidDataException($"{import.Vehicle.Model} has multiple resource definitions. Resolve repository load order before importing.");
-                    if (!catalog.Templates(import.Kit).Any(template => template.Path == import.Template.Path && XNode.DeepEquals(template.Mod, import.Template.Mod)))
+                    if (!GameLiveryTemplates.Matches(catalog, import.Kit, import.Template))
                         throw new InvalidDataException("Template is not a livery mod referenced by the selected vehicle modkit.");
-                    if (plan.StreamBaseline.Count(path => Path.GetFileName(path).Equals(Path.GetFileName(import.Template.Path), StringComparison.OrdinalIgnoreCase)) != 1)
+                    if (plan.StreamBaseline.Count(path => Path.GetFileName(path).Equals(Path.GetFileName(import.Template.Path), StringComparison.OrdinalIgnoreCase)) != (import.Template.GameSource == null ? 1 : 0))
                         throw new InvalidDataException("Template has duplicate streamed filenames across resources. Resolve them first.");
                     if (import.Vehicle.ModelPaths.GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
                         throw new InvalidDataException("Vehicle has duplicate streamed model names across resources. Resolve them first.");
@@ -245,7 +245,7 @@ internal sealed class LiveryBatchWorkflow
         return converted;
     }
 
-    private static string PlanText(LiveryPlan plan, VehicleCatalog catalog, Dictionary<string, string> texts, string path)
+    internal static string PlanText(LiveryPlan plan, VehicleCatalog catalog, Dictionary<string, string> texts, string path)
     {
         if (!plan.SelectedMasterLists.Contains(path)) EnsureInside(catalog.Root, path);
         if (!texts.TryGetValue(path, out string? text))
@@ -257,7 +257,7 @@ internal sealed class LiveryBatchWorkflow
         return text;
     }
 
-    private static void StageTexts(LiveryPlan plan, Dictionary<string, string> texts)
+    internal static void StageTexts(LiveryPlan plan, Dictionary<string, string> texts)
     {
         int index = 0;
         foreach (var change in texts)
@@ -352,7 +352,7 @@ internal sealed class LiveryBatchWorkflow
             if (!File.Exists(input.Key) || !SHA256.HashData(File.ReadAllBytes(input.Key)).SequenceEqual(input.Value)) throw new IOException("Input changed since review: " + input.Key);
     }
 
-    private static string[] StreamFiles(string resources) => Directory.EnumerateFiles(resources, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
+    internal static string[] StreamFiles(string resources) => Directory.EnumerateFiles(resources, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
         .Where(file => file.Split(Path.DirectorySeparatorChar).Contains("stream", StringComparer.OrdinalIgnoreCase) && new[] { ".yft", ".ytd", ".ydr", ".ydd" }.Contains(Path.GetExtension(file).ToLowerInvariant()))
         .Order(StringComparer.OrdinalIgnoreCase).ToArray();
 

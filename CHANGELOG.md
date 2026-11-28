@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.50
+
+- Replaced separate metadata insertion steps with one reviewed vehicle setup flow for carcols, carvariations and modkit registration.
+- Added automatic discovery of shared metadata files, with manual choices when destinations are ambiguous.
+- Added safe repair of identical duplicate modkits and clearer diagnostics for conflicting definitions.
+- Read stock livery templates directly from GTA; only new custom livery YFTs are exported to the repository.
+- Fixed stock livery previews and automatic selection of equivalent stock templates.
+- Updated Help with the simpler setup workflow.
+
 ## v1.0.49
 
 - Added a shared-modkit override to export liveries for every vehicle using the same kit, with affected models listed in review.

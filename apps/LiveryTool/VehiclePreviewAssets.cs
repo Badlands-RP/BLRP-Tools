@@ -14,6 +14,34 @@ internal sealed class VehiclePreviewAssets : IDisposable
 
     public VehiclePreviewAssets() => Directory.CreateDirectory(DirectoryPath);
 
+    internal static async Task<T> ReadGame<T>(string gtaFolder, string dlc, CancellationToken cancellation, IProgress<string> progress, Func<GameFileCache, T> read)
+    {
+        await ArchiveLock.WaitAsync(cancellation);
+        try { return await Task.Run(() => read(GetGame(gtaFolder, dlc, cancellation, progress)), cancellation); }
+        finally { ArchiveLock.Release(); }
+    }
+
+    private static GameFileCache GetGame(string gtaFolder, string dlc, CancellationToken cancellation, IProgress<string> progress)
+    {
+        if (!Directory.Exists(gtaFolder)) throw new InvalidDataException("Choose your GTA V Legacy folder to use stock metadata and livery templates.");
+        if (string.IsNullOrWhiteSpace(dlc)) throw new InvalidDataException("Choose the GTA DLC level matching your server build. The latest installed DLC is not selected automatically.");
+        string key = Path.GetFullPath(gtaFolder) + "|" + dlc;
+        if (cache == null || cacheKey != key)
+        {
+            progress.Report("Indexing GTA archives (first load can take a while)…");
+            GTA5Keys.LoadFromPath(gtaFolder, false, null);
+            var next = new GameFileCache(512 * 1024 * 1024, 10, gtaFolder, false, dlc, false, "")
+            { LoadArchetypes = false, LoadVehicles = false, LoadPeds = false, LoadAudio = false };
+            var errors = new List<string>();
+            next.Init(message => { cancellation.ThrowIfCancellationRequested(); progress.Report(message); }, errors.Add);
+            cancellation.ThrowIfCancellationRequested();
+            if (!next.IsInited || !next.DlcNameList.Contains(dlc, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidDataException("GTA archive indexing failed or the selected DLC level is unavailable. " + errors.FirstOrDefault());
+            cache?.Clear(); cache = next; cacheKey = key;
+        }
+        return cache;
+    }
+
     public static async Task<VehiclePreviewAssets> Prepare(VehicleCatalog catalog, CatalogVehicle vehicle, LiveryImport? import, string gtaFolder, string dlc,
         CancellationToken cancellation, IProgress<string> progress, ExistingLivery? existing = null)
     {
@@ -33,23 +61,7 @@ internal sealed class VehiclePreviewAssets : IDisposable
             GameFileCache Game()
             {
                 if (game != null) return game;
-                if (!Directory.Exists(gtaFolder)) throw new InvalidDataException("Select your local GTA V Legacy folder in 3D Preview to resolve the actual vehicle and shared textures.");
-                if (string.IsNullOrWhiteSpace(dlc)) throw new InvalidDataException($"Confirm the GTA DLC level for target build {catalog.GameBuild} in 3D Preview. The newest installed DLC is not selected automatically.");
-                string key = Path.GetFullPath(gtaFolder) + "|" + dlc;
-                if (cache == null || cacheKey != key)
-                {
-                    progress.Report("Indexing GTA archives for offline preview (first load can take a while)…");
-                    GTA5Keys.LoadFromPath(gtaFolder, false, null);
-                    var next = new GameFileCache(512 * 1024 * 1024, 10, gtaFolder, false, dlc, false, "")
-                    { LoadArchetypes = false, LoadVehicles = false, LoadPeds = false, LoadAudio = false };
-                    var errors = new List<string>();
-                    next.Init(message => { cancellation.ThrowIfCancellationRequested(); progress.Report(message); }, errors.Add);
-                    cancellation.ThrowIfCancellationRequested();
-                    if (!next.IsInited || !next.DlcNameList.Contains(dlc, StringComparer.OrdinalIgnoreCase))
-                        throw new InvalidDataException("GTA archive indexing failed or the selected DLC level is unavailable. " + errors.FirstOrDefault());
-                    cache?.Clear(); cache = next; cacheKey = key;
-                }
-                game = cache;
+                game = GetGame(gtaFolder, dlc, cancellation, progress);
                 return game;
             }
             YtdFile? ArchiveTextures(string name)
@@ -70,8 +82,8 @@ internal sealed class VehiclePreviewAssets : IDisposable
             if (candidates.Length == 1) { modelSource = candidates[0]; model.Load(NativeAssetReader.Read(modelSource)); }
             else
             {
-                RpfFileEntry? entry = Game().GetYftEntry(JenkHash.GenHash(vehicle.Model.ToLowerInvariant() + "_hi")) ??
-                    Game().GetYftEntry(JenkHash.GenHash(vehicle.Model.ToLowerInvariant()));
+                RpfFileEntry? entry = GameLiveryTemplates.FindActiveYft(Game(), vehicle.Model + "_hi") ??
+                    GameLiveryTemplates.FindActiveYft(Game(), vehicle.Model);
                 if (entry == null) throw new InvalidDataException("Actual vehicle model is absent from the selected GTA DLC level.");
                 modelSource = entry.Path;
                 model.Load(entry.File.ExtractFile(entry), entry);
@@ -94,10 +106,10 @@ internal sealed class VehiclePreviewAssets : IDisposable
                 if (existing.Paths.Length == 1) source = existing.Paths[0];
                 else
                 {
-                    RpfFileEntry? entry = Game().GetYftEntry(JenkHash.GenHash(existing.Model.ToLowerInvariant()));
+                    RpfFileEntry? entry = GameLiveryTemplates.FindActiveYft(Game(), existing.Model);
                     if (entry == null) throw new InvalidDataException("This livery YFT is absent from both the repository and the selected GTA DLC level.");
                     source = Path.Combine(result.DirectoryPath, "existing-source.yft");
-                    File.WriteAllBytes(source, entry.File.ExtractFile(entry));
+                    File.WriteAllBytes(source, GameLiveryTemplates.ReadNative(entry));
                 }
                 string texture = LiveryAssetBuilder.SuggestTexture(source) ?? throw new InvalidDataException("Select a livery with an unambiguous embedded livery sampler for preview.");
                 LiveryAssetBuilder.CopyForPreview(source, texture, unique, pending, cancellation);

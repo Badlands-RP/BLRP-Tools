@@ -23,6 +23,68 @@ internal static class Program
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length == 4 && args[0] == "--setup-real-check")
+        {
+            string setupRoot = Path.Combine(Path.GetTempPath(), "BLRP-Daemon-Setup-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(setupRoot);
+            try
+            {
+                var real = VehicleCatalog.Scan(args[1], default);
+                var realCar = real.Vehicles.Single(vehicle => vehicle.Model == "daemon2");
+                string realMaster = ModkitConversion.ResolveMasterList(real, null);
+                var realTargets = VehicleSetupWorkflow.Targets(real, realCar);
+                string realCols = realCar.Kits.Select(kit => kit.Path).Distinct().SingleOrDefault() ?? VehicleSetupWorkflow.Suggest(realTargets.Carcols) ?? VehicleSetupWorkflow.SuggestRegisteredCarcols(real, realTargets.Carcols, realMaster)!;
+                string realVars = realCar.MetadataPaths.FirstOrDefault(path => XDocument.Load(path).Descendants("variationData").Any()) ?? VehicleSetupWorkflow.Suggest(realTargets.Variations, sibling: realCols)!;
+                var originals = new[] { realCols, realVars, realMaster }.Concat(realCar.MetadataPaths).Distinct().ToDictionary(path => path, path => SHA256.HashData(File.ReadAllBytes(path)));
+                string data = Path.Combine(setupRoot, "resources", "addons", "data");
+                Directory.CreateDirectory(data); Directory.CreateDirectory(Path.Combine(setupRoot, "resources", "addons", "stream"));
+                string cols = Path.Combine(data, "carcols.meta"), vars = Path.Combine(data, "carvariations.meta"), master = Path.Combine(setupRoot, "Modkit Master List.txt");
+                File.Copy(realCols, cols); File.Copy(realVars, vars); File.Copy(realMaster, master);
+                var init = realCar.MetadataPaths.SelectMany(path => XDocument.Load(path).Descendants("InitDatas").Elements("Item")).FirstOrDefault(item => item.Element("modelName")?.Value.Equals("daemon2", StringComparison.OrdinalIgnoreCase) == true);
+                if (init != null) new XDocument(new XElement("CVehicleModelInfo__InitDataList", new XElement("InitDatas", new XElement(init)))).Save(Path.Combine(data, "vehicles.meta"));
+                File.WriteAllText(Path.Combine(data, "..", "fxmanifest.lua"), "files {'data/*.meta'}\ndata_file 'CARCOLS_FILE' 'data/carcols.meta'\ndata_file 'VEHICLE_VARIATION_FILE' 'data/carvariations.meta'\ndata_file 'VEHICLE_METADATA_FILE' 'data/vehicles.meta'");
+                File.WriteAllText(Path.Combine(setupRoot, "server.cfg"), "set sv_enforceGameBuild 3095");
+                string access = Path.Combine(setupRoot, "resources", "addons", "blrp_custom_liveries.lua");
+                File.Copy(LiveryRouting.AccessFile(real, null, default), access);
+                var catalog = VehicleCatalog.Scan(setupRoot, default); var car = catalog.Vehicles.Single(vehicle => vehicle.Model == "daemon2");
+                string gtaFolder = args[2], output = Path.GetFullPath(args[3]); Directory.CreateDirectory(output);
+                var progress = new InlineProgress(message => { if (message.StartsWith("Reading stock")) Console.WriteLine(message); });
+                var active = await VehiclePreviewAssets.ReadGame(gtaFolder, "mp2023_02", default, progress, game => VehicleMetadataFinder.FindActive(game, "daemon2", default));
+                using (var setup = VehicleSetupWorkflow.Prepare(catalog, car, cols, vars, master, active, true, default))
+                {
+                    Console.WriteLine(setup.Review);
+                    new LiveryBatchWorkflow().Install(setup.Plan, default);
+                }
+                catalog = VehicleCatalog.Scan(setupRoot, default); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "daemon2");
+                Check(car.Problems.Length == 0 && car.Kits.Single().Liveries.Length == 18, "real Daemon2 setup produces one linked kit with exactly 18 stock slots");
+                Check(active.Variations.Count == 1 && active.Kits.Count == 1, "active-build metadata resolves Daemon2's stock carvariations and carcols together");
+                VehicleTemplate[] templates = await GameLiveryTemplates.Resolve(catalog, car.Kits.Single(), gtaFolder, "mp2023_02", default, progress);
+                Check(templates.Length == 18 && templates.All(template => template.GameSource != null && !template.Path.StartsWith(setupRoot)), "all 18 stock Daemon2 livery templates load from GTA into temporary staging");
+                VehicleTemplate template = TemplateCompatibility.Choose(templates) ?? throw new InvalidDataException("Stock Daemon2 templates need a manual compatibility selection.");
+                Check(template.GameSource != null, "equivalent stock Daemon2 templates select automatically despite DXT1/DXT5 artwork differences");
+                var existing = ExistingLiveries.Load(catalog, car).First(livery => livery.Paths.Length == 0);
+                using (var stockPreview = await VehiclePreviewAssets.Prepare(catalog, car, null, gtaFolder, "mp2023_02", default, progress, existing))
+                    Check(File.Exists(stockPreview.ModelPath), "an existing stock Daemon2 livery previews directly from its GTA archive");
+                string artwork = Path.Combine(output, "daemon2-test-art.png");
+                using (var image = new Bitmap(4, 4)) { using var graphics = Graphics.FromImage(image); graphics.Clear(Color.Red); image.Save(artwork); }
+                var import = new LiveryImport(car, car.Kits.Single(), template, LiveryAssetBuilder.SuggestTexture(template.Path)!, artwork, "Daemon setup check", "", "", true);
+                using (var export = new LiveryBatchWorkflow().Prepare(catalog, [import], default))
+                {
+                    Check(export.Items.Single().Slot == 18, "a new Daemon2 custom livery follows its 18 stock slots");
+                    new LiveryBatchWorkflow().Install(export, default);
+                }
+                Check(Directory.GetFiles(Path.Combine(setupRoot, "resources", "addons", "stream"), "*.yft", SearchOption.AllDirectories).Length == 1, "Daemon2 export streams only the new custom YFT, never the stock liveries");
+                using (var preview = await VehiclePreviewAssets.Prepare(catalog, car, import, gtaFolder, "mp2023_02", default, progress))
+                {
+                    File.Copy(preview.ModelPath, Path.Combine(output, "daemon2-pending.yft"), true);
+                    Check(File.Exists(preview.ModelPath), "real Daemon2 pending artwork stages a native 3D preview from a stock template");
+                }
+                Check(originals.All(original => SHA256.HashData(File.ReadAllBytes(original.Key)).SequenceEqual(original.Value)), "the live server repository stays byte-identical throughout Daemon2 checks");
+                return 0;
+            }
+            catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+            finally { Directory.Delete(setupRoot, true); }
+        }
         if (args.Length == 2 && args[0] == "--shared-real-check")
         {
             var catalog = VehicleCatalog.Scan(args[1], default);
@@ -109,10 +171,10 @@ internal static class Program
             Console.WriteLine(plan.Review());
             return 0;
         }
-        if (args.Length == 1 && args[0] is "--ui-check" or "--modkit-ui-check" or "--shared-ui-check")
+        if (args.Length == 1 && args[0] is "--ui-check" or "--modkit-ui-check" or "--shared-ui-check" or "--setup-ui-check")
         {
             int result = 1;
-            var thread = new Thread(() => result = WorkspaceCheck(args[0] == "--modkit-ui-check", args[0] == "--shared-ui-check"));
+            var thread = new Thread(() => result = WorkspaceCheck(args[0] == "--modkit-ui-check", args[0] == "--shared-ui-check", args[0] == "--setup-ui-check"));
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start(); thread.Join();
             return result;
@@ -124,6 +186,7 @@ internal static class Program
             LuaChecks();
             NamingChecks();
             ModkitChecks();
+            VehicleSetupChecks();
             SharedKitChecks();
             RoutingChecks();
             ReplacementChecks();
@@ -490,6 +553,66 @@ internal static class Program
         finally { Directory.Delete(root, true); if (File.Exists(external)) File.Delete(external); }
     }
 
+    private static void VehicleSetupChecks()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "BLRP-Setup-Checks-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Fixture(root);
+            string cols = Path.Combine(root, "resources", "[cars]", "addon", "data", "carcols.meta");
+            string vars = Path.Combine(Path.GetDirectoryName(cols)!, "carvariations.meta");
+            string master = Path.Combine(root, "Modkit Master List.txt");
+            File.WriteAllText(master, "42_testcar\n");
+            var xml = XDocument.Load(cols);
+            var original = xml.Descendants("Kits").Elements("Item").Single(item => item.Element("kitName")!.Value == "42_testcar");
+            original.Add(new XElement("id", new XAttribute("value", 42)));
+            var sourceKit = new XElement(original);
+            original.AddAfterSelf(new XElement(original));
+            xml.Save(cols);
+            var catalog = VehicleCatalog.Scan(root, default);
+            var car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            var baseline = Snapshot(root);
+            Check(car.Status.Contains("carcols.meta") && car.Status.Contains("2 entries"), "duplicate-kit diagnostics identify the file and number of definitions");
+            using (var setup = VehicleSetupWorkflow.Prepare(catalog, car, cols, vars, master, null, true, default))
+            {
+                Check(Same(root, baseline) && setup.Plan.StagedFiles.Count == 1 && setup.Plan.StagedFiles.ContainsKey(cols), "setup review stages an identical-duplicate repair without changing carvariations, registry or source files");
+                new LiveryBatchWorkflow().Install(setup.Plan, default);
+            }
+            catalog = VehicleCatalog.Scan(root, default); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            Check(car.Problems.Length == 0 && car.Kits.Single().Name == "42_testcar" && car.Kits.Single().Liveries.Length == 1, "applying setup keeps the original registered kit, slots and vehicle reference");
+            using (var again = VehicleSetupWorkflow.Prepare(catalog, car, cols, vars, master, null, true, default))
+                Check(again.Plan.StagedFiles.Count == 0, "repeating setup is idempotent");
+            Restore(root, baseline);
+            xml = XDocument.Load(cols);
+            xml.Descendants("Kits").Elements("Item").Last(item => item.Element("kitName")!.Value == "42_testcar").Element("id")!.SetAttributeValue("value", 99);
+            xml.Save(cols);
+            catalog = VehicleCatalog.Scan(root, default); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            Reject(() => VehicleSetupWorkflow.Prepare(catalog, car, cols, vars, master, null, true, default), "setup refuses differing duplicate definitions instead of discarding settings");
+            Restore(root, baseline);
+            var variationXml = XDocument.Load(vars);
+            var sourceVariation = new XElement(variationXml.Descendants("variationData").Elements("Item").Single(item => item.Element("modelName")!.Value == "testcar"));
+            variationXml.Descendants("variationData").Elements("Item").Single(item => item.Element("modelName")!.Value == "testcar").Remove();
+            variationXml.Save(vars);
+            xml = XDocument.Load(cols);
+            xml.Descendants("Kits").Elements("Item").Where(item => item.Element("kitName")!.Value == "42_testcar").Remove();
+            xml.Save(cols);
+            File.WriteAllText(master, "60000_bl_existing_modkit\n");
+            catalog = VehicleCatalog.Scan(root, default); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            var source = new VehicleMetadataSourceResult("active", "Fixture GTA", [], [new("carvariations", "active", "Fixture GTA", "game", "testcar", sourceVariation.ToString())], [new("carcols", "active", "Fixture GTA", "game", "42_testcar", sourceKit.ToString())]);
+            using (var setup = VehicleSetupWorkflow.Prepare(catalog, car, cols, vars, master, source, true, default))
+            {
+                Check(setup.Plan.StagedFiles.Keys.Order().SequenceEqual(new[] { cols, vars, master }.Order()), "one setup plan inserts missing metadata and converts/registers the modkit together");
+                new LiveryBatchWorkflow().Install(setup.Plan, default);
+            }
+            catalog = VehicleCatalog.Scan(root, default); car = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+            Check(car.Problems.Length == 0 && car.Kits.Single().Name == "60010_bl_testcar_modkit" && (int?)car.Kits.Single().Xml.Element("id")!.Attribute("value") == 60010, "unified setup installs matching carcols name/ID and carvariations reference");
+            var targets = VehicleSetupWorkflow.Targets(catalog, car);
+            Check(VehicleSetupWorkflow.Suggest(targets.Carcols, cols) == cols && VehicleSetupWorkflow.Suggest(targets.Variations, sibling: cols) == vars, "setup finds registered metadata by vehicle linkage and sibling paths in a relocated repository");
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private static void SharedKitChecks()
     {
         string root = Path.Combine(Path.GetTempPath(), "BLRP-Shared-Kit-Checks-" + Guid.NewGuid().ToString("N"));
@@ -534,7 +657,7 @@ internal static class Program
         finally { Directory.Delete(root, true); }
     }
 
-    private static int WorkspaceCheck(bool modkitOnly = false, bool sharedOnly = false)
+    private static int WorkspaceCheck(bool modkitOnly = false, bool sharedOnly = false, bool setupOnly = false)
     {
         string root = Path.Combine(Path.GetTempPath(), "BLRP-Livery-Workspace-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -550,6 +673,18 @@ internal static class Program
                 metadata.Save(vars);
             }
             string master = Path.Combine(root, "resources", "registry", "Modkit Master List.txt");
+            if (setupOnly)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(master)!); File.WriteAllText(master, "42_testcar\n");
+                string cols = Path.Combine(root, "resources", "[cars]", "addon", "data", "carcols.meta");
+                var metadata = XDocument.Load(cols);
+                var kit = metadata.Descendants("Kits").Elements("Item").Single(item => item.Element("kitName")!.Value == "42_testcar");
+                kit.Add(new XElement("id", new XAttribute("value", 42))); kit.AddAfterSelf(new XElement(kit)); metadata.Save(cols);
+                string alternative = Path.Combine(root, "resources", "[cars]", "addon", "data", "other"); Directory.CreateDirectory(alternative);
+                File.WriteAllText(Path.Combine(alternative, "carcols.meta"), "<CVehicleModelInfoVarGlobal><Kits><Item><kitName>unrelated_kit</kitName></Item></Kits></CVehicleModelInfoVarGlobal>");
+                File.WriteAllText(Path.Combine(alternative, "carvariations.meta"), "<CVehicleModelInfoVariation><variationData /></CVehicleModelInfoVariation>");
+                File.AppendAllText(Path.Combine(root, "resources", "[cars]", "addon", "fxmanifest.lua"), "\ndata_file 'CARCOLS_FILE' 'data/other/carcols.meta'\ndata_file 'VEHICLE_VARIATION_FILE' 'data/other/carvariations.meta'");
+            }
             if (modkitOnly)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(master)!);
@@ -581,6 +716,31 @@ internal static class Program
                     if (clock.Elapsed.TotalSeconds > 20) throw new TimeoutException("Workspace scan timed out.");
                     VehicleCatalog catalog = Field<VehicleCatalog>("catalog");
                     Field<ListBox>("vehicles").SelectedItem = catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar");
+                    if (setupOnly)
+                    {
+                        using var setup = new VehicleSetupForm(catalog, catalog.Vehicles.Single(vehicle => vehicle.Model == "testcar"), "", "mp2023_02", master) { Opacity = 0, ShowInTaskbar = false };
+                        setup.Show(form);
+                        T SetupField<T>(string name) => (T)typeof(VehicleSetupForm).GetField(name, flags)!.GetValue(setup)!;
+                        Task SetupCall(string name) => (Task)typeof(VehicleSetupForm).GetMethod(name, flags)!.Invoke(setup, null)!;
+                        string expectedFolder = Path.Combine(root, "resources", "[cars]", "addon", "data");
+                        Check((string?)SetupField<ComboBox>("carcols").SelectedItem == Path.Combine(expectedFolder, "carcols.meta") && (string?)SetupField<ComboBox>("variations").SelectedItem == Path.Combine(expectedFolder, "carvariations.meta"), "vehicle setup automatically selects the linked metadata among multiple registered files");
+                        Check(!SetupField<Button>("apply").Enabled, "setup cannot write metadata before a review");
+                        var before = Snapshot(root);
+                        await SetupCall("ReviewSetup");
+                        Check(SetupField<Button>("apply").Enabled && SetupField<TextBox>("review").Text.Contains("identical duplicate"), "setup reviews identical duplicate repairs without requiring GTA files when metadata already exists");
+                        Check(Same(root, before), "opening and reviewing the setup UI leaves metadata unchanged");
+                        await SetupCall("ApplySetup");
+                        Check(setup.Applied && VehicleCatalog.Scan(root, default).Vehicles.Single(vehicle => vehicle.Model == "testcar").Problems.Length == 0, "applying the reviewed setup repairs the vehicle and closes the wizard");
+                        string primaryCols = Path.Combine(expectedFolder, "carcols.meta"), primaryVars = Path.Combine(expectedFolder, "carvariations.meta");
+                        var colsXml = XDocument.Load(primaryCols); colsXml.Descendants("Kits").Elements("Item").Where(item => item.Element("kitName")?.Value == "42_testcar").Remove(); colsXml.Save(primaryCols);
+                        var varsXml = XDocument.Load(primaryVars); varsXml.Descendants("variationData").Elements("Item").Where(item => item.Element("modelName")?.Value == "testcar").Remove(); varsXml.Save(primaryVars);
+                        var ambiguous = VehicleCatalog.Scan(root, default);
+                        using var manual = new VehicleSetupForm(ambiguous, ambiguous.Vehicles.Single(vehicle => vehicle.Model == "testcar"), "", "mp2023_02", master) { Opacity = 0, ShowInTaskbar = false };
+                        manual.Show(form);
+                        Check(((ComboBox)typeof(VehicleSetupForm).GetField("carcols", flags)!.GetValue(manual)!).SelectedIndex == -1 && ((ComboBox)typeof(VehicleSetupForm).GetField("variations", flags)!.GetValue(manual)!).SelectedIndex == -1, "ambiguous setup destinations stay unselected instead of defaulting to an unrelated file");
+                        manual.Close();
+                        result = 0; return;
+                    }
                     if (sharedOnly)
                     {
                         type.GetMethod("AddImages", flags)!.Invoke(form, new object[] { new[] { Path.Combine(root, "art.png") } });
